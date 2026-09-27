@@ -18,6 +18,7 @@
 }
 
 .translation-ball {
+    position: relative;
     display: grid;
     place-items: center;
     width: 52px;
@@ -80,9 +81,47 @@
     pointer-events: none;
 }
 
+.translation-badge {
+    position: absolute;
+    left: -2px;
+    top: 34px;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px #21354740;
+    pointer-events: none;
+}
+.translation-badge[hidden] { display: none; }
+.translation-launcher .translation-badge svg {
+    width: 14px;
+    height: 14px;
+    stroke-width: 3;
+}
+.translation-badge[data-state="done"] { background: #1f9d55; color: #fff; }
+.translation-badge[data-state="failed"] { background: #d93025; color: #fff; }
+.translation-badge[data-state="translating"]::after {
+    content: "";
+    width: 12px;
+    height: 12px;
+    border: 2px solid #d9dbe5;
+    border-top-color: #535bf2;
+    border-radius: 50%;
+    animation: translation-badge-spin 800ms linear infinite;
+}
+@keyframes translation-badge-spin {
+    to { transform: rotate(360deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .translation-ball {
         transition: none;
+    }
+    .translation-badge[data-state="translating"]::after {
+        animation-duration: 2400ms;
     }
 }
 
