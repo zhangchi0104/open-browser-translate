@@ -1,4 +1,5 @@
 import { defineConfig } from "wxt";
+import tailwindcss from "@tailwindcss/vite";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -9,6 +10,9 @@ mkdirSync(chromiumProfile, { recursive: true });
 // See https://wxt.dev/api/config.html
 export default defineConfig({
   srcDir: "./src",
+  modules: ["@wxt-dev/module-react"],
+  // Tailwind only processes stylesheets that import it; today that is the options page.
+  vite: () => ({ plugins: [tailwindcss()] }),
   webExt: { chromiumProfile, keepProfileChanges: true },
   manifest: {
     permissions: ["storage"],
