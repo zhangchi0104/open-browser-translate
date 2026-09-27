@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="manifest.open_in_tab" content="true" />
+    <title>设置 · Open Browser Translate</title>
+  </head>
+  <body>
+    <main>
+      <header class="brand"><span class="brand-icon" aria-hidden="true">译</span>Open Browser Translate</header>
+      <h1>设置你的 AI</h1>
+      <p class="intro">分别配置内容分析和翻译，共用服务商连接。</p>
+      <form id="settings-form">
+        <fieldset id="fields" disabled>
+          <legend>模型用途</legend>
+          <section class="model-section" aria-labelledby="analysis-heading">
+            <h2 id="analysis-heading">内容分析 · Jev</h2>
+            <p class="hint section-description">判断哪些内容需要翻译。</p>
+            <div class="model-grid">
+              <div class="field"><label for="analysis-provider">服务商</label><select id="analysis-provider"><option value="VercelAIGateway">Vercel AI Gateway</option><option value="TypeSafe">TypeSafe 直连</option></select></div>
+              <div class="field"><label for="analysis-model">Jev 模型</label><input id="analysis-model" autocomplete="off" spellcheck="false" aria-describedby="analysis-help" /></div>
+            </div>
+            <p id="analysis-help" class="hint"></p>
+          </section>
+          <section class="model-section" aria-labelledby="translation-heading">
+            <h2 id="translation-heading">翻译</h2>
+            <p class="hint section-description">将筛选后的内容生成译文。模型可留空，稍后再配置。</p>
+            <div class="model-grid">
+              <div class="field"><label for="translation-provider">服务商</label><select id="translation-provider"><option value="VercelAIGateway">Vercel AI Gateway</option><option value="OpenAIApi">OpenAI 直连</option></select></div>
+              <div class="field"><label for="translation-model">翻译模型</label><input id="translation-model" autocomplete="off" spellcheck="false" aria-describedby="translation-help" /></div>
+            </div>
+            <p id="translation-help" class="hint"></p>
+          </section>
+          <h2 class="connections-heading">服务商连接</h2>
+          <p class="hint section-description">同一服务商的 API key 可同时用于内容分析和翻译。</p>
+          <div class="field">
+            <label for="provider">管理服务商的 API key</label>
+            <select id="provider" name="provider" aria-describedby="provider-help">
+              <option value="VercelAIGateway">Vercel AI Gateway</option>
+              <option value="TypeSafe">TypeSafe 直连</option>
+              <option value="OpenAIApi">OpenAI 直连</option>
+            </select>
+            <p id="provider-help" class="hint"></p>
+          </div>
+          <div class="field">
+            <div class="label-row"><label for="api-key">API key</label><a id="key-link" href="https://vercel.com/dashboard" target="_blank" rel="noopener noreferrer">获取 API key ↗</a></div>
+            <div class="key-control"><input id="api-key" name="api-key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-help" /><button id="toggle-key" type="button" aria-pressed="false" aria-label="显示 API key">显示</button></div>
+            <p id="key-help" class="hint">仅保存在当前浏览器的扩展本地存储中，不同步到其他设备。</p>
+          </div>
+          <div class="actions"><button id="save" type="submit">保存设置</button><button id="remove-key" class="secondary" type="button">移除已保存的 key</button></div>
+        </fieldset>
+        <p id="status" role="status" aria-live="polite">正在读取设置…</p>
+      </form>
+      <footer>每个服务商的配置单独保存。保存配置不会发起 AI 请求。</footer>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
