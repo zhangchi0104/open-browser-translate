@@ -12,6 +12,20 @@ const LAUNCHER_HEIGHT = 94;
 const EDGE_MARGIN = 16;
 const DRAG_THRESHOLD = 4;
 
+type BadgeState = "translating" | "done" | "failed";
+
+const BADGE_ICONS: Record<BadgeState, string> = {
+  translating: "",
+  done: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12.5 4 4 8-9"/></svg>`,
+  failed: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>`,
+};
+
+const BADGE_LABELS: Record<BadgeState, string> = {
+  translating: "正在翻译",
+  done: "翻译完成",
+  failed: "翻译失败",
+};
+
 interface BallPosition {
   x: number;
   y: number;
@@ -35,6 +49,24 @@ export function mountTranslationLauncher(container: HTMLElement) {
     </svg>
   `;
   root.append(ball);
+  // 翻译状态角标：放在按钮左下角，作为兄弟节点以免受按钮 disabled 透明度影响
+  const badge = document.createElement("span");
+  badge.className = "translation-badge";
+  badge.hidden = true;
+  root.append(badge);
+  const setBadge = (state: BadgeState | null) => {
+    if (!state) {
+      badge.hidden = true;
+      badge.removeAttribute("data-state");
+      badge.removeAttribute("title");
+      badge.innerHTML = "";
+      return;
+    }
+    badge.hidden = false;
+    badge.dataset.state = state;
+    badge.title = BADGE_LABELS[state];
+    badge.innerHTML = BADGE_ICONS[state];
+  };
   const capturedContent = createCapturedContent();
   let mounted = true;
   const status = document.createElement("div");
@@ -145,6 +177,8 @@ export function mountTranslationLauncher(container: HTMLElement) {
     }
     ball.disabled = true;
     ball.setAttribute("aria-busy", "true");
+    setBadge("translating");
+    let outcome: BadgeState | null = "failed";
     status.hidden = false;
     status.textContent = "正在捕获页面内容…";
     try {
@@ -157,6 +191,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
       );
       if (content.length === 0) {
         status.textContent = "没有捕获到待翻译内容。";
+        outcome = null;
         return;
       }
       status.textContent = "Jev 正在判断页面翻译模式…";
@@ -214,11 +249,13 @@ export function mountTranslationLauncher(container: HTMLElement) {
       status.textContent = `${modeLabel} · 已显示 ${kept} 段译文。`
         + (failures ? `${failures} 段翻译失败，请重试。` : "")
         + (fallbackCount || plan.fallback ? "部分内容使用本地筛选回退。" : "");
+      outcome = failures ? "failed" : "done";
     } catch {
       if (mounted) status.textContent = "无法完成翻译，请检查配置并刷新页面后重试。";
     } finally {
       ball.disabled = false;
       ball.removeAttribute("aria-busy");
+      if (mounted) setBadge(outcome);
     }
   });
 
