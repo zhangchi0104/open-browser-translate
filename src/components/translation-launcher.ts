@@ -1,7 +1,8 @@
 import { Effect } from "effect";
 import { storage } from "wxt/utils/storage";
 import { browser } from "wxt/browser";
-import { DomParser } from "../modules/dom-parser";
+import { DomParser, type TranslatableContent } from "../modules/dom-parser";
+import { pickNearViewport, type Span } from "../modules/viewport-queue";
 import { createCapturedContent } from "./captured-content";
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import type { TranslationBatchResult } from "../modules/translator/translate-batch";
@@ -137,24 +138,55 @@ export function mountTranslationLauncher(container: HTMLElement) {
   ball.addEventListener("pointerup", endDrag);
   ball.addEventListener("pointercancel", endDrag);
 
+  const parseContent = (root?: Element) => Effect.runSync(
+    Effect.gen(function* () {
+      const parser = yield* DomParser;
+      return yield* parser.parseTranslatableContent(root);
+    }).pipe(Effect.provide(DomParser.Live)),
+  );
+  const spanOf = ({ element }: TranslatableContent): Span | null => {
+    if (!element.isConnected) return null;
+    const bounds = element.getBoundingClientRect();
+    return bounds.width === 0 && bounds.height === 0 ? null : bounds;
+  };
+
+  // Each click starts a new session; a later click or unmount stops the previous one.
+  let session = 0;
+  let stopSession = () => {};
+
   ball.addEventListener("click", async () => {
     if (ball.disabled) return;
     if (moved) {
       moved = false;
       return; // 拖拽结束后的 click 不算点击
     }
-    ball.disabled = true;
-    ball.setAttribute("aria-busy", "true");
+    stopSession();
+    const id = ++session;
+    const active = () => mounted && id === session;
+    const setBusy = (busy: boolean) => {
+      ball.disabled = busy;
+      if (busy) ball.setAttribute("aria-busy", "true");
+      else ball.removeAttribute("aria-busy");
+    };
+    let wake: (() => void) | undefined;
+    const nudge = () => {
+      const resolve = wake;
+      wake = undefined;
+      resolve?.();
+    };
+    let observer: MutationObserver | undefined;
+    stopSession = () => {
+      observer?.disconnect();
+      document.removeEventListener("scroll", nudge, true);
+      window.removeEventListener("resize", nudge);
+      nudge();
+    };
+    setBusy(true);
     status.hidden = false;
     status.textContent = "正在捕获页面内容…";
     try {
       capturedContent.clear();
-      const content = Effect.runSync(
-        Effect.gen(function* () {
-          const parser = yield* DomParser;
-          return yield* parser.parseTranslatableContent();
-        }).pipe(Effect.provide(DomParser.Live)),
-      );
+      const content = parseContent();
       if (content.length === 0) {
         status.textContent = "没有捕获到待翻译内容。";
         return;
@@ -170,7 +202,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
             .slice(0, 20).map((element) => (element.textContent ?? "").trim().slice(0, 100)),
         },
       });
-      if (!mounted) return;
+      if (!active()) return;
       if (prepared?.status === "not-configured") {
         status.textContent = `请在设置中填写${prepared.purpose === "translation" ? "翻译" : "内容分析"}的 API key 和模型。`;
         return;
@@ -181,13 +213,52 @@ export function mountTranslationLauncher(container: HTMLElement) {
       }
       const plan: TranslationPlan = prepared.plan;
       const modeLabel = plan.mode === "main" ? "仅正文" : "普通网页";
+
+      // Only content near the viewport is translated; scrolling and newly added
+      // content (infinite scroll, load more) feed the same queue.
+      let pending = content;
+      const captured = new WeakSet<Text>();
+      for (const item of content) for (const { node } of item.segments) captured.add(node);
+      document.addEventListener("scroll", nudge, { capture: true, passive: true });
+      window.addEventListener("resize", nudge);
+      observer = new MutationObserver((records) => {
+        const added: TranslatableContent[] = [];
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (!(node instanceof Element) || !node.isConnected
+              || node.closest("open-browser-translate, open-browser-translate-placeholder")) continue;
+            for (const item of parseContent(node)) {
+              if (item.segments.some((segment) => captured.has(segment.node))) continue;
+              for (const segment of item.segments) captured.add(segment.node);
+              added.push(item);
+            }
+          }
+        }
+        if (added.length === 0) return;
+        pending = pending.concat(added);
+        nudge();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+
       let kept = 0;
       let failures = 0;
       let fallbackCount = 0;
-      for (let offset = 0; offset < content.length; offset += ANALYSIS_BATCH_SIZE) {
-        if (!mounted) return;
-        const batch = content.slice(offset, offset + ANALYSIS_BATCH_SIZE);
-        status.textContent = `${modeLabel} · 正在翻译 ${offset} / ${content.length} 段，已显示 ${kept} 段…`;
+      const summary = () => `${modeLabel} · 已显示 ${kept} 段译文。`
+        + (failures ? `${failures} 段翻译失败，请重试。` : "")
+        + (fallbackCount || plan.fallback ? "部分内容使用本地筛选回退。" : "");
+      while (active()) {
+        pending = pending.filter(({ element }) => element.isConnected);
+        const batch = pickNearViewport(pending, spanOf, window.innerHeight, ANALYSIS_BATCH_SIZE);
+        if (batch.length === 0) {
+          status.textContent = summary() + (pending.length ? "滚动页面时继续翻译附近内容。" : "");
+          setBusy(false);
+          await new Promise<void>((resolve) => { wake = resolve; });
+          continue;
+        }
+        setBusy(true);
+        const picked = new Set(batch);
+        pending = pending.filter((item) => !picked.has(item));
+        status.textContent = `${modeLabel} · 正在翻译附近 ${batch.length} 段，已显示 ${kept} 段…`;
         let result: TranslationBatchResult;
         try {
           result = await browser.runtime.sendMessage({
@@ -196,7 +267,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
             blocks: batch.map(({ text, tag }) => ({ text, tag })),
           });
         } catch { result = { status: "failed" }; }
-        if (!mounted) return;
+        if (!active()) return;
         if (result.status === "not-configured") {
           status.textContent = `请在设置中填写${result.purpose === "translation" ? "翻译" : "内容分析"}的 API key 和模型。`;
           return;
@@ -209,16 +280,14 @@ export function mountTranslationLauncher(container: HTMLElement) {
         capturedContent.append(selected, result.translations.filter((text): text is string => text !== null));
         kept += selected.length;
         fallbackCount += result.analysisFallbackCount;
-        status.textContent = `${modeLabel} · 已处理 ${offset + batch.length} / ${content.length} 段，已显示 ${kept} 段译文。`;
       }
-      status.textContent = `${modeLabel} · 已显示 ${kept} 段译文。`
-        + (failures ? `${failures} 段翻译失败，请重试。` : "")
-        + (fallbackCount || plan.fallback ? "部分内容使用本地筛选回退。" : "");
     } catch {
-      if (mounted) status.textContent = "无法完成翻译，请检查配置并刷新页面后重试。";
+      if (active()) status.textContent = "无法完成翻译，请检查配置并刷新页面后重试。";
     } finally {
-      ball.disabled = false;
-      ball.removeAttribute("aria-busy");
+      if (id === session) {
+        stopSession();
+        setBusy(false);
+      }
     }
   });
 
@@ -231,6 +300,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
   window.addEventListener("resize", onResize);
   return () => {
     mounted = false;
+    stopSession();
     window.removeEventListener("resize", onResize);
     root.remove();
     capturedContent.remove();

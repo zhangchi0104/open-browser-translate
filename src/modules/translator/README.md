@@ -21,9 +21,14 @@ its source untouched and increments the failure count; other batches continue.
 The batch has a 45-second total timeout and no automatic retries. Missing
 analysis or translation configuration stops before provider calls.
 
-Jev also classifies navigation as single, paginated, or dynamic. This currently
-provides a decision only: following pagination links, translating other tabs,
-and observing infinite-scroll content are not wired up pending scope selection.
+Translation is viewport-first. After a click, only blocks within half a screen
+above and 1.5 screens below the viewport are queued, nearest first
+(`src/modules/viewport-queue`). Scrolling or resizing picks the next batch, and
+content added later (infinite scroll, load more) joins the same queue. Content
+that is never scrolled near is never sent to the provider.
 
-Validation: `bun test tests/translation.test.ts`. Tests use mocked HTTP responses;
+Jev also classifies navigation as single, paginated, or dynamic. Following
+pagination links and translating other tabs are not wired up.
+
+Validation: `bun test tests/translation.test.ts tests/viewport-queue.test.ts`. Tests use mocked HTTP responses;
 they verify decision/translation routing and output alignment, not live quality.
