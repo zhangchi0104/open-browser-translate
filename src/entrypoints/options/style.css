@@ -25,6 +25,14 @@
   --border: #d9dbe5;
   --input: #d9dbe5;
   --ring: #535bf2;
+  --sidebar: #efeff5;
+  --sidebar-foreground: #252635;
+  --sidebar-primary: #535bf2;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e2e3f1;
+  --sidebar-accent-foreground: #26276a;
+  --sidebar-border: #d9dbe5;
+  --sidebar-ring: #535bf2;
 }
 
 @theme inline {
@@ -51,6 +59,14 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
 @layer base {
