@@ -1,5 +1,6 @@
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai-compat";
 import { Layer, type Redacted } from "effect";
+import type { ReasoningEffort } from "../settings/model";
 import { FetchHttpClient } from "effect/unstable/http";
 
 export function vercelLayer(options: {
@@ -13,8 +14,11 @@ export function openAICompatibleLayer(options: {
   apiKey: Redacted.Redacted<string>;
   model: string;
   apiUrl: string;
+  reasoningEffort?: ReasoningEffort;
 }) {
-  return OpenAiLanguageModel.layer({ model: options.model }).pipe(
+  // Chat Completions takes `reasoning_effort` (the gateway too); unknown config keys pass through to the body.
+  const config = options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : undefined;
+  return OpenAiLanguageModel.layer({ model: options.model, config }).pipe(
     Layer.provide(OpenAiClient.layer({
       apiKey: options.apiKey,
       apiUrl: options.apiUrl,

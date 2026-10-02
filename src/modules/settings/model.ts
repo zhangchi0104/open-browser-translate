@@ -14,10 +14,14 @@ export function validateModel(provider: SettingsProvider, model: string): string
   }
   if (/\s/.test(value)) return "模型 ID 不能包含空格";
 }
+/** OpenAI reasoning effort levels; unset leaves the choice to the model. */
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
+export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 export interface AISettings {
   providers: Record<KeyProvider, { apiKey: string }>;
-  analysis: { provider: AnalysisProvider; models: Record<AnalysisProvider, string> };
-  translation: { provider: TranslationProvider; models: Record<TranslationProvider, string> };
+  // `reasoningEffort` applies to OpenAI-style models; the gateway's evaluation models don't reason.
+  analysis: { provider: AnalysisProvider; models: Record<AnalysisProvider, string>; reasoningEffort?: ReasoningEffort };
+  translation: { provider: TranslationProvider; models: Record<TranslationProvider, string>; reasoningEffort?: ReasoningEffort };
 }
 export const defaultSettings: AISettings = {
   providers: {

@@ -8,10 +8,12 @@ import { AiProviders } from "../ai/providers";
 import type { AISettings } from "../settings/model";
 import type { PromptContext, TermPair } from "../translation-context";
 
+/** Milliseconds spent on content analysis and on translation in one batch. */
+export interface BatchTimings { analysisMs: number; translationMs?: number }
 export type TranslationBatchResult =
-  | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number; analysisError?: string }
+  | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number; analysisError?: string; timings: BatchTimings }
   | { status: "not-configured"; purpose: "analysis" | "translation" }
-  | { status: "failed"; error?: string };
+  | { status: "failed"; error?: string; timings?: Partial<BatchTimings> };
 
 type Purpose = "analysis" | "translation";
 export function missingConfiguration(settings: AISettings, chatgpt?: ChatGPTCredentials, purposes: readonly Purpose[] = ["analysis", "translation"]): Purpose | undefined {
@@ -31,23 +33,39 @@ export function translateBatch(
 ) {
   const missing = missingConfiguration(settings, chatgpt);
   if (missing) return Effect.succeed<TranslationBatchResult>({ status: "not-configured", purpose: missing });
+  // Each step's duration, filled in as it finishes; a step cut short by a failure gets its elapsed time.
+  const timings: Partial<BatchTimings> = {};
+  let running: { step: keyof BatchTimings; start: number } | undefined;
+  const begin = (step: keyof BatchTimings) => { running = { step, start: Date.now() }; };
+  const end = () => {
+    if (running) timings[running.step] = Date.now() - running.start;
+    running = undefined;
+  };
   return Effect.gen(function* () {
+    begin("analysisMs");
     const analyzed = yield* ContentAnalyzer.use((service) => service.analyze(blocks, { mode })).pipe(
       Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(analysisLayerFromSettings(settings, chatgpt)))),
     );
+    end();
     const selected = analyzed.flatMap((item, index) => item.shouldTranslate ? [index] : []);
+    begin("translationMs");
     const translated = yield* Translator.use((service) => service.translate(selected.map((index) => blocks[index]!.text), "简体中文", context)).pipe(
       Effect.provide(Translator.Live.pipe(Layer.provide(translationLayerFromSettings(settings, chatgpt)))),
     );
+    end();
     const translations: (string | null)[] = blocks.map(() => null);
     selected.forEach((index, position) => { translations[index] = translated.translations[position]!; });
     const analysisError = analyzed.find((item) => item.fallbackDetail)?.fallbackDetail;
     return {
       status: "ok", translations, terms: translated.terms, analysisFallbackCount: analyzed.filter((item) => item.fallbackReason).length,
+      timings: timings as BatchTimings,
       ...(analysisError && { analysisError }),
     } as const;
   }).pipe(
     Effect.timeout("45 seconds"),
-    Effect.catch((error) => Effect.succeed<TranslationBatchResult>({ status: "failed", error: describeError(error) })),
+    Effect.catch((error) => Effect.sync((): TranslationBatchResult => {
+      end();
+      return { status: "failed", error: describeError(error), timings };
+    })),
   );
 }

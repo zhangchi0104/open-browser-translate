@@ -36,7 +36,10 @@ test("OpenAI plans scope and translation maps only retained blocks back in order
   const plan = await Effect.runPromise(decideTranslationPlan({ title: "Article", sample: "Text", hasArticle: true, pagination: ["Next"] }, settings).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
   assert.deepEqual(plan, { mode: "main", navigation: "paginated", fallback: false });
   const result = await Effect.runPromise(translateBatch([{ text: "Home", tag: "a" }, { text: "Hello world", tag: "p" }], plan.mode, settings).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
-  assert.deepEqual(result, { status: "ok", translations: [null, "你好，世界"], terms: [], analysisFallbackCount: 0 });
+  assert.ok(result.status === "ok");
+  const { timings, ...rest } = result;
+  assert.deepEqual(rest, { status: "ok", translations: [null, "你好，世界"], terms: [], analysisFallbackCount: 0 });
+  assert.ok(timings.analysisMs >= 0 && timings.translationMs! >= 0, "analysis and translation are timed separately");
   assert.equal(requests.filter((url) => url.startsWith("https://ai-gateway.vercel.sh/")).length, 1);
 });
 
@@ -44,6 +47,7 @@ test("duplicate or missing translation IDs fail instead of displaying mismatched
   const result = await Effect.runPromise(translateBatch([{ text: "Hello", tag: "p" }, { text: "World", tag: "p" }], "all", settings).pipe(Effect.provideService(FetchHttpClient.Fetch, mockFetch({ translations: [{ id: 0, text: "你好" }, { id: 0, text: "世界" }], terms: [] }, []))));
   assert.equal(result.status, "failed");
   assert.ok(result.status === "failed" && result.error, "the failure carries its cause for the debug log");
+  assert.ok(result.timings?.analysisMs !== undefined && result.timings.translationMs !== undefined, "a failed translation still reports how long each step ran");
 });
 
 test("missing translation configuration makes no provider request", async () => {
@@ -58,7 +62,8 @@ test("site context rides along in the translation prompt and terms come back", a
   const fetch = mockFetch({ translations: [{ id: 0, text: "Effect 运行时" }], terms: [{ source: "Effect", target: "Effect" }] }, [], bodies);
   const context = { pages: ["Effect docs"], glossary: [{ source: "runtime", target: "运行时" }], recent: [{ source: "Fibers", target: "纤程" }] };
   const result = await Effect.runPromise(translateBatch([{ text: "Effect runtime", tag: "p" }], "all", settings, undefined, context).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
-  assert.deepEqual(result, { status: "ok", translations: ["Effect 运行时"], terms: [{ source: "Effect", target: "Effect" }], analysisFallbackCount: 0 });
+  assert.ok(result.status === "ok");
+  assert.deepEqual({ ...result, timings: undefined }, { status: "ok", translations: ["Effect 运行时"], terms: [{ source: "Effect", target: "Effect" }], analysisFallbackCount: 0, timings: undefined });
   const chat = bodies.find((body) => Array.isArray(body.messages) && !isDecisionRequest(body));
   assert.deepEqual(JSON.parse(chat.messages.at(-1).content), { context, blocks: [{ id: 0, text: "Effect runtime" }] });
 });

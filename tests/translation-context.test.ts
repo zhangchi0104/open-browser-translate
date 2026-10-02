@@ -16,7 +16,7 @@ import { createContextCarryover, MAX_SITES } from "../src/modules/translation-co
 import type { TranslationBatchResult } from "../src/modules/translator/translate-batch";
 
 const ok = (translations: (string | null)[], terms: { source: string; target: string }[] = []): TranslationBatchResult =>
-  ({ status: "ok", translations, terms, analysisFallbackCount: 0 });
+  ({ status: "ok", translations, terms, analysisFallbackCount: 0, timings: { analysisMs: 0, translationMs: 0 } });
 
 function memoryStore(initial: unknown = undefined) {
   let value = initial;

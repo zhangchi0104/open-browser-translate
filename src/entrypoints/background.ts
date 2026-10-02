@@ -25,9 +25,12 @@ const PageLog = Schema.Struct({
 });
 const purposeNames = { analysis: "内容分析", translation: "翻译" } as const;
 const modelOf = (settings: AISettings, purpose: "analysis" | "translation") => {
-  const { provider, models } = settings[purpose];
-  return `${provider} / ${(models as Record<string, string | undefined>)[provider] || "（未填写）"}`;
+  const { provider, models, reasoningEffort } = settings[purpose];
+  const effort = reasoningEffort && !(purpose === "analysis" && provider === AiProviders.VercelAIGateway) ? `，推理 ${reasoningEffort}` : "";
+  return `${provider} / ${(models as Record<string, string | undefined>)[provider] || "（未填写）"}${effort}`;
 };
+/** One step's line: the model it ran on and how long it took, when it ran. */
+const stepOf = (name: string, model: string, ms: number | undefined) => `${name}：${model}${ms === undefined ? "" : `，耗时 ${ms} ms`}`;
 const since = (start: number) => `${Date.now() - start} ms`;
 const withError = (text: string, error?: string) => error ? `${text}\n${error}` : text;
 
@@ -114,8 +117,10 @@ export default defineBackground(() => {
             return { status: "not-configured", purpose: missing };
           }
           void contexts.notePage(pageUrl(sender), context.title);
+          const planStart = Date.now();
           const plan = await Effect.runPromise(decideTranslationPlan(context, settings, chatgpt));
-          const summary = `模式 ${plan.mode}，导航 ${plan.navigation}，耗时 ${since(start)}\n分析：${modelOf(settings, "analysis")}`;
+          const summary = `模式 ${plan.mode}，导航 ${plan.navigation}，总耗时 ${since(start)}\n`
+            + stepOf("页面规划", modelOf(settings, "analysis"), Date.now() - planStart);
           if (plan.error) void debugLog.warn("准备翻译：页面规划失败，按普通网页翻译", { page, detail: withError(summary, plan.error) });
           else void debugLog.info(plan.fallback ? "准备翻译：规划置信度不足，按普通网页翻译" : "准备翻译：完成", { page, detail: summary });
           return { status: "ok", plan };
@@ -142,8 +147,10 @@ export default defineBackground(() => {
             const mode = message.mode === "main" ? "main" : "all";
             const result = await contexts.translate(pageUrl(sender), blocks, async (context) =>
               Effect.runPromise(translateBatch(blocks, mode, settings, await chatgpt, context)));
-            const summary = `${blocks.length} 段 / ${length} 字符，模式 ${mode}，耗时 ${since(start)}\n`
-              + `分析：${modelOf(settings, "analysis")}\n翻译：${modelOf(settings, "translation")}`;
+            const timings = result.status === "not-configured" ? undefined : result.timings;
+            const summary = `${blocks.length} 段 / ${length} 字符，模式 ${mode}，总耗时 ${since(start)}\n`
+              + `${stepOf("分析", modelOf(settings, "analysis"), timings?.analysisMs)}\n`
+              + stepOf("翻译", modelOf(settings, "translation"), timings?.translationMs);
             if (result.status === "ok") {
               const shown = result.translations.filter((text) => text !== null).length;
               const detail = `${summary}\n译出 ${shown} 段，术语 ${result.terms.length} 条，分析回退 ${result.analysisFallbackCount} 段`;

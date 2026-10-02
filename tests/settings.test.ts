@@ -126,3 +126,32 @@ test("gateway analysis asks an evaluation model through the gateway's System One
   const analysis = await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
   assert.equal(analysis.answers.relevant.probability, 0.9);
 });
+
+test("reasoning effort reaches each provider in its own field, and is omitted by default", async () => {
+  const bodies: any[] = [];
+  const chat: typeof globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    bodies.push(body);
+    return isDecisionRequest(body)
+      ? decisionResponse(body, () => "true")
+      : Response.json({ id: "test", object: "chat.completion", created: 1, model: body.model, choices: [{ index: 0, message: { role: "assistant", content: "你好" }, finish_reason: "stop" }] });
+  };
+  const settings = structuredClone(defaultSettings);
+  settings.providers.VercelAIGateway.apiKey = "test-gateway";
+  settings.providers.OpenAIApi.apiKey = "test-direct";
+  settings.translation.models.VercelAIGateway = "vendor/translator";
+  const translate = () => Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
+  await translate();
+  assert.equal("reasoning_effort" in bodies.at(-1), false);
+  settings.translation.reasoningEffort = "low";
+  await translate();
+  assert.equal(bodies.at(-1).reasoning_effort, "low");
+
+  settings.analysis.provider = AiProviders.OpenAIApi;
+  settings.analysis.reasoningEffort = "minimal";
+  const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is this relevant?", criteria: { true: "Relevant", false: "Irrelevant" } }) } });
+  await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(
+    Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
+  assert.equal(bodies.at(-1).reasoning_effort, "minimal");
+});

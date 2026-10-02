@@ -117,6 +117,7 @@ test("subscription translation streams Responses requests with the OAuth token",
   settings.analysis.provider = AiProviders.OpenAIApi;
   settings.translation.provider = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
+  settings.translation.reasoningEffort = "high";
   settings.providers.OpenAIApi.apiKey = "test-direct";
   assert.equal(missingConfiguration(settings), "translation");
   const credentials = { accessToken: async () => "oauth-token" };
@@ -129,6 +130,7 @@ test("subscription translation streams Responses requests with the OAuth token",
     assert.equal(body.model, "gpt-test");
     assert.equal(body.stream, true);
     assert.equal(body.store, false);
+    assert.deepEqual(body.reasoning, { effort: "high" });
     return sse({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } }, { type: "response.completed", response: completed });
   };
   const result = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(

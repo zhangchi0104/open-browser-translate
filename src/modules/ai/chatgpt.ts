@@ -2,6 +2,7 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { CHATGPT_API_URL } from "./chatgpt-auth";
+import type { ReasoningEffort } from "../settings/model";
 
 export interface ChatGPTCredentials {
   /** Resolves a current OAuth access token, refreshing it when needed. */
@@ -81,8 +82,9 @@ function planClient(credentials: ChatGPTCredentials) {
   );
 }
 
-export function chatgptLayer(options: { model: string; credentials: ChatGPTCredentials }) {
-  return OpenAiLanguageModel.layer({ model: options.model, config: { store: false } }).pipe(
+export function chatgptLayer(options: { model: string; credentials: ChatGPTCredentials; reasoningEffort?: ReasoningEffort }) {
+  const reasoning = options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : undefined;
+  return OpenAiLanguageModel.layer({ model: options.model, config: { store: false, ...reasoning } }).pipe(
     Layer.provide(OpenAiClient.layer({ apiUrl: CHATGPT_API_URL, transformClient: planClient(options.credentials) })),
     Layer.provide(FetchHttpClient.layer),
   );

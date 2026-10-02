@@ -1,6 +1,9 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { Bug, ExternalLink, KeyRound, Sparkles } from "lucide-react";
-import { aiSettings, validateModel, type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider } from "@/modules/settings";
+import {
+  aiSettings, REASONING_EFFORTS, validateModel,
+  type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider, type ReasoningEffort,
+} from "@/modules/settings";
 import { AiProviders, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL, GATEWAY_DECISION_MODELS } from "@/modules/ai/providers";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/ai/chatgpt-session";
@@ -314,6 +317,10 @@ export function App() {
                       inputRef={modelInputs[purpose]}
                       onProviderChange={(provider) => edit((next) => setProvider(next, purpose, provider))}
                       onModelChange={(model) => edit((next) => { modelsOf(next, purpose)[next[purpose].provider] = model; })}
+                      onEffortChange={(effort) => edit((next) => {
+                        if (effort) next[purpose].reasoningEffort = effort;
+                        else delete next[purpose].reasoningEffort;
+                      })}
                     />
                   ))}
                 </CardContent>
@@ -441,7 +448,12 @@ const catalogHelp: Record<CatalogProvider, { unavailable: string; listed: (purpo
   },
 };
 
-function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderChange, onModelChange }: {
+const effortLabels: Record<ReasoningEffort, string> = {
+  none: "不推理（none）", minimal: "最低（minimal）", low: "低（low）", medium: "中（medium）", high: "高（high）", xhigh: "最高（xhigh）",
+};
+const DEFAULT_EFFORT = "default";
+
+function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderChange, onModelChange, onEffortChange }: {
   purpose: Purpose;
   draft: AISettings | undefined;
   catalogs: Record<CatalogProvider, LoadedCatalog>;
@@ -449,6 +461,7 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
   inputRef: RefObject<HTMLInputElement | null>;
   onProviderChange: (provider: SettingsProvider) => void;
   onModelChange: (model: string) => void;
+  onEffortChange: (effort: ReasoningEffort | undefined) => void;
 }) {
   const id = useId();
   const config = purposes[purpose];
@@ -468,6 +481,9 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
     : catalog.status === "loading" ? "正在读取可用模型…"
     : catalog.status === "failed" ? "无法读取模型列表，可直接填写模型 ID，或稍后重试。"
     : text.unavailable);
+  // The gateway's evaluation models answer decisions without reasoning, so there is nothing to tune.
+  const reasons = !evaluation;
+  const effort = draft?.[purpose].reasoningEffort;
   return (
     <section aria-labelledby={`${id}-heading`} className="space-y-4">
       <div>
@@ -517,6 +533,20 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
             />
           )}
         </div>
+        {reasons && (
+          <div className="space-y-2">
+            <Label htmlFor={`${id}-effort`}>推理强度</Label>
+            <Select value={effort ?? DEFAULT_EFFORT} onValueChange={(value) => onEffortChange(value === DEFAULT_EFFORT ? undefined : value as ReasoningEffort)}>
+              <SelectTrigger id={`${id}-effort`} className="w-full" aria-describedby={`${id}-effort-help`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={DEFAULT_EFFORT}>由模型决定</SelectItem>
+                {REASONING_EFFORTS.map((level) => <SelectItem key={level} value={level}>{effortLabels[level]}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
       <p id={`${id}-help`} className={cn("text-[13px]", error || unlisted ? "text-destructive" : "text-muted-foreground")}>
         {help}
@@ -524,6 +554,11 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
           <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-[13px]" onClick={reload}>重试</Button>
         )}
       </p>
+      {reasons && (
+        <p id={`${id}-effort-help`} className="text-[13px] text-muted-foreground">
+          推理越强越慢、越费额度。不是每个模型都支持所有档位，不支持时请求会失败，原因记在「调试日志」。
+        </p>
+      )}
     </section>
   );
 }
