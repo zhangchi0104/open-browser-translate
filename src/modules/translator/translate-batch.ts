@@ -1,4 +1,5 @@
 import { Effect, Layer } from "effect";
+import { describeError } from "../debug-log/model";
 import { Translator } from "./index";
 import { ContentAnalyzer, type ContentBlock } from "../content-analyzer";
 import { analysisLayerFromSettings, translationLayerFromSettings } from "../ai/configured";
@@ -8,9 +9,9 @@ import type { AISettings } from "../settings/model";
 import type { PromptContext, TermPair } from "../translation-context";
 
 export type TranslationBatchResult =
-  | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number }
+  | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number; analysisError?: string }
   | { status: "not-configured"; purpose: "analysis" | "translation" }
-  | { status: "failed" };
+  | { status: "failed"; error?: string };
 
 type Purpose = "analysis" | "translation";
 export function missingConfiguration(settings: AISettings, chatgpt?: ChatGPTCredentials, purposes: readonly Purpose[] = ["analysis", "translation"]): Purpose | undefined {
@@ -40,9 +41,13 @@ export function translateBatch(
     );
     const translations: (string | null)[] = blocks.map(() => null);
     selected.forEach((index, position) => { translations[index] = translated.translations[position]!; });
-    return { status: "ok", translations, terms: translated.terms, analysisFallbackCount: analyzed.filter((item) => item.fallbackReason).length } as const;
+    const analysisError = analyzed.find((item) => item.fallbackDetail)?.fallbackDetail;
+    return {
+      status: "ok", translations, terms: translated.terms, analysisFallbackCount: analyzed.filter((item) => item.fallbackReason).length,
+      ...(analysisError && { analysisError }),
+    } as const;
   }).pipe(
     Effect.timeout("45 seconds"),
-    Effect.catch(() => Effect.succeed<TranslationBatchResult>({ status: "failed" })),
+    Effect.catch((error) => Effect.succeed<TranslationBatchResult>({ status: "failed", error: describeError(error) })),
   );
 }

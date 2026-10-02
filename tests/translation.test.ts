@@ -40,7 +40,8 @@ test("OpenAI plans scope and translation maps only retained blocks back in order
 
 test("duplicate or missing translation IDs fail instead of displaying mismatched text", async () => {
   const result = await Effect.runPromise(translateBatch([{ text: "Hello", tag: "p" }, { text: "World", tag: "p" }], "all", settings).pipe(Effect.provideService(FetchHttpClient.Fetch, mockFetch({ translations: [{ id: 0, text: "你好" }, { id: 0, text: "世界" }], terms: [] }, []))));
-  assert.deepEqual(result, { status: "failed" });
+  assert.equal(result.status, "failed");
+  assert.ok(result.status === "failed" && result.error, "the failure carries its cause for the debug log");
 });
 
 test("missing translation configuration makes no provider request", async () => {

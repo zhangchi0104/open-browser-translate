@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/unstable/ai";
 import { analysisLayerFromSettings } from "../ai/configured";
+import { describeError } from "../debug-log/model";
 import type { ChatGPTCredentials } from "../ai/chatgpt";
 import type { AISettings } from "../settings/model";
 
@@ -15,6 +16,8 @@ export interface TranslationPlan {
   mode: "all" | "main";
   navigation: "single" | "paginated" | "dynamic";
   fallback: boolean;
+  /** Why planning failed, when it did. */
+  error?: string;
 }
 const definition = Decision.make({
   input: PageContext,
@@ -41,7 +44,7 @@ export function decideTranslationPlan(context: PageContext, settings: AISettings
     Effect.provide(analysisLayerFromSettings(settings, chatgpt)),
     Effect.timeout("10 seconds"),
     Effect.match({
-      onFailure: (): TranslationPlan => ({ mode: "all", navigation: "single", fallback: true }),
+      onFailure: (error): TranslationPlan => ({ mode: "all", navigation: "single", fallback: true, error: describeError(error) }),
       onSuccess: ({ answers }): TranslationPlan => ({
         mode: (answers.mode.confidence ?? 0) >= 0.8 ? answers.mode.label : "all",
         navigation: (answers.navigation.confidence ?? 0) >= 0.8 ? answers.navigation.label : "single",

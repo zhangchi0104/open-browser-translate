@@ -7,6 +7,7 @@ import { createCapturedContent } from "./captured-content";
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import type { TranslationBatchResult } from "../modules/translator/translate-batch";
 import type { TranslationPlan } from "../modules/content-analyzer/page-plan";
+import { describeError, type LogLevel } from "../modules/debug-log/model";
 
 const BALL_SIZE = 52;
 const LAUNCHER_HEIGHT = 94;
@@ -33,6 +34,11 @@ interface BallPosition {
 }
 
 const ballPosition = storage.defineItem<BallPosition>("local:ballPosition");
+
+/** Sends an entry to the background's debug log; the background adds the page URL. */
+const log = (level: LogLevel, event: string, detail?: string) => {
+  browser.runtime.sendMessage({ type: "debug-log", entry: { level, event, detail } }).catch(() => {});
+};
 
 export function mountTranslationLauncher(container: HTMLElement) {
   const root = document.createElement("div");
@@ -221,6 +227,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
     try {
       capturedContent.clear();
       const content = parseContent();
+      log("info", `开始翻译：捕获 ${content.length} 段`);
       if (content.length === 0) {
         status.textContent = "没有捕获到待翻译内容。";
         outcome = null;
@@ -303,11 +310,17 @@ export function mountTranslationLauncher(container: HTMLElement) {
             mode: plan.mode,
             blocks: batch.map(({ text, tag }) => ({ text, tag })),
           });
-        } catch { result = { status: "failed" }; }
+        } catch (error) {
+          log("error", "翻译批次：发送请求失败", describeError(error));
+          result = { status: "failed" };
+        }
         if (!active()) return;
         if (result.status === "not-configured") {
           status.textContent = `请在设置中填写${result.purpose === "translation" ? "翻译" : "内容分析"}的 API key 和模型。`;
           return;
+        }
+        if (result.status === "ok" && result.translations.length !== batch.length) {
+          log("error", "翻译批次：译文数量与请求不一致", `请求 ${batch.length} 段，返回 ${result.translations.length} 段`);
         }
         if (result.status !== "ok" || result.translations.length !== batch.length) {
           failures += batch.length;
@@ -318,7 +331,8 @@ export function mountTranslationLauncher(container: HTMLElement) {
         kept += selected.length;
         fallbackCount += result.analysisFallbackCount;
       }
-    } catch {
+    } catch (error) {
+      log("error", "翻译中断：异常", describeError(error));
       if (active()) status.textContent = "无法完成翻译，请检查配置并刷新页面后重试。";
     } finally {
       if (id === session) {

@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { Decision } from "effect/unstable/ai";
 import { AI } from "../ai";
 import { ANALYSIS_BATCH_SIZE } from "./protocol";
+import { describeError } from "../debug-log/model";
 
 
 const ROLES = {
@@ -22,6 +23,8 @@ export interface AnalyzedContent<T extends ContentBlock = ContentBlock> {
   shouldTranslate: boolean;
   confidence?: number;
   fallbackReason?: "request-failed" | "input-too-large";
+  /** Why the analysis request failed, for the debug log. */
+  fallbackDetail?: string;
 }
 
 export interface AnalyzeOptions {
@@ -42,7 +45,8 @@ const MIN_CONFIDENCE = 0.8;
 const fallback = <T extends ContentBlock>(
   content: T,
   fallbackReason: AnalyzedContent["fallbackReason"],
-): AnalyzedContent<T> => ({ content, role: "unknown", shouldTranslate: true, fallbackReason });
+  fallbackDetail?: string,
+): AnalyzedContent<T> => ({ content, role: "unknown", shouldTranslate: true, fallbackReason, ...(fallbackDetail && { fallbackDetail }) });
 
 export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
   readonly analyze: <T extends ContentBlock>(
@@ -76,7 +80,7 @@ export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
           const definition = Decision.make({ input: Input, decisions });
           const response = yield* ai.decide(definition, { input: { blocks } }).pipe(
             Effect.timeout("10 seconds"),
-            Effect.match({ onFailure: () => undefined, onSuccess: (value) => value }),
+            Effect.match({ onFailure: (error) => ({ error: describeError(error) }), onSuccess: (value) => value }),
           );
 
           for (const [index, item] of batch.entries()) {
@@ -84,9 +88,9 @@ export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
               results.push(fallback(item, "input-too-large"));
               continue;
             }
-            const answer = response?.answers[String(index)];
+            const answer = "answers" in response ? response.answers[String(index)] : undefined;
             if (!answer) {
-              results.push(fallback(item, "request-failed"));
+              results.push(fallback(item, "request-failed", "error" in response ? response.error : `模型没有返回 block ${index} 的分类`));
               continue;
             }
             const confident = (answer.confidence ?? 0) >= MIN_CONFIDENCE;

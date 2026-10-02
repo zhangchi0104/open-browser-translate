@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
-import { ExternalLink, KeyRound, Sparkles } from "lucide-react";
+import { Bug, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import { aiSettings, validateModel, type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider } from "@/modules/settings";
 import { AiProviders, DEFAULT_DECISION_MODEL } from "@/modules/ai/providers";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/ai/chatgpt-session";
@@ -15,6 +15,7 @@ import {
   SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { DebugLog } from "./DebugLog";
 
 type Purpose = "analysis" | "translation";
 type Status = { text: string; error?: boolean };
@@ -52,10 +53,15 @@ const purposes = {
         : "填写 OpenAI 的文本生成模型 ID。",
   },
 } as const;
-type Section = "models" | "keys";
+type Section = "models" | "keys" | "debug";
 const sections = {
   models: { title: "模型用途", description: "分别配置内容分析和翻译使用的服务商与模型。", icon: Sparkles },
   keys: { title: "服务商连接", description: "同一服务商的连接可同时用于内容分析和翻译。", icon: KeyRound },
+  debug: {
+    title: "调试日志",
+    description: "记录每次翻译请求的模型、耗时、结果和错误详情，只保留最近 500 条。日志只保存在本机，会记录网址路径，不记录网页正文和 API key（服务商返回的错误信息可能引用模型输出）。",
+    icon: Bug,
+  },
 } as const;
 const purposeNames: Record<Purpose, string> = { analysis: "内容分析", translation: "翻译" };
 const signInErrors: Record<Exclude<SignInResult, { status: "ok" }>["reason"], string> = {
@@ -262,7 +268,8 @@ export function App() {
           <h1 className="mb-3 text-[28px] leading-tight font-bold tracking-tight">{sections[section].title}</h1>
           <p className="mb-8 leading-relaxed text-muted-foreground">{sections[section].description}</p>
 
-          <form onSubmit={save} noValidate>
+          {section === "debug" && <DebugLog />}
+          <form onSubmit={save} noValidate hidden={section === "debug"}>
             <fieldset disabled={busy || !draft} className="min-w-0 space-y-6">
               <Card hidden={section !== "models"}>
                 <CardContent className="space-y-8">
