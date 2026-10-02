@@ -13,7 +13,10 @@ The current target language is Simplified Chinese.
 Translation uses schema-validated structured output with one ID per retained
 block. Missing, duplicate, unknown IDs and empty translations fail the batch.
 Results are reordered by ID before being mapped to original DOM groups. Text is
-rendered with `textContent` in isolated placeholders, never as HTML. Original
+rendered with `textContent` in isolated placeholders, never as HTML. Each
+placeholder copies the text styles (font, size, weight, line height, color,
+spacing, decoration) of the element holding most of the source text, so the
+translation reads like the original. Original
 source nodes remain unchanged; changed or disconnected sources are skipped.
 
 Each completed batch is appended immediately. A failed translation batch leaves

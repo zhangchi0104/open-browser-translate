@@ -36,7 +36,24 @@ try {
   assert(capture().length === 4, "recapture must not include placeholders");
   preview.remove();
   assert(fixture.innerHTML === original, "cleanup restores original markup and clipping styles");
-  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup";
+
+  fixture.innerHTML = '<h2 id="title" style="font:italic 700 24px/30px Georgia,serif;color:rgb(10, 20, 30);letter-spacing:1px;text-transform:uppercase">Heading text</h2>'
+    + '<p id="para" style="font:400 15px/22px sans-serif;color:rgb(60, 60, 60)">Results for a query with <a href="#" style="color:rgb(0, 0, 200);text-decoration:underline">a link</a> inside</p>'
+    + '<p style="font:400 15px/22px sans-serif"><a id="result" href="#" style="color:rgb(0, 0, 200);font-weight:600;text-decoration:underline">A whole search result title</a></p>'
+    + '<div id="snippet" style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden;font:700 18px/24px serif;color:rgb(1, 2, 3)">Clamped snippet text that is long enough to wrap over several lines in this narrow column</div>';
+  const styled = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  preview.clear();
+  preview.append(styled, styled.map(() => "译文"));
+  const [title, para, result, snippet] = Array.from(fixture.querySelectorAll("open-browser-translate-placeholder"), (node) => getComputedStyle(node));
+  assert(title!.fontWeight === "700" && title!.fontSize === "24px" && title!.lineHeight === "30px" && title!.fontStyle === "italic", "translation keeps the heading's font");
+  assert(title!.color === "rgb(10, 20, 30)" && title!.letterSpacing === "1px" && title!.textTransform === "uppercase", "translation keeps the heading's color and text styling");
+  assert(title!.borderTopWidth === "0px" && title!.paddingTop === "0px", "translations are not boxed");
+  assert(para!.color === "rgb(60, 60, 60)" && para!.fontSize === "15px" && !para!.textDecorationLine.includes("underline"), "mixed text follows the element holding most of the text");
+  assert(result!.color === "rgb(0, 0, 200)" && result!.fontWeight === "600" && result!.textDecorationLine.includes("underline"), "a group that is all link text looks like the link");
+  assert(fixture.querySelector("#snippet")!.nextElementSibling?.localName === "open-browser-translate-placeholder", "a clamped translation moves outside the clip");
+  assert(snippet!.fontSize === "18px" && snippet!.fontWeight === "700" && snippet!.color === "rgb(1, 2, 3)", "a translation moved outside a clip keeps the source styles");
+  preview.remove();
+  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles";
 } catch (error) {
   preview.remove();
   document.body.textContent = `FAIL: ${String(error)}`;
