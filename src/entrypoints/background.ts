@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { storage } from "wxt/utils/storage";
 import { aiSettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
@@ -8,10 +9,21 @@ import {
 } from "../modules/ai/chatgpt-session";
 
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
+import { createContextCarryover } from "../modules/translation-context/carryover";
+import type { TranslationContext } from "../modules/translation-context";
 
+const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
 const Blocks = Schema.Array(Schema.Struct({ text: Schema.String, tag: Schema.String }));
 
 export default defineBackground(() => {
+  const contexts = createContextCarryover({
+    get: () => translationContexts.getValue(),
+    set: (value) => translationContexts.setValue(value),
+  });
+  // The sender's URL, not anything in the message, decides which site's context is used.
+  // Private windows keep no context, so nothing about them is written to disk.
+  const pageUrl = (sender: { url?: string; tab?: { url?: string; incognito?: boolean } }) =>
+    sender.tab?.incognito ? undefined : sender.tab?.url ?? sender.url;
   browser.tabs.onUpdated.addListener((tabId, change) => { void handleChatGPTNavigation(tabId, change.url); });
   browser.tabs.onRemoved.addListener((tabId) => { void handleChatGPTTabClosed(tabId); });
   browser.runtime.onMessage.addListener((message, sender) => {
@@ -32,6 +44,7 @@ export default defineBackground(() => {
           const settings = await aiSettings.getValue();
           const missing = missingConfiguration(settings, await chatgptCredentials());
           if (missing) return { status: "not-configured", purpose: missing };
+          void contexts.notePage(pageUrl(sender), context.title);
           return { status: "ok", plan: await Effect.runPromise(decideTranslationPlan(context, settings)) };
         } catch { return { status: "failed" }; }
       })();
@@ -45,7 +58,9 @@ export default defineBackground(() => {
           }
           const settings = await aiSettings.getValue();
           if (message.type === "translate-content") {
-            return await Effect.runPromise(translateBatch(blocks, message.mode === "main" ? "main" : "all", settings, await chatgptCredentials()));
+            const chatgpt = chatgptCredentials();
+            return await contexts.translate(pageUrl(sender), blocks, async (context) =>
+              Effect.runPromise(translateBatch(blocks, message.mode === "main" ? "main" : "all", settings, await chatgpt, context)));
           }
           return await Effect.runPromise(analyzePageContent(blocks, settings));
         } catch {

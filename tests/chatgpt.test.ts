@@ -136,7 +136,7 @@ test("the translator's structured output works over the subscription", async () 
   const settings = structuredClone(defaultSettings);
   settings.translation.provider = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
-  const text = JSON.stringify({ translations: [{ id: 0, text: "你好" }] });
+  const text = JSON.stringify({ translations: [{ id: 0, text: "你好" }], terms: [] });
   const fetchMock: typeof fetch = async (_, init) => {
     assert.equal(JSON.parse(String(init?.body)).text.format.type, "json_schema");
     return sse({ type: "response.completed", response: { ...completed, output: [{ ...completed.output[0], content: [{ type: "output_text", text, annotations: [] }] }] } });
@@ -145,5 +145,5 @@ test("the translator's structured output works over the subscription", async () 
     Effect.provide(Translator.Live.pipe(Layer.provide(translationLayerFromSettings(settings, { accessToken: async () => "oauth-token" })))),
     Effect.provideService(FetchHttpClient.Fetch, fetchMock),
   ));
-  assert.deepEqual(result, ["你好"]);
+  assert.deepEqual(result, { translations: ["你好"], terms: [] });
 });

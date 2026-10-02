@@ -30,5 +30,15 @@ that is never scrolled near is never sent to the provider.
 Jev also classifies navigation as single, paginated, or dynamic. Following
 pagination links and translating other tabs are not wired up.
 
-Validation: `bun test tests/translation.test.ts tests/viewport-queue.test.ts`. Tests use mocked HTTP responses;
+Context carries across viewport batches and pages on the same site
+(`src/modules/translation-context`). The background keeps one context per
+origin in extension storage: the last five page titles, a glossary of terms the
+model reported translating (newest rendering wins, at most 60), and the last
+three translated passages. Each batch is sent with the page titles, the recent
+passages, and only the glossary terms that occur in that batch. Glossary terms
+are kept only if their source text appears in the batch they came from.
+Contexts expire after seven days, at most 50 sites are kept, and private
+windows keep none.
+
+Validation: `bun test tests/translation.test.ts tests/viewport-queue.test.ts tests/translation-context.test.ts`. Tests use mocked HTTP responses;
 they verify decision/translation routing and output alignment, not live quality.
