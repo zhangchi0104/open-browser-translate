@@ -1,8 +1,10 @@
 import { AiProviders } from "../ai/providers";
 
 export type AnalysisProvider = AiProviders.VercelAIGateway | AiProviders.TypeSafe;
-export type TranslationProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi;
+export type TranslationProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
 export type SettingsProvider = AnalysisProvider | TranslationProvider;
+/** Providers connected with an API key; the ChatGPT subscription signs in instead. */
+export type KeyProvider = Exclude<SettingsProvider, AiProviders.OpenAISubscription>;
 
 export function validateModel(provider: SettingsProvider, model: string): string | undefined {
   const value = model.trim();
@@ -13,7 +15,7 @@ export function validateModel(provider: SettingsProvider, model: string): string
   if (/\s/.test(value)) return "模型 ID 不能包含空格";
 }
 export interface AISettings {
-  providers: Record<SettingsProvider, { apiKey: string }>;
+  providers: Record<KeyProvider, { apiKey: string }>;
   analysis: { provider: AnalysisProvider; models: Record<AnalysisProvider, string> };
   translation: { provider: TranslationProvider; models: Record<TranslationProvider, string> };
 }
@@ -29,7 +31,7 @@ export const defaultSettings: AISettings = {
   },
   translation: {
     provider: AiProviders.VercelAIGateway,
-    models: { [AiProviders.VercelAIGateway]: "", [AiProviders.OpenAIApi]: "" },
+    models: { [AiProviders.VercelAIGateway]: "", [AiProviders.OpenAIApi]: "", [AiProviders.OpenAISubscription]: "" },
   },
 };
 interface LegacySettings {

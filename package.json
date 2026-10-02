@@ -27,6 +27,7 @@
     "wxt": "^0.21.3"
   },
   "dependencies": {
+    "@effect/ai-openai": "4.0.0-rc.116",
     "@effect/ai-openai-compat": "4.0.0-rc.116",
     "@effect/ai-typesafe": "4.0.0-rc.116",
     "class-variance-authority": "^0.7.1",

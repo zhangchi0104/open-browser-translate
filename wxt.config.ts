@@ -16,6 +16,8 @@ export default defineConfig({
   webExt: { chromiumProfile, keepProfileChanges: true },
   manifest: {
     permissions: ["storage"],
-    host_permissions: ["https://api.typesafe.ai/*", "https://ai-gateway.vercel.sh/*", "https://api.openai.com/*"],
+    host_permissions: ["https://api.typesafe.ai/*", "https://ai-gateway.vercel.sh/*", "https://api.openai.com/*",
+      // Sign in with ChatGPT: token exchange, and reading the code from the loopback callback tab.
+      "https://auth.openai.com/*", "http://127.0.0.1/*"],
   },
 });

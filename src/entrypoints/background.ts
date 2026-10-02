@@ -4,6 +4,9 @@ import { aiSettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
 import { missingConfiguration, translateBatch } from "../modules/translator/translate-batch";
+import {
+  chatgptCredentials, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
+} from "../modules/ai/chatgpt-session";
 
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import { createContextCarryover } from "../modules/translation-context/carryover";
@@ -19,10 +22,17 @@ export default defineBackground(() => {
   // Private windows keep no context, so nothing about them is written to disk.
   const pageUrl = (sender: { url?: string; tab?: { url?: string; incognito?: boolean } }) =>
     sender.tab?.incognito ? undefined : sender.tab?.url ?? sender.url;
+  browser.tabs.onUpdated.addListener((tabId, change) => { void handleChatGPTNavigation(tabId, change.url); });
+  browser.tabs.onRemoved.addListener((tabId) => { void handleChatGPTTabClosed(tabId); });
   browser.runtime.onMessage.addListener((message, sender) => {
     if (sender.id !== browser.runtime.id) return;
     if (message?.type === "open-settings") {
       return browser.runtime.openOptionsPage().then(() => ({ opened: true }));
+    }
+    if (message?.type === "chatgpt-sign-in") return startChatGPTSignIn();
+    if (message?.type === "chatgpt-sign-out") return signOutChatGPT().then(() => ({ status: "ok" }));
+    if (message?.type === "chatgpt-models") {
+      return listChatGPTModels().then((models) => ({ status: "ok", models }), () => ({ status: "failed" }));
     }
     if (message?.type === "prepare-translation") {
       return (async () => {
@@ -30,7 +40,7 @@ export default defineBackground(() => {
           const context = Schema.decodeUnknownSync(PageContext)(message.context);
           if (context.sample.length > 12000 || context.title.length > 1000 || context.pagination.length > 20) return { status: "failed" };
           const settings = await aiSettings.getValue();
-          const missing = missingConfiguration(settings);
+          const missing = missingConfiguration(settings, await chatgptCredentials());
           if (missing) return { status: "not-configured", purpose: missing };
           await contexts.notePage(pageUrl(sender), context.title);
           return { status: "ok", plan: await Effect.runPromise(decideTranslationPlan(context, settings)) };
@@ -48,7 +58,7 @@ export default defineBackground(() => {
           if (message.type === "translate-content") {
             const url = pageUrl(sender);
             const context = await contexts.contextFor(url, blocks.map(({ text }) => text));
-            const result = await Effect.runPromise(translateBatch(blocks, message.mode === "main" ? "main" : "all", settings, context));
+            const result = await Effect.runPromise(translateBatch(blocks, message.mode === "main" ? "main" : "all", settings, await chatgptCredentials(), context));
             await contexts.record(url, blocks, result);
             return result;
           }
