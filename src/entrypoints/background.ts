@@ -10,13 +10,15 @@ import {
 
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import { createContextCarryover } from "../modules/translation-context/carryover";
+import type { TranslationContext } from "../modules/translation-context";
 
+const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
 const Blocks = Schema.Array(Schema.Struct({ text: Schema.String, tag: Schema.String }));
 
 export default defineBackground(() => {
   const contexts = createContextCarryover({
-    get: () => storage.getItem("local:translationContexts"),
-    set: (value) => storage.setItem("local:translationContexts", value),
+    get: () => translationContexts.getValue(),
+    set: (value) => translationContexts.setValue(value),
   });
   // The sender's URL, not anything in the message, decides which site's context is used.
   // Private windows keep no context, so nothing about them is written to disk.
@@ -42,7 +44,7 @@ export default defineBackground(() => {
           const settings = await aiSettings.getValue();
           const missing = missingConfiguration(settings, await chatgptCredentials());
           if (missing) return { status: "not-configured", purpose: missing };
-          await contexts.notePage(pageUrl(sender), context.title);
+          void contexts.notePage(pageUrl(sender), context.title);
           return { status: "ok", plan: await Effect.runPromise(decideTranslationPlan(context, settings)) };
         } catch { return { status: "failed" }; }
       })();
@@ -56,11 +58,9 @@ export default defineBackground(() => {
           }
           const settings = await aiSettings.getValue();
           if (message.type === "translate-content") {
-            const url = pageUrl(sender);
-            const context = await contexts.contextFor(url, blocks.map(({ text }) => text));
-            const result = await Effect.runPromise(translateBatch(blocks, message.mode === "main" ? "main" : "all", settings, await chatgptCredentials(), context));
-            await contexts.record(url, blocks, result);
-            return result;
+            const chatgpt = chatgptCredentials();
+            return await contexts.translate(pageUrl(sender), blocks, async (context) =>
+              Effect.runPromise(translateBatch(blocks, message.mode === "main" ? "main" : "all", settings, await chatgpt, context)));
           }
           return await Effect.runPromise(analyzePageContent(blocks, settings));
         } catch {

@@ -8,7 +8,7 @@ import type { AISettings } from "../settings/model";
 import type { PromptContext, TermPair } from "../translation-context";
 
 export type TranslationBatchResult =
-  | { status: "ok"; translations: (string | null)[]; terms: TermPair[]; analysisFallbackCount: number }
+  | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number }
   | { status: "not-configured"; purpose: "analysis" | "translation" }
   | { status: "failed" };
 

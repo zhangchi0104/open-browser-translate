@@ -18,21 +18,17 @@ export const TranslationContext = Schema.Struct({
 export type TranslationContext = typeof TranslationContext.Type;
 
 /** The slice of a context sent with one batch. */
-export interface PromptContext {
-  pages: readonly string[];
-  glossary: readonly TermPair[];
-  recent: readonly TermPair[];
-}
+export type PromptContext = Omit<TranslationContext, "updatedAt">;
 
-export const MAX_PAGES = 5;
+const MAX_PAGES = 5;
 export const MAX_GLOSSARY = 60;
 export const MAX_RECENT = 3;
 // Only glossary terms that occur in the batch are sent, at most this many.
-export const MAX_PROMPT_TERMS = 20;
-export const MAX_TERMS_PER_BATCH = 10;
-export const MAX_TERM_LENGTH = 80;
-export const MAX_RECENT_LENGTH = 300;
-export const MAX_TITLE_LENGTH = 200;
+const MAX_PROMPT_TERMS = 20;
+const MAX_TERMS_PER_BATCH = 10;
+const MAX_TERM_LENGTH = 80;
+const MAX_RECENT_LENGTH = 300;
+const MAX_TITLE_LENGTH = 200;
 // A site not translated for a week starts fresh.
 export const CONTEXT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 

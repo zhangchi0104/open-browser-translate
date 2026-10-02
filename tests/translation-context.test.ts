@@ -9,6 +9,7 @@ import {
   notePage,
   promptContext,
   recordBatch,
+  type PromptContext,
   type TranslationContext,
 } from "../src/modules/translation-context";
 import { createContextCarryover, MAX_SITES } from "../src/modules/translation-context/carryover";
@@ -61,33 +62,43 @@ test("only glossary terms that appear in the batch are sent", () => {
   assert.equal(promptContext(emptyContext(0), ["anything"]), undefined);
 });
 
+// Runs a batch through the carryover and returns the context the batch was sent with.
+async function batch(carryover: ReturnType<typeof createContextCarryover>, url: string, blocks: { text: string; tag: string }[], result: TranslationBatchResult = ok(blocks.map(() => null))) {
+  let sent: PromptContext | undefined;
+  await carryover.translate(url, blocks, async (context) => { sent = context; return result; });
+  await carryover.flush();
+  return sent;
+}
+
 test("context carries from one viewport batch to the next and across pages on the site", async () => {
   const store = memoryStore();
   const carryover = createContextCarryover(store, () => 1000);
   await carryover.notePage("https://docs.example.com/intro", "Intro to Fibers");
-  assert.deepEqual(await carryover.contextFor("https://docs.example.com/intro", ["Fibers are light"]),
-    { pages: ["Intro to Fibers"], glossary: [], recent: [] });
+  assert.deepEqual(await batch(carryover, "https://docs.example.com/intro", [{ text: "A Fiber is a virtual thread", tag: "p" }, { text: "Menu", tag: "a" }],
+    ok(["纤程是一种虚拟线程", null], [{ source: "Fiber", target: "纤程" }])),
+  { pages: ["Intro to Fibers"], glossary: [], recent: [] });
 
-  // First viewport batch teaches the glossary...
-  await carryover.record("https://docs.example.com/intro", [{ text: "A Fiber is a virtual thread", tag: "p" }, { text: "Menu", tag: "a" }],
-    ok(["纤程是一种虚拟线程", null], [{ source: "Fiber", target: "纤程" }]));
-  // ...the next batch on the same page sees it...
-  const next = await carryover.contextFor("https://docs.example.com/intro", ["Forking a fiber"]);
+  // The first viewport batch taught the glossary; the next batch on the page sees it...
+  const next = await batch(carryover, "https://docs.example.com/intro", [{ text: "Forking a fiber", tag: "p" }]);
   assert.deepEqual(next!.glossary, [{ source: "Fiber", target: "纤程" }]);
   assert.deepEqual(next!.recent, [{ source: "A Fiber is a virtual thread", target: "纤程是一种虚拟线程" }]);
 
   // ...and so does a later page on the same site, but not another site.
   await carryover.notePage("https://docs.example.com/scheduling", "Scheduling");
-  const later = await carryover.contextFor("https://docs.example.com/scheduling", ["Fiber scheduling"]);
+  const later = await batch(carryover, "https://docs.example.com/scheduling", [{ text: "Fiber scheduling", tag: "p" }]);
   assert.deepEqual(later!.pages, ["Intro to Fibers", "Scheduling"]);
   assert.deepEqual(later!.glossary, [{ source: "Fiber", target: "纤程" }]);
-  assert.equal(await carryover.contextFor("https://news.example.org/", ["Fiber scheduling"]), undefined);
+  assert.equal(await batch(carryover, "https://news.example.org/", [{ text: "Fiber scheduling", tag: "p" }]), undefined);
+
+  // A fresh worker reads the same context back from storage.
+  const restarted = createContextCarryover(store, () => 2000);
+  assert.deepEqual((await batch(restarted, "https://docs.example.com/x", [{ text: "Fiber", tag: "p" }]))!.glossary, [{ source: "Fiber", target: "纤程" }]);
 });
 
 test("failed batches record nothing and concurrent updates are not lost", async () => {
   const store = memoryStore();
   const carryover = createContextCarryover(store, () => 1000);
-  await carryover.record("https://a.example/", [{ text: "Hello", tag: "p" }], { status: "failed" });
+  await batch(carryover, "https://a.example/", [{ text: "Hello", tag: "p" }], { status: "failed" });
   assert.equal(store.peek(), undefined);
   await Promise.all(Array.from({ length: 5 }, (_, index) => carryover.notePage("https://a.example/", `Page ${index}`)));
   assert.equal(store.peek()["https://a.example"]!.pages.length, 5);
@@ -97,9 +108,10 @@ test("stale, corrupt and excess site contexts are dropped", async () => {
   const fresh = { ...emptyContext(CONTEXT_TTL_MS), pages: ["Fresh"] };
   const stale = { ...emptyContext(0), pages: ["Stale"] };
   const now = CONTEXT_TTL_MS + 10;
-  assert.equal(await createContextCarryover(memoryStore({ "https://a.example": stale }), () => now).contextFor("https://a.example/", ["x"]), undefined);
-  assert.deepEqual((await createContextCarryover(memoryStore({ "https://a.example": fresh }), () => now).contextFor("https://a.example/", ["x"]))!.pages, ["Fresh"]);
-  assert.equal(await createContextCarryover(memoryStore("garbage"), () => now).contextFor("https://a.example/", ["x"]), undefined);
+  const block = [{ text: "x", tag: "p" }];
+  assert.equal(await batch(createContextCarryover(memoryStore({ "https://a.example": stale }), () => now), "https://a.example/", block), undefined);
+  assert.deepEqual((await batch(createContextCarryover(memoryStore({ "https://a.example": fresh }), () => now), "https://a.example/", block))!.pages, ["Fresh"]);
+  assert.equal(await batch(createContextCarryover(memoryStore("garbage"), () => now), "https://a.example/", block), undefined);
 
   const store = memoryStore();
   let clock = 0;
