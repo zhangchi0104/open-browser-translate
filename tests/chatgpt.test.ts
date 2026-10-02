@@ -90,6 +90,17 @@ test("sign-in exchanges the code, verifies the ID token, and requires plan scope
   });
 });
 
+test("sign-in failures carry the server's own error text", async () => {
+  const auth: ChatGPTAuth = { hostId: "urn:uuid:host" };
+  const { attempt } = await createSignIn(auth);
+  const callback = `${CHATGPT_REDIRECT_URI}?code=the-code&state=${attempt.state}&client_id=oaiapp_1`;
+  const rejecting: typeof fetch = async () => Response.json({ error: "invalid_request", error_description: "redirect_uri mismatch" }, { status: 400 });
+  await assert.rejects(completeSignIn(auth, attempt, callback, rejecting),
+    { reason: "invalid", message: "token endpoint returned 400 (invalid_request: redirect_uri mismatch)" });
+  assert.throws(() => parseCallback(`${CHATGPT_REDIRECT_URI}?error=access_denied&error_description=user%20cancelled&state=${attempt.state}`, attempt),
+    { reason: "denied", message: "access_denied: user cancelled" });
+});
+
 const completed = {
   id: "resp_1", object: "response", created_at: 1, model: "gpt-test", status: "completed",
   output: [{ type: "message", id: "msg_1", role: "assistant", status: "completed", content: [{ type: "output_text", text: "你好", annotations: [] }] }],

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } fr
 import { ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import { aiSettings, validateModel, type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider } from "@/modules/settings";
 import { AiProviders, DEFAULT_DECISION_MODEL } from "@/modules/ai/providers";
-import { chatgptAuth } from "@/modules/ai/chatgpt-session";
+import { chatgptAuth, chatgptSignInResult } from "@/modules/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/ai/chatgpt-session";
 import type { ChatGPTModel } from "@/modules/ai/chatgpt-auth";
 import { Button } from "@/components/ui/button";
@@ -65,6 +65,19 @@ const signInErrors: Record<Exclude<SignInResult, { status: "ok" }>["reason"], st
   expired: "登录已过期，请重试。",
   invalid: "登录失败，请重试。",
 };
+
+/** Waits for the background to record how the sign-in attempt identified by `state` ended. */
+function signInOutcome(state: string): Promise<SignInResult> {
+  return new Promise((resolve) => {
+    const done = (value: Awaited<ReturnType<typeof chatgptSignInResult.getValue>>) => {
+      if (value?.state !== state) return;
+      unwatch();
+      resolve(value);
+    };
+    const unwatch = chatgptSignInResult.watch(done);
+    chatgptSignInResult.getValue().then(done, () => {});
+  });
+}
 
 function useChatGPT() {
   const [email, setEmail] = useState<string | null>();
@@ -171,12 +184,13 @@ export function App() {
     setBusy(true);
     setStatus({ text: "请在新打开的页面中登录 ChatGPT…" });
     try {
-      const result: SignInResult = await browser.runtime.sendMessage({ type: "chatgpt-sign-in" });
+      const started: { status: "started"; state: string } = await browser.runtime.sendMessage({ type: "chatgpt-sign-in" });
+      const result = await signInOutcome(started.state);
       setStatus(result.status === "ok"
         ? { text: `已登录 ${result.email}` + (dirty ? "；其他更改尚未保存" : "") }
-        : { text: signInErrors[result.reason], error: true });
-    } catch {
-      setStatus({ text: "登录失败，请重试。", error: true });
+        : { text: signInErrors[result.reason] + (result.detail ? `（${result.detail}）` : ""), error: true });
+    } catch (error) {
+      setStatus({ text: `登录失败，请重试。（${error instanceof Error ? error.message : String(error)}）`, error: true });
     } finally {
       setBusy(false);
     }
