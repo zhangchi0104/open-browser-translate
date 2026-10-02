@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { Bug, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import { aiSettings, validateModel, type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider } from "@/modules/settings";
-import { AiProviders, DEFAULT_DECISION_MODEL } from "@/modules/ai/providers";
+import { AiProviders, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL, GATEWAY_DECISION_MODELS } from "@/modules/ai/providers";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/ai/chatgpt-session";
 import type { ChatGPTModel } from "@/modules/ai/chatgpt-auth";
@@ -34,9 +34,14 @@ const purposes = {
     title: "内容分析",
     description: "判断哪些内容需要翻译。",
     modelLabel: "分析模型",
-    providers: [AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
-    placeholder: (p: SettingsProvider) => p === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "模型 ID",
-    help: () => `使用 OpenAI API key，默认模型为 ${DEFAULT_DECISION_MODEL}。`,
+    // The gateway runs evaluation models built for decisions; OpenAI's Decisions API isn't open
+    // yet, so the OpenAI providers answer decisions with an ordinary model.
+    providers: [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
+    placeholder: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? DEFAULT_GATEWAY_DECISION_MODEL
+      : p === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "模型 ID",
+    help: (p: SettingsProvider) => p === AiProviders.VercelAIGateway
+      ? `使用网关上 Jev 这类专门做判断的评估模型，默认为 ${DEFAULT_GATEWAY_DECISION_MODEL}。`
+      : `使用 OpenAI API key，默认模型为 ${DEFAULT_DECISION_MODEL}。`,
   },
   translation: {
     title: "翻译",
@@ -84,6 +89,8 @@ function signInOutcome(state: string): Promise<SignInResult> {
 type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: ChatGPTModel[] };
 type CatalogProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
 interface LoadedCatalog { catalog: Catalog; reload: () => void }
+
+const gatewayDecisionCatalog: LoadedCatalog = { catalog: { status: "ok", models: GATEWAY_DECISION_MODELS }, reload: () => {} };
 
 /** Asks the background for a model catalog with `request`, waiting `delay` ms so typing a key doesn't fire a request per keystroke. */
 function useCatalog(request: { type: string; apiKey?: string } | undefined, delay = 0): LoadedCatalog {
@@ -138,11 +145,14 @@ export function App() {
   const modelInputs = { analysis: useRef<HTMLInputElement>(null), translation: useRef<HTMLInputElement>(null) };
   const chatgpt = useChatGPT();
   const openaiKey = draft?.providers[AiProviders.OpenAIApi].apiKey.trim();
-  const catalogs: Record<CatalogProvider, LoadedCatalog> = {
+  const shared = {
     [AiProviders.OpenAISubscription]: chatgpt.models,
     [AiProviders.OpenAIApi]: useCatalog(openaiKey ? { type: "openai-models", apiKey: openaiKey } : undefined, 600),
-    // The gateway's catalog is public, so it loads without a key.
-    [AiProviders.VercelAIGateway]: useCatalog({ type: "gateway-models" }),
+  };
+  // Gateway analysis picks from the fixed evaluation models; translation loads the public language catalog.
+  const catalogs: Record<Purpose, Record<CatalogProvider, LoadedCatalog>> = {
+    analysis: { ...shared, [AiProviders.VercelAIGateway]: gatewayDecisionCatalog },
+    translation: { ...shared, [AiProviders.VercelAIGateway]: useCatalog({ type: "gateway-models" }) },
   };
 
   useEffect(() => {
@@ -299,7 +309,7 @@ export function App() {
                       key={purpose}
                       purpose={purpose}
                       draft={draft}
-                      catalogs={catalogs}
+                      catalogs={catalogs[purpose]}
                       error={errors[purpose]}
                       inputRef={modelInputs[purpose]}
                       onProviderChange={(provider) => edit((next) => setProvider(next, purpose, provider))}
@@ -449,8 +459,11 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
   // A list to pick from replaces the free-text field once the provider's catalog has loaded.
   const choices = catalog?.status === "ok" && catalog.models.length ? catalog.models : undefined;
   const unlisted = choices && model && !choices.some((m) => m.slug === model);
+  // Gateway analysis offers the fixed evaluation models (Jev and similar) instead of a loaded catalog.
+  const evaluation = purpose === "analysis" && provider === AiProviders.VercelAIGateway;
   const help = error ?? (!catalog ? config.help(provider)
-    : choices ? (unlisted ? `模型 ${model} 不在${text.source}的模型列表中，请重新选择。` : text.listed(config.help(provider)))
+    : choices && unlisted ? (evaluation ? `模型 ${model} 不是可选的评估模型，请重新选择。` : `模型 ${model} 不在${text.source}的模型列表中，请重新选择。`)
+    : choices ? (evaluation ? config.help(provider) : text.listed(config.help(provider)))
     : catalog.status === "ok" ? `${text.source}没有返回可用模型，可直接填写模型 ID。`
     : catalog.status === "loading" ? "正在读取可用模型…"
     : catalog.status === "failed" ? "无法读取模型列表，可直接填写模型 ID，或稍后重试。"

@@ -1,6 +1,6 @@
-import { AiProviders, DEFAULT_DECISION_MODEL } from "../ai/providers";
+import { AiProviders, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL } from "../ai/providers";
 
-export type AnalysisProvider = AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
+export type AnalysisProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
 export type TranslationProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
 export type SettingsProvider = AnalysisProvider | TranslationProvider;
 /** Providers connected with an API key; the ChatGPT subscription signs in instead. */
@@ -25,8 +25,12 @@ export const defaultSettings: AISettings = {
     [AiProviders.OpenAIApi]: { apiKey: "" },
   },
   analysis: {
-    provider: AiProviders.OpenAIApi,
-    models: { [AiProviders.OpenAIApi]: DEFAULT_DECISION_MODEL, [AiProviders.OpenAISubscription]: "" },
+    provider: AiProviders.VercelAIGateway,
+    models: {
+      [AiProviders.VercelAIGateway]: DEFAULT_GATEWAY_DECISION_MODEL,
+      [AiProviders.OpenAIApi]: DEFAULT_DECISION_MODEL,
+      [AiProviders.OpenAISubscription]: "",
+    },
   },
   translation: {
     provider: AiProviders.VercelAIGateway,
@@ -64,6 +68,7 @@ export function migrateSettings(old: V1Settings | null): V2Settings {
  */
 export function migrateToOpenAIAnalysis(old: V2Settings): AISettings {
   const next = structuredClone(defaultSettings);
+  next.analysis.provider = AiProviders.OpenAIApi;
   for (const provider of [AiProviders.VercelAIGateway, AiProviders.OpenAIApi] as const) {
     next.providers[provider].apiKey = old.providers?.[provider]?.apiKey ?? "";
   }
@@ -71,6 +76,18 @@ export function migrateToOpenAIAnalysis(old: V2Settings): AISettings {
   if (next.translation.provider === AiProviders.OpenAISubscription) {
     next.analysis.provider = AiProviders.OpenAISubscription;
     next.analysis.models.OpenAISubscription = next.translation.models.OpenAISubscription;
+  }
+  return next;
+}
+/**
+ * Version 4 adds the Vercel AI Gateway for analysis while OpenAI's Decisions API is
+ * unavailable. Analysis left on an OpenAI API key that was never filled in moves to the gateway.
+ */
+export function migrateToGatewayAnalysis(old: AISettings): AISettings {
+  const next = structuredClone(old);
+  next.analysis.models = { ...defaultSettings.analysis.models, ...old.analysis.models };
+  if (next.analysis.provider === AiProviders.OpenAIApi && !next.providers[AiProviders.OpenAIApi].apiKey.trim()) {
+    next.analysis.provider = AiProviders.VercelAIGateway;
   }
   return next;
 }

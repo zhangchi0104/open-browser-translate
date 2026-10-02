@@ -56,6 +56,10 @@ and translation settings, discards TypeSafe keys and Jev model IDs, and points
 analysis at OpenAI: the ChatGPT sign-in when translation already used it,
 otherwise the OpenAI API key with `gpt-6-luna`.
 
+Settings v4 adds the Vercel AI Gateway for analysis and makes it the default,
+with `typesafe-ai/jev`. Analysis left on an OpenAI API key that was never
+filled in moves to the gateway; configured OpenAI and ChatGPT choices stay.
+
 ## Content analysis on OpenAI
 
 OpenAI announced a Decisions API (DevDay, 2026-09-29), but it is in limited
@@ -72,6 +76,18 @@ tuning against live pages.
 `chatgptDecisionLayer` runs it on the ChatGPT plan through `chatgpt.ts`. When the
 Decisions API is documented, replace the request in `openai-decisions.ts`; the
 rest of the extension depends only on `DecisionModel`.
+
+## Content analysis on the Vercel AI Gateway
+
+The default until the Decisions API opens. The gateway lists models of type
+`evaluation` (`typesafe-ai/jev`, `convaiinnovations/laya`, `liquid/d1`) that take
+typed questions and return probabilities without generating text.
+`vercelDecisionLayer` (`gateway-decisions.ts`) sends `DecisionModel` decisions to
+them through the TypeSafe-compatible System One API at
+`https://ai-gateway.vercel.sh/typesafe/v1`, so no structured-output simulation
+is involved. The options page offers the evaluation models hard-coded in
+`GATEWAY_DECISION_MODELS` (`providers.ts`) for gateway analysis, and loads the
+gateway's language models for gateway translation (`gateway-models.ts`).
 
 ## ChatGPT subscription (Sign in with ChatGPT)
 

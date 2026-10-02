@@ -113,6 +113,7 @@ function sse(...events: unknown[]) {
 
 test("subscription translation streams Responses requests with the OAuth token", async () => {
   const settings = structuredClone(defaultSettings);
+  settings.analysis.provider = AiProviders.OpenAIApi;
   settings.translation.provider = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
   settings.providers.OpenAIApi.apiKey = "test-direct";

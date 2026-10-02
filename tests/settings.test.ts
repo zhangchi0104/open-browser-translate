@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Schema } from "effect";
-import { defaultSettings, migrateSettings, migrateToOpenAIAnalysis, validateModel } from "../src/modules/settings/model";
+import { defaultSettings, migrateSettings, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, validateModel } from "../src/modules/settings/model";
 import { AiProviders } from "../src/modules/ai/providers";
 import { analysisLayerFromSettings, translationLayerFromSettings } from "../src/modules/ai/configured";
 import { decisionResponse, isDecisionRequest } from "./decision-mock";
@@ -33,7 +33,7 @@ test("migration keeps translation settings and moves analysis from Jev to OpenAI
   assert.equal("TypeSafe" in settings.providers, false);
   const jev = migrateToOpenAIAnalysis(migrateSettings({ providers: { VercelAIGateway: { model: "typesafe-ai/jev" } } }));
   assert.equal(jev.translation.models.VercelAIGateway, "");
-  assert.deepEqual(migrateToOpenAIAnalysis(migrateSettings(null)), defaultSettings);
+  assert.deepEqual(migrateToGatewayAnalysis(migrateToOpenAIAnalysis(migrateSettings(null))), defaultSettings);
 
   const signedIn = structuredClone(v2);
   signedIn.providers.OpenAIApi = { apiKey: "test-direct" };
@@ -46,6 +46,7 @@ test("migration keeps translation settings and moves analysis from Jev to OpenAI
 
 test("analysis and translation route independently through configured providers", async () => {
   const settings = structuredClone(defaultSettings);
+  settings.analysis.provider = AiProviders.OpenAIApi;
   settings.providers.VercelAIGateway.apiKey = "test-gateway";
   settings.providers.OpenAIApi.apiKey = "test-direct";
   settings.translation.models.VercelAIGateway = "vendor/translator";
@@ -76,6 +77,7 @@ test("analysis and translation route independently through configured providers"
 test("page analysis requires configuration and returns only serializable decisions", async () => {
   const { analyzePageContent } = await import("../src/modules/content-analyzer/page-analysis");
   const settings = structuredClone(defaultSettings);
+  settings.analysis.provider = AiProviders.OpenAIApi;
   const blocks = [{ text: "Article text", tag: "p" }, { text: "Home", tag: "a" }];
   assert.deepEqual(await Effect.runPromise(analyzePageContent(blocks, settings)), { status: "not-configured" });
   settings.providers.OpenAIApi.apiKey = "test-direct";
@@ -92,4 +94,35 @@ test("page analysis requires configuration and returns only serializable decisio
   const failedFetch: typeof globalThis.fetch = async () => Response.json({ message: "Unauthorized", error_type: "authentication_error" }, { status: 401 });
   const fallback = await Effect.runPromise(analyzePageContent(blocks, settings).pipe(Effect.provideService(FetchHttpClient.Fetch, failedFetch)));
   assert.deepEqual(fallback, { status: "ok", keep: [true, true], fallbackCount: 2 });
+});
+
+test("version 4 moves analysis without an OpenAI key to the gateway and keeps configured choices", () => {
+  const v3 = migrateToOpenAIAnalysis(migrateSettings({ providers: { VercelAIGateway: { apiKey: "test-gateway", model: "vendor/translator" } } }));
+  const moved = migrateToGatewayAnalysis(v3);
+  assert.equal(moved.analysis.provider, AiProviders.VercelAIGateway);
+  assert.equal(moved.analysis.models.VercelAIGateway, "typesafe-ai/jev");
+  assert.equal(moved.providers.VercelAIGateway.apiKey, "test-gateway");
+  assert.equal(moved.translation.models.VercelAIGateway, "vendor/translator");
+
+  const direct = structuredClone(v3);
+  direct.providers.OpenAIApi.apiKey = "test-direct";
+  assert.equal(migrateToGatewayAnalysis(direct).analysis.provider, AiProviders.OpenAIApi);
+  const plan = structuredClone(v3);
+  plan.analysis.provider = AiProviders.OpenAISubscription;
+  assert.equal(migrateToGatewayAnalysis(plan).analysis.provider, AiProviders.OpenAISubscription);
+});
+
+test("gateway analysis asks an evaluation model through the gateway's System One API", async () => {
+  const settings = structuredClone(defaultSettings);
+  settings.providers.VercelAIGateway.apiKey = "test-gateway";
+  const fetchMock: typeof globalThis.fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.equal(String(input), "https://ai-gateway.vercel.sh/typesafe/v1/systemone");
+    assert.equal(body.model, "typesafe-ai/jev");
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-gateway");
+    return Response.json({ model: body.model, answers: { relevant: { type: "noul", noul: 0.9 } } });
+  };
+  const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is this relevant?", criteria: { true: "Relevant", false: "Irrelevant" } }) } });
+  const analysis = await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
+  assert.equal(analysis.answers.relevant.probability, 0.9);
 });

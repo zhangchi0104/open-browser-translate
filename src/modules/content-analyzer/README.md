@@ -1,8 +1,10 @@
 # Content analyzer
 
-`AI` re-exports Effect 4's `DecisionModel` service. `openAIDecisionLayer({ apiKey })`
-provides it on an OpenAI model (see `../ai/README.md`). The API key is supplied
-as `Redacted<string>` at runtime. The default model is `gpt-6-luna`.
+`AI` re-exports Effect 4's `DecisionModel` service. By default
+`vercelDecisionLayer({ apiKey })` provides it with the Vercel AI Gateway's Jev
+evaluation model (`typesafe-ai/jev`); `openAIDecisionLayer({ apiKey })` provides it
+on an OpenAI model, `gpt-6-luna` by default (see `../ai/README.md`). API keys are
+supplied as `Redacted<string>` at runtime.
 
 ```ts
 const analyzerLayer = ContentAnalyzer.Live.pipe(

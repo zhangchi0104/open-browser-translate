@@ -3,11 +3,13 @@ import { test } from "node:test";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { defaultSettings } from "../src/modules/settings/model";
+import { AiProviders } from "../src/modules/ai/providers";
 import { decideTranslationPlan } from "../src/modules/content-analyzer/page-plan";
 import { translateBatch } from "../src/modules/translator/translate-batch";
 import { decisionResponse, isDecisionRequest } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
+settings.analysis.provider = AiProviders.OpenAIApi;
 settings.providers.VercelAIGateway.apiKey = "test-placeholder";
 settings.providers.OpenAIApi.apiKey = "test-openai";
 settings.translation.models.VercelAIGateway = "test/translator";
