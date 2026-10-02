@@ -60,3 +60,25 @@ Vercel model IDs beginning with `typesafe-ai/` migrate to analysis; other Vercel
 model IDs migrate to translation. Direct TypeSafe model IDs migrate to analysis.
 
 Vercel TypeSafe API reference: https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe
+
+## ChatGPT subscription (Sign in with ChatGPT)
+
+Translation can run on the user's ChatGPT plan instead of an API key, using
+OpenAI's official flow for open-source, locally hosted apps:
+https://developers.openai.com/siwc/token-sharing-open-source
+
+- `chatgpt-auth.ts` holds the protocol: dynamic client registration
+  (`dynamic_agent_client` on first sign-in, then the issued `oaiapp_...` ID),
+  PKCE, ID token verification against OpenAI's JWKS, refresh, and model listing.
+- `chatgpt-session.ts` wires it into the extension. Sign-in opens a tab on
+  OpenAI's authorize page. OpenAI only accepts loopback redirects, so the
+  background reads the code from the tab when it navigates to
+  `http://127.0.0.1:45173/callback` (nothing has to listen on that port) and
+  closes the tab. Tokens are stored in `local:chatgptAuth`, separate from
+  `aiSettings`.
+- `chatgpt.ts` provides `LanguageModel` through `@effect/ai-openai`'s Responses
+  adapter. Plan usage requires `stream: true` and `store: false`, so the HTTP
+  client streams every request and returns the `response.completed` payload to
+  the adapter.
+
+Analysis still uses Jev through TypeSafe or Vercel.
