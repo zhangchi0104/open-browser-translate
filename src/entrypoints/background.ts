@@ -42,10 +42,11 @@ export default defineBackground(() => {
           const context = Schema.decodeUnknownSync(PageContext)(message.context);
           if (context.sample.length > 12000 || context.title.length > 1000 || context.pagination.length > 20) return { status: "failed" };
           const settings = await aiSettings.getValue();
-          const missing = missingConfiguration(settings, await chatgptCredentials());
+          const chatgpt = await chatgptCredentials();
+          const missing = missingConfiguration(settings, chatgpt);
           if (missing) return { status: "not-configured", purpose: missing };
           void contexts.notePage(pageUrl(sender), context.title);
-          return { status: "ok", plan: await Effect.runPromise(decideTranslationPlan(context, settings)) };
+          return { status: "ok", plan: await Effect.runPromise(decideTranslationPlan(context, settings, chatgpt)) };
         } catch { return { status: "failed" }; }
       })();
     }
@@ -57,12 +58,12 @@ export default defineBackground(() => {
             return { status: "failed" };
           }
           const settings = await aiSettings.getValue();
+          const chatgpt = chatgptCredentials();
           if (message.type === "translate-content") {
-            const chatgpt = chatgptCredentials();
             return await contexts.translate(pageUrl(sender), blocks, async (context) =>
               Effect.runPromise(translateBatch(blocks, message.mode === "main" ? "main" : "all", settings, await chatgpt, context)));
           }
-          return await Effect.runPromise(analyzePageContent(blocks, settings));
+          return await Effect.runPromise(analyzePageContent(blocks, settings, await chatgpt));
         } catch {
           return { status: "failed" };
         }

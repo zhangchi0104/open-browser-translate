@@ -1,6 +1,6 @@
 # Translation flow
 
-The launcher captures source groups, then asks Jev for a page-level plan using
+The launcher captures source groups, then asks the analysis model for a page-level plan using
 bounded text samples, title, article presence, and pagination labels. High
 confidence selects `all` (ordinary webpages) or `main` (reading content only).
 Uncertain or failed planning defaults to `all` and reports fallback.
@@ -27,7 +27,7 @@ above and 1.5 screens below the viewport are queued, nearest first
 content added later (infinite scroll, load more) joins the same queue. Content
 that is never scrolled near is never sent to the provider.
 
-Jev also classifies navigation as single, paginated, or dynamic. Following
+The analysis model also classifies navigation as single, paginated, or dynamic. Following
 pagination links and translating other tabs are not wired up.
 
 Context carries across viewport batches and pages on the same site

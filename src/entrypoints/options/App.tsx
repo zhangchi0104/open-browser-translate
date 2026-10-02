@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import { aiSettings, validateModel, type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider } from "@/modules/settings";
-import { AiProviders } from "@/modules/ai/providers";
+import { AiProviders, DEFAULT_DECISION_MODEL } from "@/modules/ai/providers";
 import { chatgptAuth } from "@/modules/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/ai/chatgpt-session";
 import type { ChatGPTModel } from "@/modules/ai/chatgpt-auth";
@@ -21,25 +21,23 @@ type Status = { text: string; error?: boolean };
 
 const providerLabels: Record<SettingsProvider, string> = {
   [AiProviders.VercelAIGateway]: "Vercel AI Gateway",
-  [AiProviders.TypeSafe]: "TypeSafe 直连",
   [AiProviders.OpenAIApi]: "OpenAI 直连",
   [AiProviders.OpenAISubscription]: "ChatGPT 账号",
 };
 const keyLinks: Record<KeyProvider, string> = {
   [AiProviders.VercelAIGateway]: "https://vercel.com/dashboard",
-  [AiProviders.TypeSafe]: "https://console.typesafe.ai",
   [AiProviders.OpenAIApi]: "https://platform.openai.com/api-keys",
 };
 const purposes = {
   analysis: {
-    title: "内容分析 · Jev",
+    title: "内容分析",
     description: "判断哪些内容需要翻译。",
-    modelLabel: "Jev 模型",
-    providers: [AiProviders.VercelAIGateway, AiProviders.TypeSafe],
-    placeholder: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? "typesafe-ai/jev" : "jev-latest",
-    help: (p: SettingsProvider) => p === AiProviders.VercelAIGateway
-      ? "通过 Vercel 调用 Jev，默认模型为 typesafe-ai/jev。"
-      : "通过 TypeSafe 调用 Jev，默认模型为 jev-latest。",
+    modelLabel: "分析模型",
+    providers: [AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
+    placeholder: (p: SettingsProvider) => p === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "模型 ID",
+    help: (p: SettingsProvider) => p === AiProviders.OpenAISubscription
+      ? "使用 ChatGPT 套餐的额度，无需 API key。请先在「服务商连接」中登录，再从列表选择模型。"
+      : `使用 OpenAI API key，默认模型为 ${DEFAULT_DECISION_MODEL}。`,
   },
   translation: {
     title: "翻译",
@@ -364,7 +362,7 @@ function ChatGPTConnection({ email, onSignIn, onSignOut }: { email: string | nul
     <div className="space-y-3">
       <p className="text-sm">{email === undefined ? "正在读取登录状态…" : email ? `已登录：${email}` : "尚未登录"}</p>
       <p className="text-[13px] text-muted-foreground">
-        使用 OpenAI 官方的 Sign in with ChatGPT 登录，翻译消耗你 ChatGPT 套餐的额度，无需 API key。登录凭据仅保存在当前浏览器的扩展本地存储中。
+        使用 OpenAI 官方的 Sign in with ChatGPT 登录，翻译和内容分析消耗你 ChatGPT 套餐的额度，无需 API key。登录凭据仅保存在当前浏览器的扩展本地存储中。
       </p>
       {email
         ? <Button type="button" variant="outline" size="sm" className="text-muted-foreground" onClick={onSignOut}>退出登录</Button>

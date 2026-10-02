@@ -12,8 +12,9 @@ export type TranslationBatchResult =
   | { status: "not-configured"; purpose: "analysis" | "translation" }
   | { status: "failed" };
 
-export function missingConfiguration(settings: AISettings, chatgpt?: ChatGPTCredentials): "analysis" | "translation" | undefined {
-  for (const purpose of ["analysis", "translation"] as const) {
+type Purpose = "analysis" | "translation";
+export function missingConfiguration(settings: AISettings, chatgpt?: ChatGPTCredentials, purposes: readonly Purpose[] = ["analysis", "translation"]): Purpose | undefined {
+  for (const purpose of purposes) {
     const selected = settings[purpose];
     const model = (selected.models as Record<string, string | undefined>)[selected.provider];
     const connected = selected.provider === AiProviders.OpenAISubscription ? !!chatgpt : !!settings.providers[selected.provider].apiKey.trim();
@@ -31,7 +32,7 @@ export function translateBatch(
   if (missing) return Effect.succeed<TranslationBatchResult>({ status: "not-configured", purpose: missing });
   return Effect.gen(function* () {
     const analyzed = yield* ContentAnalyzer.use((service) => service.analyze(blocks, { mode })).pipe(
-      Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(analysisLayerFromSettings(settings)))),
+      Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(analysisLayerFromSettings(settings, chatgpt)))),
     );
     const selected = analyzed.flatMap((item, index) => item.shouldTranslate ? [index] : []);
     const translated = yield* Translator.use((service) => service.translate(selected.map((index) => blocks[index]!.text), "简体中文", context)).pipe(

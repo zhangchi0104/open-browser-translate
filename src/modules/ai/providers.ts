@@ -1,5 +1,4 @@
 export const enum AiProviders {
-  TypeSafe = "TypeSafe",
   OpenAISubscription = "OpenAISubscription",
   OpenAIApi = "OpenAIApi",
   VercelAIGateway = "VercelAIGateway",
@@ -7,3 +6,6 @@ export const enum AiProviders {
   CloudflareAiGateway = "CloudflareAiGateway",
   Custom = "Custom",
 }
+
+/** Default OpenAI model for content analysis. */
+export const DEFAULT_DECISION_MODEL = "gpt-6-luna";

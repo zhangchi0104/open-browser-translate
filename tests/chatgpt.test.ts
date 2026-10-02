@@ -1,12 +1,12 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { Effect } from "effect";
-import { LanguageModel } from "effect/unstable/ai";
+import { Effect, Schema } from "effect";
+import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import {
   CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, parseCallback, refreshAccount, type ChatGPTAuth,
 } from "../src/modules/ai/chatgpt-auth";
-import { translationLayerFromSettings } from "../src/modules/ai/configured";
+import { analysisLayerFromSettings, translationLayerFromSettings } from "../src/modules/ai/configured";
 import { AiProviders } from "../src/modules/ai/providers";
 import { defaultSettings } from "../src/modules/settings/model";
 import { missingConfiguration } from "../src/modules/translator/translate-batch";
@@ -103,7 +103,7 @@ test("subscription translation streams Responses requests with the OAuth token",
   const settings = structuredClone(defaultSettings);
   settings.translation.provider = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
-  settings.providers.VercelAIGateway.apiKey = "test-gateway";
+  settings.providers.OpenAIApi.apiKey = "test-direct";
   assert.equal(missingConfiguration(settings), "translation");
   const credentials = { accessToken: async () => "oauth-token" };
   assert.equal(missingConfiguration(settings, credentials), undefined);
@@ -146,4 +146,28 @@ test("the translator's structured output works over the subscription", async () 
     Effect.provideService(FetchHttpClient.Fetch, fetchMock),
   ));
   assert.deepEqual(result, { translations: ["你好"], terms: [] });
+});
+
+test("subscription analysis answers decisions through the same streamed Responses requests", async () => {
+  const settings = structuredClone(defaultSettings);
+  settings.analysis.provider = AiProviders.OpenAISubscription;
+  settings.analysis.models.OpenAISubscription = "gpt-test";
+  const credentials = { accessToken: async () => "oauth-token" };
+  const fetchMock: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "https://api.openai.com/v1/responses");
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer oauth-token");
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.model, "gpt-test");
+    assert.equal(body.stream, true);
+    assert.equal(body.text.format.name, "decisions");
+    const text = JSON.stringify({ relevant: { probabilities: { false: 0.1, true: 0.9 } } });
+    const response = { ...completed, output: [{ ...completed.output[0]!, content: [{ type: "output_text", text, annotations: [] }] }] };
+    return sse({ type: "response.completed", response });
+  };
+  const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is this relevant?", criteria: { false: "No", true: "Yes" } }) } });
+  const result = await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(
+    Effect.provide(analysisLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, fetchMock),
+  ));
+  assert.equal(result.answers.relevant.probability, 0.9);
 });
