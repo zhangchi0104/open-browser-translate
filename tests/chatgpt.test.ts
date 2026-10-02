@@ -9,6 +9,7 @@ import {
 import { analysisLayerFromSettings, translationLayerFromSettings } from "../src/modules/ai/configured";
 import { AiProviders } from "../src/modules/ai/providers";
 import { listOpenAIModels } from "../src/modules/ai/openai-models";
+import { describeError } from "../src/modules/debug-log/model";
 import { defaultSettings } from "../src/modules/settings/model";
 import { missingConfiguration } from "../src/modules/translator/translate-batch";
 
@@ -137,10 +138,53 @@ test("subscription translation streams Responses requests with the OAuth token",
   assert.equal(result.text, "你好");
 
   const limited: typeof fetch = async () => sse({ type: "response.failed", response: { ...completed, status: "failed", output: [], error: { code: "subscription_sharing_usage_limit_exceeded", message: "limit" } } });
-  await assert.rejects(Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+  const limit = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
     Effect.provide(translationLayerFromSettings(settings, credentials)),
     Effect.provideService(FetchHttpClient.Fetch, limited),
-  )));
+    Effect.flip,
+  ));
+  assert.equal(limit.reason._tag, "RateLimitError");
+
+  const streamFailed: typeof fetch = async () => sse({ type: "response.failed", response: { ...completed, status: "failed", output: [], error: { code: "server_error", message: "boom from the stream" } } });
+  const failed = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, streamFailed),
+    Effect.flip,
+  ));
+  assert.match(describeError(failed), /boom from the stream/);
+
+  // The plan endpoint can send output only as item events and finish with an empty `output`.
+  const message = completed.output[0]!;
+  const itemsOnly: typeof fetch = async () => sse(
+    { type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_1", summary: [] } },
+    { type: "response.output_item.done", output_index: 0, item: { type: "reasoning", id: "rs_1", summary: [] } },
+    { type: "response.output_item.done", output_index: 1, item: message },
+    { type: "response.completed", response: { ...completed, output: [] } },
+  );
+  const fromItems = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, itemsOnly),
+  ));
+  assert.equal(fromItems.text, "你好");
+  const deltasOnly: typeof fetch = async () => sse(
+    { type: "response.output_text.delta", item_id: "msg_1", output_index: 0, content_index: 0, delta: "你" },
+    { type: "response.output_text.delta", item_id: "msg_1", output_index: 0, content_index: 0, delta: "好" },
+    { type: "response.completed", response: { ...completed, output: [] } },
+  );
+  const fromDeltas = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, deltasOnly),
+  ));
+  assert.equal(fromDeltas.text, "你好");
+
+  // An HTTP error arrives as plain JSON, not a stream; its own message must survive.
+  const rejected: typeof fetch = async () => Response.json({ error: { message: "The 'gpt-test' model is not supported when using Codex with a ChatGPT account.", type: "invalid_request_error" } }, { status: 400 });
+  const failure = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, rejected),
+    Effect.flip,
+  ));
+  assert.match(describeError(failure), /not supported/);
 });
 
 test("the translator's structured output works over the subscription", async () => {
