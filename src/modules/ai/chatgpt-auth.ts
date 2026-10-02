@@ -89,7 +89,8 @@ export function isCallbackUrl(url: string) {
 export function parseCallback(url: string, attempt: SignInAttempt) {
   const params = new URL(url).searchParams;
   if (params.get("state") !== attempt.state) throw new ChatGPTAuthError("invalid", "state mismatch");
-  if (params.get("error")) throw new ChatGPTAuthError("denied", params.get("error")!);
+  const error = params.get("error");
+  if (error) throw new ChatGPTAuthError("denied", [error, params.get("error_description")].filter(Boolean).join(": "));
   const code = params.get("code");
   if (!code) throw new ChatGPTAuthError("invalid", "missing code");
   const clientId = attempt.clientId === DYNAMIC_CLIENT_ID ? params.get("client_id") : attempt.clientId;
@@ -111,8 +112,14 @@ async function requestTokens(fetcher: typeof fetch, form: Record<string, string>
     body: new URLSearchParams({ ...form, resource: CHATGPT_API_URL }),
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new ChatGPTAuthError(body?.error === "invalid_grant" ? "expired" : "invalid", `token endpoint returned ${response.status}`);
+    const text = await response.text().catch(() => "");
+    let body: { error?: unknown; error_description?: unknown } = {};
+    try { body = JSON.parse(text); } catch {}
+    // Keep the server's own explanation: it is the only clue when a live sign-in fails.
+    const detail = typeof body.error === "string"
+      ? [body.error, body.error_description].filter((part) => typeof part === "string" && part).join(": ")
+      : text.slice(0, 300);
+    throw new ChatGPTAuthError(body.error === "invalid_grant" ? "expired" : "invalid", `token endpoint returned ${response.status}${detail ? ` (${detail})` : ""}`);
   }
   return await response.json() as TokenResponse;
 }

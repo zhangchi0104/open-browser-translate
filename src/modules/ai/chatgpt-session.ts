@@ -12,11 +12,16 @@ export const chatgptAuth = storage.defineItem<ChatGPTAuth | null>("local:chatgpt
 const pendingSignIn = storage.defineItem<(SignInAttempt & { tabId: number }) | null>("session:chatgptSignIn", { fallback: null });
 const SIGN_IN_TIMEOUT = 10 * 60_000;
 
-export type SignInResult = { status: "ok"; email: string } | { status: "failed"; reason: ChatGPTAuthError["reason"] | "cancelled" };
-let waiting: ((result: SignInResult) => void) | undefined;
-function settle(result: SignInResult) {
-  waiting?.(result);
-  waiting = undefined;
+export type SignInResult =
+  | { status: "ok"; email: string }
+  | { status: "failed"; reason: ChatGPTAuthError["reason"] | "cancelled"; detail?: string };
+// The outcome is written to storage rather than returned on the options page's message: MV3 stops an
+// idle service worker after ~30s, which closes any open message channel long before a person finishes
+// signing in. `state` ties an outcome to the attempt the options page started.
+export const chatgptSignInResult = storage.defineItem<(SignInResult & { state: string }) | null>("session:chatgptSignInResult", { fallback: null });
+async function settle(state: string, result: SignInResult) {
+  if (result.status === "failed" && result.reason !== "cancelled") console.error("ChatGPT sign-in failed:", result.reason, result.detail);
+  await chatgptSignInResult.setValue({ ...result, state });
 }
 
 async function loadAuth(): Promise<ChatGPTAuth> {
@@ -27,12 +32,14 @@ async function loadAuth(): Promise<ChatGPTAuth> {
   return created;
 }
 
-export async function startChatGPTSignIn(): Promise<SignInResult> {
+/** Opens the sign-in tab and returns the attempt's `state`; the outcome arrives in `chatgptSignInResult`. */
+export async function startChatGPTSignIn(): Promise<{ status: "started"; state: string }> {
+  const previous = await pendingSignIn.getValue();
+  if (previous) await settle(previous.state, { status: "failed", reason: "cancelled" });
   const { url, attempt } = await createSignIn(await loadAuth());
   const tab = await browser.tabs.create({ url });
   await pendingSignIn.setValue({ ...attempt, tabId: tab.id! });
-  settle({ status: "failed", reason: "cancelled" });
-  return new Promise((resolve) => { waiting = resolve; });
+  return { status: "started", state: attempt.state };
 }
 
 /** Registered at background startup: finishes sign-in when OpenAI redirects to the loopback callback. */
@@ -42,13 +49,17 @@ export async function handleChatGPTNavigation(tabId: number, url: string | undef
   if (!attempt || attempt.tabId !== tabId) return;
   await pendingSignIn.setValue(null);
   await browser.tabs.remove(tabId).catch(() => {});
-  if (Date.now() - attempt.createdAt > SIGN_IN_TIMEOUT) return settle({ status: "failed", reason: "expired" });
+  if (Date.now() - attempt.createdAt > SIGN_IN_TIMEOUT) return settle(attempt.state, { status: "failed", reason: "expired" });
   try {
     const next = await completeSignIn(await loadAuth(), attempt, url);
     await chatgptAuth.setValue(next);
-    settle({ status: "ok", email: next.account!.email });
+    await settle(attempt.state, { status: "ok", email: next.account!.email });
   } catch (error) {
-    settle({ status: "failed", reason: error instanceof ChatGPTAuthError ? error.reason : "invalid" });
+    await settle(attempt.state, {
+      status: "failed",
+      reason: error instanceof ChatGPTAuthError ? error.reason : "invalid",
+      detail: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -56,7 +67,7 @@ export async function handleChatGPTTabClosed(tabId: number) {
   const attempt = await pendingSignIn.getValue();
   if (attempt?.tabId !== tabId) return;
   await pendingSignIn.setValue(null);
-  settle({ status: "failed", reason: "cancelled" });
+  await settle(attempt.state, { status: "failed", reason: "cancelled" });
 }
 
 export async function signOutChatGPT() {
