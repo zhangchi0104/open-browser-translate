@@ -189,10 +189,9 @@ export async function refreshAccount(auth: ChatGPTAuth, fetcher: typeof fetch = 
 export interface ChatGPTModel { slug: string; displayName: string }
 export async function listModels(accessToken: string, fetcher: typeof fetch = fetch): Promise<ChatGPTModel[]> {
   const response = await fetcher(`${CHATGPT_API_URL}/models`, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!response.ok) throw new Error(`models request failed with ${response.status}`);
-  const body = await response.json() as { data?: { slug?: string; id?: string; display_name?: string; visibility?: string }[] };
-  return (body.data ?? []).flatMap((model) => {
-    const slug = model.slug ?? model.id;
-    return model.visibility === "list" && slug ? [{ slug, displayName: model.display_name ?? slug }] : [];
-  });
+  if (!response.ok) throw new Error(`models request failed with ${response.status}: ${(await response.text().catch(() => "")).slice(0, 500)}`);
+  // https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
+  const body = await response.json() as { models?: { slug?: string; display_name?: string; visibility?: string }[] };
+  return (body.models ?? []).flatMap(({ slug, display_name, visibility }) =>
+    visibility === "list" && slug ? [{ slug, displayName: display_name ?? slug }] : []);
 }

@@ -4,10 +4,11 @@ import { Effect, Schema } from "effect";
 import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import {
-  CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, parseCallback, refreshAccount, type ChatGPTAuth,
+  CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, listModels, parseCallback, refreshAccount, type ChatGPTAuth,
 } from "../src/modules/ai/chatgpt-auth";
 import { analysisLayerFromSettings, translationLayerFromSettings } from "../src/modules/ai/configured";
 import { AiProviders } from "../src/modules/ai/providers";
+import { listOpenAIModels } from "../src/modules/ai/openai-models";
 import { defaultSettings } from "../src/modules/settings/model";
 import { missingConfiguration } from "../src/modules/translator/translate-batch";
 
@@ -181,4 +182,37 @@ test("subscription analysis answers decisions through the same streamed Response
     Effect.provideService(FetchHttpClient.Fetch, fetchMock),
   ));
   assert.equal(result.answers.relevant.probability, 0.9);
+});
+
+test("the model catalog lists the account's visible models from the `models` array", async () => {
+  const requests: Request[] = [];
+  const models = await listModels("test-token", async (input, init) => {
+    requests.push(new Request(input, init));
+    return Response.json({ models: [
+      { slug: "gpt-plan", display_name: "GPT Plan", visibility: "list" },
+      { slug: "gpt-hidden", display_name: "Hidden", visibility: "hide" },
+      { slug: "gpt-bare", visibility: "list" },
+    ] });
+  });
+  assert.deepEqual(models, [{ slug: "gpt-plan", displayName: "GPT Plan" }, { slug: "gpt-bare", displayName: "gpt-bare" }]);
+  assert.equal(requests[0]!.url, "https://api.openai.com/v1/models");
+  assert.equal(requests[0]!.headers.get("Authorization"), "Bearer test-token");
+  await assert.rejects(listModels("test-token", async () => new Response("nope", { status: 403 })), /403/);
+});
+
+test("an OpenAI API key's catalog keeps text models, newest first", async () => {
+  const requests: Request[] = [];
+  const models = await listOpenAIModels("test-direct", async (input, init) => {
+    requests.push(new Request(input, init));
+    return Response.json({ object: "list", data: [
+      { id: "gpt-old", created: 1 },
+      { id: "text-embedding-3-large", created: 5 },
+      { id: "gpt-6-luna", created: 9 },
+      { id: "whisper-1", created: 3 },
+    ] });
+  });
+  assert.deepEqual(models.map((m) => m.slug), ["gpt-6-luna", "gpt-old"]);
+  assert.equal(requests[0]!.url, "https://api.openai.com/v1/models");
+  assert.equal(requests[0]!.headers.get("Authorization"), "Bearer test-direct");
+  await assert.rejects(listOpenAIModels("bad", async () => new Response("invalid key", { status: 401 })), /401: invalid key/);
 });

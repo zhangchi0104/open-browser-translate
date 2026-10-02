@@ -4,6 +4,7 @@ import { Effect, Redacted } from "effect";
 import { LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import { vercelLayer } from "../src/modules/ai/vercel";
+import { listGatewayModels } from "../src/modules/ai/gateway-models";
 
 test("Vercel layer uses Chat Completions with the selected model", async () => {
   let calls = 0;
@@ -45,4 +46,20 @@ test("Vercel authentication failures remain typed Effect failures", async () => 
     ),
   );
   assert.equal(exit._tag, "Failure");
+});
+
+test("the gateway catalog keeps language models, newest first, without a key", async () => {
+  const requests: Request[] = [];
+  const catalog = async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push(new Request(input, init));
+    return Response.json({ object: "list", data: [
+      { id: "vendor/old", name: "Old", type: "language", released: 1 },
+      { id: "vendor/embed", name: "Embed", type: "embedding", released: 9 },
+      { id: "openai/gpt-6-luna", name: "GPT-6 Luna", type: "language", released: 5 },
+      { id: "typesafe-ai/jev", name: "Jev", type: "evaluation", released: 3 },
+    ] });
+  };
+  assert.deepEqual(await listGatewayModels(catalog), [{ slug: "openai/gpt-6-luna", displayName: "GPT-6 Luna" }, { slug: "vendor/old", displayName: "Old" }]);
+  assert.equal(requests[0]!.url, "https://ai-gateway.vercel.sh/v1/models");
+  assert.equal(requests[0]!.headers.get("Authorization"), null);
 });

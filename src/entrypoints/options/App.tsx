@@ -36,9 +36,7 @@ const purposes = {
     modelLabel: "分析模型",
     providers: [AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
     placeholder: (p: SettingsProvider) => p === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "模型 ID",
-    help: (p: SettingsProvider) => p === AiProviders.OpenAISubscription
-      ? "使用 ChatGPT 套餐的额度，无需 API key。请先在「服务商连接」中登录，再从列表选择模型。"
-      : `使用 OpenAI API key，默认模型为 ${DEFAULT_DECISION_MODEL}。`,
+    help: () => `使用 OpenAI API key，默认模型为 ${DEFAULT_DECISION_MODEL}。`,
   },
   translation: {
     title: "翻译",
@@ -46,11 +44,8 @@ const purposes = {
     modelLabel: "翻译模型",
     providers: [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
     placeholder: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? "provider/model" : "模型 ID",
-    help: (p: SettingsProvider) => p === AiProviders.VercelAIGateway
-      ? "填写网关中的翻译模型 ID，格式为 provider/model。"
-      : p === AiProviders.OpenAISubscription
-        ? "使用 ChatGPT 套餐的额度，无需 API key。请先在「服务商连接」中登录，再从列表选择模型。"
-        : "填写 OpenAI 的文本生成模型 ID。",
+    // Providers with a model catalog add to or replace this; see ModelSection.
+    help: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? "通过 Vercel AI Gateway 运行。" : "使用 OpenAI API key。",
   },
 } as const;
 type Section = "models" | "keys" | "debug";
@@ -85,22 +80,41 @@ function signInOutcome(state: string): Promise<SignInResult> {
   });
 }
 
+/** A provider's model catalog; `unavailable` until there is an account or key to ask with. */
+type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: ChatGPTModel[] };
+type CatalogProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
+interface LoadedCatalog { catalog: Catalog; reload: () => void }
+
+/** Asks the background for a model catalog with `request`, waiting `delay` ms so typing a key doesn't fire a request per keystroke. */
+function useCatalog(request: { type: string; apiKey?: string } | undefined, delay = 0): LoadedCatalog {
+  const [catalog, setCatalog] = useState<Catalog>({ status: "unavailable" });
+  const [attempt, setAttempt] = useState(0);
+  const key = request && JSON.stringify(request);
+  useEffect(() => {
+    if (!key) return setCatalog({ status: "unavailable" });
+    let current = true;
+    setCatalog({ status: "loading" });
+    const timer = setTimeout(() => browser.runtime.sendMessage(JSON.parse(key)).then(
+      (response: { status: string; models?: ChatGPTModel[] }) => {
+        if (!current) return;
+        setCatalog(response?.status === "ok" ? { status: "ok", models: response.models ?? [] }
+          : response?.status === "no-key" ? { status: "unavailable" } : { status: "failed" });
+      },
+      () => { if (current) setCatalog({ status: "failed" }); },
+    ), delay);
+    return () => { current = false; clearTimeout(timer); };
+  }, [key, attempt, delay]);
+  return { catalog, reload: () => setAttempt((n) => n + 1) };
+}
+
 function useChatGPT() {
   const [email, setEmail] = useState<string | null>();
-  const [models, setModels] = useState<ChatGPTModel[]>([]);
   useEffect(() => {
     const apply = (auth: Awaited<ReturnType<typeof chatgptAuth.getValue>>) => setEmail(auth?.account ? auth.account.email : null);
     chatgptAuth.getValue().then(apply, () => setEmail(null));
     return chatgptAuth.watch(apply);
   }, []);
-  useEffect(() => {
-    if (!email) return setModels([]);
-    browser.runtime.sendMessage({ type: "chatgpt-models" }).then(
-      (response: { status: string; models?: ChatGPTModel[] }) => setModels(response?.models ?? []),
-      () => setModels([]),
-    );
-  }, [email]);
-  return { email, models };
+  return { email, models: useCatalog(email ? { type: "chatgpt-models" } : undefined) };
 }
 
 // Each purpose keys its models by its own provider subset; this widens them for shared editing code.
@@ -123,6 +137,13 @@ export function App() {
   const [status, setStatus] = useState<Status>({ text: "正在读取设置…" });
   const modelInputs = { analysis: useRef<HTMLInputElement>(null), translation: useRef<HTMLInputElement>(null) };
   const chatgpt = useChatGPT();
+  const openaiKey = draft?.providers[AiProviders.OpenAIApi].apiKey.trim();
+  const catalogs: Record<CatalogProvider, LoadedCatalog> = {
+    [AiProviders.OpenAISubscription]: chatgpt.models,
+    [AiProviders.OpenAIApi]: useCatalog(openaiKey ? { type: "openai-models", apiKey: openaiKey } : undefined, 600),
+    // The gateway's catalog is public, so it loads without a key.
+    [AiProviders.VercelAIGateway]: useCatalog({ type: "gateway-models" }),
+  };
 
   useEffect(() => {
     aiSettings.getValue().then((saved) => {
@@ -278,7 +299,7 @@ export function App() {
                       key={purpose}
                       purpose={purpose}
                       draft={draft}
-                      suggestions={chatgpt.models}
+                      catalogs={catalogs}
                       error={errors[purpose]}
                       inputRef={modelInputs[purpose]}
                       onProviderChange={(provider) => edit((next) => setProvider(next, purpose, provider))}
@@ -392,10 +413,28 @@ function ChatGPTConnection({ email, onSignIn, onSignOut }: { email: string | nul
   );
 }
 
-function ModelSection({ purpose, draft, suggestions, error, inputRef, onProviderChange, onModelChange }: {
+const catalogHelp: Record<CatalogProvider, { unavailable: string; listed: (purposeHelp: string) => string; source: string }> = {
+  [AiProviders.VercelAIGateway]: {
+    unavailable: "",
+    listed: (purposeHelp) => `${purposeHelp}列表来自 Vercel AI Gateway。`,
+    source: "Vercel AI Gateway ",
+  },
+  [AiProviders.OpenAISubscription]: {
+    unavailable: "请先在「服务商连接」中登录 ChatGPT，登录后可从列表选择模型；也可以直接填写模型 ID。",
+    listed: () => "使用 ChatGPT 套餐的额度，无需 API key。列表来自你的 ChatGPT 账号。",
+    source: "当前 ChatGPT 账号",
+  },
+  [AiProviders.OpenAIApi]: {
+    unavailable: "在「服务商连接」中填写 OpenAI API key 后可从列表选择模型；也可以直接填写模型 ID。",
+    listed: (purposeHelp) => `${purposeHelp}列表来自这个 API key 可用的模型。`,
+    source: "这个 API key",
+  },
+};
+
+function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderChange, onModelChange }: {
   purpose: Purpose;
   draft: AISettings | undefined;
-  suggestions: ChatGPTModel[];
+  catalogs: Record<CatalogProvider, LoadedCatalog>;
   error: string | undefined;
   inputRef: RefObject<HTMLInputElement | null>;
   onProviderChange: (provider: SettingsProvider) => void;
@@ -405,6 +444,17 @@ function ModelSection({ purpose, draft, suggestions, error, inputRef, onProvider
   const config = purposes[purpose];
   const provider = draft?.[purpose].provider ?? config.providers[0];
   const model = (draft && modelsOf(draft, purpose)[provider]) ?? "";
+  const { catalog, reload } = catalogs[provider as CatalogProvider] ?? {};
+  const text = catalogHelp[provider as CatalogProvider];
+  // A list to pick from replaces the free-text field once the provider's catalog has loaded.
+  const choices = catalog?.status === "ok" && catalog.models.length ? catalog.models : undefined;
+  const unlisted = choices && model && !choices.some((m) => m.slug === model);
+  const help = error ?? (!catalog ? config.help(provider)
+    : choices ? (unlisted ? `模型 ${model} 不在${text.source}的模型列表中，请重新选择。` : text.listed(config.help(provider)))
+    : catalog.status === "ok" ? `${text.source}没有返回可用模型，可直接填写模型 ID。`
+    : catalog.status === "loading" ? "正在读取可用模型…"
+    : catalog.status === "failed" ? "无法读取模型列表，可直接填写模型 ID，或稍后重试。"
+    : text.unavailable);
   return (
     <section aria-labelledby={`${id}-heading`} className="space-y-4">
       <div>
@@ -425,27 +475,41 @@ function ModelSection({ purpose, draft, suggestions, error, inputRef, onProvider
         </div>
         <div className="space-y-2">
           <Label htmlFor={`${id}-model`}>{config.modelLabel}</Label>
-          <Input
-            ref={inputRef}
-            id={`${id}-model`}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={config.placeholder(provider)}
-            aria-invalid={!!error}
-            aria-describedby={`${id}-help`}
-            list={provider === AiProviders.OpenAISubscription ? `${id}-models` : undefined}
-            value={model}
-            onChange={(event) => onModelChange(event.target.value)}
-          />
-          {provider === AiProviders.OpenAISubscription && (
-            <datalist id={`${id}-models`}>
-              {suggestions.map((m) => <option key={m.slug} value={m.slug}>{m.displayName}</option>)}
-            </datalist>
+          {choices ? (
+            <Select value={model} onValueChange={onModelChange}>
+              <SelectTrigger id={`${id}-model`} className="w-full" aria-invalid={!!error || !!unlisted} aria-describedby={`${id}-help`}>
+                <SelectValue placeholder="选择模型" />
+              </SelectTrigger>
+              <SelectContent>
+                {unlisted && <SelectItem value={model}>{model}（不在列表中）</SelectItem>}
+                {choices.map((m) => (
+                  <SelectItem key={m.slug} value={m.slug}>
+                    {m.displayName}
+                    {m.displayName !== m.slug && <span className="ml-2 font-mono text-xs text-muted-foreground">{m.slug}</span>}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              ref={inputRef}
+              id={`${id}-model`}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={config.placeholder(provider)}
+              aria-invalid={!!error}
+              aria-describedby={`${id}-help`}
+              value={model}
+              onChange={(event) => onModelChange(event.target.value)}
+            />
           )}
         </div>
       </div>
-      <p id={`${id}-help`} className={cn("text-[13px]", error ? "text-destructive" : "text-muted-foreground")}>
-        {error ?? config.help(provider)}
+      <p id={`${id}-help`} className={cn("text-[13px]", error || unlisted ? "text-destructive" : "text-muted-foreground")}>
+        {help}
+        {catalog?.status === "failed" && (
+          <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-[13px]" onClick={reload}>重试</Button>
+        )}
       </p>
     </section>
   );

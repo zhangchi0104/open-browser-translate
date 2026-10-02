@@ -12,6 +12,9 @@ import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import { createContextCarryover } from "../modules/translation-context/carryover";
 import type { TranslationContext } from "../modules/translation-context";
 import { debugLog, describeError, pageOf } from "../modules/debug-log";
+import { listOpenAIModels } from "../modules/ai/openai-models";
+import { listGatewayModels } from "../modules/ai/gateway-models";
+import { AiProviders } from "../modules/ai/providers";
 
 const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
 const Blocks = Schema.Array(Schema.Struct({ text: Schema.String, tag: Schema.String }));
@@ -56,8 +59,37 @@ export default defineBackground(() => {
     if (message?.type === "chatgpt-sign-in") return startChatGPTSignIn();
     if (message?.type === "chatgpt-sign-out") return signOutChatGPT().then(() => ({ status: "ok" }));
     if (message?.type === "chatgpt-models") {
-      return listChatGPTModels().then((models) => ({ status: "ok", models }), (error) => {
+      return listChatGPTModels().then((models) => {
+        if (!models.length) void debugLog.warn("ChatGPT 模型列表为空", { detail: "接口没有返回 visibility 为 list 的模型" });
+        return { status: "ok", models };
+      }, (error) => {
         void debugLog.error("读取 ChatGPT 模型列表失败", { detail: describeError(error) });
+        return { status: "failed" };
+      });
+    }
+    if (message?.type === "openai-models") {
+      // The options page sends the key being edited, so the list follows it before it's saved.
+      return (async () => {
+        try {
+          const apiKey = typeof message.apiKey === "string" && message.apiKey.trim()
+            ? message.apiKey.trim()
+            : (await aiSettings.getValue()).providers[AiProviders.OpenAIApi].apiKey.trim();
+          if (!apiKey) return { status: "no-key" };
+          const models = await listOpenAIModels(apiKey);
+          if (!models.length) void debugLog.warn("OpenAI 模型列表为空", { detail: "接口没有返回可生成文本的模型" });
+          return { status: "ok", models };
+        } catch (error) {
+          void debugLog.error("读取 OpenAI 模型列表失败", { detail: describeError(error) });
+          return { status: "failed" };
+        }
+      })();
+    }
+    if (message?.type === "gateway-models") {
+      return listGatewayModels().then((models) => {
+        if (!models.length) void debugLog.warn("Vercel AI Gateway 模型列表为空");
+        return { status: "ok", models };
+      }, (error) => {
+        void debugLog.error("读取 Vercel AI Gateway 模型列表失败", { detail: describeError(error) });
         return { status: "failed" };
       });
     }
