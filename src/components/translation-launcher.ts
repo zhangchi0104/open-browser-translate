@@ -226,7 +226,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
         outcome = null;
         return;
       }
-      status.textContent = "Jev 正在判断页面翻译模式…";
+      status.textContent = "正在判断页面翻译模式…";
       const prepared = await browser.runtime.sendMessage({
         type: "prepare-translation",
         context: {

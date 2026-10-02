@@ -1,9 +1,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { Effect, Layer, Redacted } from "effect";
-import { DecisionModel } from "effect/unstable/ai";
+import { AiError, Decision, DecisionModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
-import { AI, jevLayer } from "../src/modules/ai";
+import { AI, openAIDecisionLayer } from "../src/modules/ai";
+import { toProviderAnswer } from "../src/modules/ai/openai-decisions";
+import { decisionResponse, isDecisionRequest } from "./decision-mock";
 import { ContentAnalyzer, type ContentRole } from "../src/modules/content-analyzer";
 import type { TranslatableContent } from "../src/modules/dom-parser";
 
@@ -65,21 +67,36 @@ test("empty and oversized input do not call AI; batches preserve order", async (
   }).pipe(Effect.provide(layer)));
 });
 
-test("official Jev adapter sends System One questions and decodes answers", async () => {
+test("OpenAI decision adapter sends one structured-output request and decodes answers", async () => {
   let calls = 0;
   const fetchMock: typeof globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     calls++;
-    assert.equal(String(input), "https://api.typesafe.ai/v1/systemone");
+    assert.equal(String(input), "https://api.openai.com/v1/chat/completions");
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-placeholder");
     const request = JSON.parse(String(init?.body));
-    assert.equal(request.model, "jev-latest");
-    assert.equal(request.questions["0"].type, "choice");
-    assert.equal(request.state.blocks[0].text, "Article body");
-    return new Response(JSON.stringify({ model: "jev-latest", answers: { "0": { type: "choice", choice: "content", confidence: 1, probabilities: answer("content").probabilities } } }), { headers: { "Content-Type": "application/json" } });
+    assert.equal(request.model, "gpt-6-luna");
+    assert.ok(isDecisionRequest(request));
+    return decisionResponse(request, (key, input, options) => {
+      assert.equal(key, "0");
+      assert.equal(input.blocks[0].text, "Article body");
+      assert.deepEqual(options, labels);
+      return "content";
+    });
   };
-  const layer = ContentAnalyzer.Live.pipe(Layer.provide(jevLayer({ apiKey: Redacted.make("test-placeholder") })));
+  const layer = ContentAnalyzer.Live.pipe(Layer.provide(openAIDecisionLayer({ apiKey: Redacted.make("test-placeholder") })));
   const result = await Effect.runPromise(ContentAnalyzer.use((service) => service.analyze([content("Article body")])).pipe(Effect.provide(layer), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
   assert.equal(calls, 1);
   assert.equal(result[0]?.role, "content");
+  assert.equal(result[0]?.confidence, 1);
   assert.equal(result[0]?.fallbackReason, undefined);
+});
+
+test("model-reported weights are normalized into valid decision answers", () => {
+  const classify = Decision.classify({ instructions: "Pick", criteria: { a: "A", b: "B", c: "C" } });
+  assert.deepEqual(toProviderAnswer("x", classify, { a: 3, b: 1, c: -2 }), { _tag: "Classify", label: "a", probabilities: { a: 0.75, b: 0.25, c: 0 }, confidence: 0.75 });
+  const rate = Decision.rate({ instructions: "Rate", criteria: ["low", "mid", "high"] });
+  assert.deepEqual(toProviderAnswer("x", rate, { low: 0, mid: 0.5, high: 0.5 }), { _tag: "Rate", rating: 1.5, probabilities: { low: 0, mid: 0.5, high: 0.5 }, confidence: 0.5 });
+  const probability = Decision.probability({ instructions: "Is it?", criteria: { false: "No", true: "Yes" } });
+  assert.deepEqual(toProviderAnswer("x", probability, { false: 0.2, true: 0.8 }), { _tag: "Probability", probability: 0.8 });
+  assert.ok(AiError.isAiError(toProviderAnswer("x", classify, { a: 0, b: 0, c: 0 })));
 });

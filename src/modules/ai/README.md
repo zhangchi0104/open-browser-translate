@@ -1,7 +1,7 @@
 # AI providers
 
-`jevLayer` provides Effect's `DecisionModel` (exported here as `AI`) for typed
-decisions. `vercelLayer` provides `LanguageModel` for text generation through
+`openAIDecisionLayer` provides Effect's `DecisionModel` (exported here as `AI`)
+for typed decisions. `vercelLayer` provides `LanguageModel` for text generation through
 Vercel AI Gateway's OpenAI-compatible Chat Completions endpoint.
 
 ```ts
@@ -29,7 +29,7 @@ the official `@effect/ai-openai-compat` adapter, pinned to the installed Effect
 version. It adds no retry or timeout policy; callers can compose those policies.
 
 This is a language-model layer, not a `DecisionModel` replacement for
-`ContentAnalyzer`. The button uses this layer in the background after Jev filtering.
+`ContentAnalyzer`. The button uses this layer in the background after content analysis.
 Keep model requests in the extension background context when wiring the UI.
 
 The mocked HTTP tests check Chat Completions routing, authentication, model
@@ -40,26 +40,38 @@ Reference: https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completi
 
 ## Independent task configuration
 
-Settings v2 stores provider connections separately from task selections:
+Settings store provider connections separately from task selections:
 `providers[provider].apiKey`, `analysis.{provider,models}`, and
 `translation.{provider,models}`. Model IDs are retained per task and provider.
-Analysis supports TypeSafe directly or Vercel; translation supports Vercel or
-OpenAI directly. TypeSafe is not offered as a translation provider.
-
-`jevLayer({ provider: "VercelAIGateway", apiKey })` uses
-`https://ai-gateway.vercel.sh/typesafe/v1/systemone` with the default model
-`typesafe-ai/jev`. Direct TypeSafe keeps the default `jev-latest`.
+Analysis supports OpenAI with an API key or the ChatGPT sign-in; translation
+supports Vercel, OpenAI with an API key, or the ChatGPT sign-in.
 
 `analysisLayerFromSettings` and `translationLayerFromSettings` in `configured.ts`
 resolve the independent model and shared provider key into the appropriate
 Effect layer. Callers should ensure the selected key and model are configured
 before invoking a model. The button runs both helpers in the background, with independent provider settings.
 
-The storage migration preserves existing provider keys and model IDs. Legacy
-Vercel model IDs beginning with `typesafe-ai/` migrate to analysis; other Vercel
-model IDs migrate to translation. Direct TypeSafe model IDs migrate to analysis.
+Settings v3 dropped Jev (TypeSafe). The migration keeps Vercel and OpenAI keys
+and translation settings, discards TypeSafe keys and Jev model IDs, and points
+analysis at OpenAI: the ChatGPT sign-in when translation already used it,
+otherwise the OpenAI API key with `gpt-6-luna`.
 
-Vercel TypeSafe API reference: https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe
+## Content analysis on OpenAI
+
+OpenAI announced a Decisions API (DevDay, 2026-09-29), but it is in limited
+preview with no published endpoint or request format, so `openai-decisions.ts`
+does not call it. Instead `languageModelDecisionLayer` answers any
+`DecisionModel` definition with one structured-output request on the current
+`LanguageModel`: the model returns a probability for every option of every
+decision, which are normalized to sum to 1. Classify labels are the most likely
+option, and `confidence` is that option's probability. Model-reported
+probabilities are less calibrated than Jev's, so the 0.8 thresholds may need
+tuning against live pages.
+
+`openAIDecisionLayer` runs it on OpenAI's Chat Completions API with an API key;
+`chatgptDecisionLayer` runs it on the ChatGPT plan through `chatgpt.ts`. When the
+Decisions API is documented, replace the request in `openai-decisions.ts`; the
+rest of the extension depends only on `DecisionModel`.
 
 ## ChatGPT subscription (Sign in with ChatGPT)
 
@@ -81,4 +93,4 @@ https://developers.openai.com/siwc/token-sharing-open-source
   client streams every request and returns the `response.completed` payload to
   the adapter.
 
-Analysis still uses Jev through TypeSafe or Vercel.
+Analysis can use the same sign-in (see above).

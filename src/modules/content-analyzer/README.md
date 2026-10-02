@@ -1,13 +1,12 @@
 # Content analyzer
 
-`AI` re-exports Effect 4's `DecisionModel` service. `jevLayer({ apiKey })`
-provides it through the official `@effect/ai-typesafe` adapter, pinned to the
-same RC version as Effect. The API key is supplied as `Redacted<string>` at
-runtime. The default model is `jev-latest`.
+`AI` re-exports Effect 4's `DecisionModel` service. `openAIDecisionLayer({ apiKey })`
+provides it on an OpenAI model (see `../ai/README.md`). The API key is supplied
+as `Redacted<string>` at runtime. The default model is `gpt-6-luna`.
 
 ```ts
 const analyzerLayer = ContentAnalyzer.Live.pipe(
-  Layer.provide(jevLayer({ apiKey })),
+  Layer.provide(openAIDecisionLayer({ apiKey })),
 );
 const program = Effect.gen(function* () {
   const parser = yield* DomParser;
@@ -38,7 +37,7 @@ request failures, invalid responses, and timeouts retain affected blocks with
 Batches have no cross-batch context.
 
 The launcher now uses the translation workflow described in
-`../translator/README.md`: Jev chooses a page-level scope, and each completed
+`../translator/README.md`: the analysis model chooses a page-level scope, and each completed
 batch is translated and appended to the source page. The analyzer still returns
 classifications without changing the DOM. Background messages contain only
 serializable text/tag blocks; DOM references stay in the content script.
