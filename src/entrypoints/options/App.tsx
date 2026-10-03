@@ -1,7 +1,10 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
-import { ExternalLink, KeyRound, Sparkles } from "lucide-react";
-import { aiSettings, validateModel, type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider } from "@/modules/settings";
-import { AiProviders, DEFAULT_DECISION_MODEL } from "@/modules/ai/providers";
+import { Bug, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
+import {
+  aiSettings, REASONING_EFFORTS, validateModel,
+  type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider, type ReasoningEffort,
+} from "@/modules/settings";
+import { AiProviders, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL, GATEWAY_DECISION_MODELS } from "@/modules/ai/providers";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/ai/chatgpt-session";
 import type { ChatGPTModel } from "@/modules/ai/chatgpt-auth";
@@ -15,6 +18,8 @@ import {
   SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { DebugLog } from "./DebugLog";
+import { CacheSettings } from "./CacheSettings";
 
 type Purpose = "analysis" | "translation";
 type Status = { text: string; error?: boolean };
@@ -33,10 +38,13 @@ const purposes = {
     title: "内容分析",
     description: "判断哪些内容需要翻译。",
     modelLabel: "分析模型",
-    providers: [AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
-    placeholder: (p: SettingsProvider) => p === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "模型 ID",
-    help: (p: SettingsProvider) => p === AiProviders.OpenAISubscription
-      ? "使用 ChatGPT 套餐的额度，无需 API key。请先在「服务商连接」中登录，再从列表选择模型。"
+    // The gateway runs evaluation models built for decisions; OpenAI's Decisions API isn't open
+    // yet, so the OpenAI providers answer decisions with an ordinary model.
+    providers: [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
+    placeholder: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? DEFAULT_GATEWAY_DECISION_MODEL
+      : p === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "模型 ID",
+    help: (p: SettingsProvider) => p === AiProviders.VercelAIGateway
+      ? `使用网关上 Jev 这类专门做判断的评估模型，默认为 ${DEFAULT_GATEWAY_DECISION_MODEL}。`
       : `使用 OpenAI API key，默认模型为 ${DEFAULT_DECISION_MODEL}。`,
   },
   translation: {
@@ -45,17 +53,24 @@ const purposes = {
     modelLabel: "翻译模型",
     providers: [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
     placeholder: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? "provider/model" : "模型 ID",
-    help: (p: SettingsProvider) => p === AiProviders.VercelAIGateway
-      ? "填写网关中的翻译模型 ID，格式为 provider/model。"
-      : p === AiProviders.OpenAISubscription
-        ? "使用 ChatGPT 套餐的额度，无需 API key。请先在「服务商连接」中登录，再从列表选择模型。"
-        : "填写 OpenAI 的文本生成模型 ID。",
+    // Providers with a model catalog add to or replace this; see ModelSection.
+    help: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? "通过 Vercel AI Gateway 运行。" : "使用 OpenAI API key。",
   },
 } as const;
-type Section = "models" | "keys";
+type Section = "models" | "keys" | "cache" | "debug";
 const sections = {
   models: { title: "模型用途", description: "分别配置内容分析和翻译使用的服务商与模型。", icon: Sparkles },
   keys: { title: "服务商连接", description: "同一服务商的连接可同时用于内容分析和翻译。", icon: KeyRound },
+  cache: {
+    title: "翻译缓存",
+    description: "译文按段缓存在本机 7 天：再次打开同一页面，或同一网站上重复出现的文字，会直接显示缓存的译文，不再请求模型。缓存按站点、模型、模式和原文区分，原文只存哈希，但会保存译文内容；无痕窗口不使用缓存。换模型或模式后会重新翻译。",
+    icon: Database,
+  },
+  debug: {
+    title: "调试日志",
+    description: "每次翻译请求按 OpenTelemetry 格式记录为一条追踪：每一步的模型、耗时和错误。数据只保存在本机、不会上传，保留最近 100 次请求，可导出为 OTLP JSON。会记录网址路径，不记录网页正文和 API key（服务商返回的错误信息可能引用模型输出）。",
+    icon: Bug,
+  },
 } as const;
 const purposeNames: Record<Purpose, string> = { analysis: "内容分析", translation: "翻译" };
 const signInErrors: Record<Exclude<SignInResult, { status: "ok" }>["reason"], string> = {
@@ -79,22 +94,43 @@ function signInOutcome(state: string): Promise<SignInResult> {
   });
 }
 
+/** A provider's model catalog; `unavailable` until there is an account or key to ask with. */
+type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: ChatGPTModel[] };
+type CatalogProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
+interface LoadedCatalog { catalog: Catalog; reload: () => void }
+
+const gatewayDecisionCatalog: LoadedCatalog = { catalog: { status: "ok", models: GATEWAY_DECISION_MODELS }, reload: () => {} };
+
+/** Asks the background for a model catalog with `request`, waiting `delay` ms so typing a key doesn't fire a request per keystroke. */
+function useCatalog(request: { type: string; apiKey?: string } | undefined, delay = 0): LoadedCatalog {
+  const [catalog, setCatalog] = useState<Catalog>({ status: "unavailable" });
+  const [attempt, setAttempt] = useState(0);
+  const key = request && JSON.stringify(request);
+  useEffect(() => {
+    if (!key) return setCatalog({ status: "unavailable" });
+    let current = true;
+    setCatalog({ status: "loading" });
+    const timer = setTimeout(() => browser.runtime.sendMessage(JSON.parse(key)).then(
+      (response: { status: string; models?: ChatGPTModel[] }) => {
+        if (!current) return;
+        setCatalog(response?.status === "ok" ? { status: "ok", models: response.models ?? [] }
+          : response?.status === "no-key" ? { status: "unavailable" } : { status: "failed" });
+      },
+      () => { if (current) setCatalog({ status: "failed" }); },
+    ), delay);
+    return () => { current = false; clearTimeout(timer); };
+  }, [key, attempt, delay]);
+  return { catalog, reload: () => setAttempt((n) => n + 1) };
+}
+
 function useChatGPT() {
   const [email, setEmail] = useState<string | null>();
-  const [models, setModels] = useState<ChatGPTModel[]>([]);
   useEffect(() => {
     const apply = (auth: Awaited<ReturnType<typeof chatgptAuth.getValue>>) => setEmail(auth?.account ? auth.account.email : null);
     chatgptAuth.getValue().then(apply, () => setEmail(null));
     return chatgptAuth.watch(apply);
   }, []);
-  useEffect(() => {
-    if (!email) return setModels([]);
-    browser.runtime.sendMessage({ type: "chatgpt-models" }).then(
-      (response: { status: string; models?: ChatGPTModel[] }) => setModels(response?.models ?? []),
-      () => setModels([]),
-    );
-  }, [email]);
-  return { email, models };
+  return { email, models: useCatalog(email ? { type: "chatgpt-models" } : undefined) };
 }
 
 // Each purpose keys its models by its own provider subset; this widens them for shared editing code.
@@ -117,6 +153,16 @@ export function App() {
   const [status, setStatus] = useState<Status>({ text: "正在读取设置…" });
   const modelInputs = { analysis: useRef<HTMLInputElement>(null), translation: useRef<HTMLInputElement>(null) };
   const chatgpt = useChatGPT();
+  const openaiKey = draft?.providers[AiProviders.OpenAIApi].apiKey.trim();
+  const shared = {
+    [AiProviders.OpenAISubscription]: chatgpt.models,
+    [AiProviders.OpenAIApi]: useCatalog(openaiKey ? { type: "openai-models", apiKey: openaiKey } : undefined, 600),
+  };
+  // Gateway analysis picks from the fixed evaluation models; translation loads the public language catalog.
+  const catalogs: Record<Purpose, Record<CatalogProvider, LoadedCatalog>> = {
+    analysis: { ...shared, [AiProviders.VercelAIGateway]: gatewayDecisionCatalog },
+    translation: { ...shared, [AiProviders.VercelAIGateway]: useCatalog({ type: "gateway-models" }) },
+  };
 
   useEffect(() => {
     aiSettings.getValue().then((saved) => {
@@ -262,7 +308,9 @@ export function App() {
           <h1 className="mb-3 text-[28px] leading-tight font-bold tracking-tight">{sections[section].title}</h1>
           <p className="mb-8 leading-relaxed text-muted-foreground">{sections[section].description}</p>
 
-          <form onSubmit={save} noValidate>
+          {section === "debug" && <DebugLog />}
+          {section === "cache" && <CacheSettings />}
+          <form onSubmit={save} noValidate hidden={section === "debug" || section === "cache"}>
             <fieldset disabled={busy || !draft} className="min-w-0 space-y-6">
               <Card hidden={section !== "models"}>
                 <CardContent className="space-y-8">
@@ -271,11 +319,19 @@ export function App() {
                       key={purpose}
                       purpose={purpose}
                       draft={draft}
-                      suggestions={chatgpt.models}
+                      catalogs={catalogs[purpose]}
                       error={errors[purpose]}
                       inputRef={modelInputs[purpose]}
                       onProviderChange={(provider) => edit((next) => setProvider(next, purpose, provider))}
                       onModelChange={(model) => edit((next) => { modelsOf(next, purpose)[next[purpose].provider] = model; })}
+                      onEffortChange={(effort) => edit((next) => {
+                        if (effort) next[purpose].reasoningEffort = effort;
+                        else delete next[purpose].reasoningEffort;
+                      })}
+                      onFastChange={(fast) => edit((next) => {
+                        if (fast) next[purpose].fast = true;
+                        else delete next[purpose].fast;
+                      })}
                     />
                   ))}
                 </CardContent>
@@ -385,19 +441,64 @@ function ChatGPTConnection({ email, onSignIn, onSignOut }: { email: string | nul
   );
 }
 
-function ModelSection({ purpose, draft, suggestions, error, inputRef, onProviderChange, onModelChange }: {
+const catalogHelp: Record<CatalogProvider, { unavailable: string; listed: (purposeHelp: string) => string; source: string }> = {
+  [AiProviders.VercelAIGateway]: {
+    unavailable: "",
+    listed: (purposeHelp) => `${purposeHelp}列表来自 Vercel AI Gateway。`,
+    source: "Vercel AI Gateway ",
+  },
+  [AiProviders.OpenAISubscription]: {
+    unavailable: "请先在「服务商连接」中登录 ChatGPT，登录后可从列表选择模型；也可以直接填写模型 ID。",
+    listed: () => "使用 ChatGPT 套餐的额度，无需 API key。列表来自你的 ChatGPT 账号。",
+    source: "当前 ChatGPT 账号",
+  },
+  [AiProviders.OpenAIApi]: {
+    unavailable: "在「服务商连接」中填写 OpenAI API key 后可从列表选择模型；也可以直接填写模型 ID。",
+    listed: (purposeHelp) => `${purposeHelp}列表来自这个 API key 可用的模型。`,
+    source: "这个 API key",
+  },
+};
+
+const effortLabels: Record<ReasoningEffort, string> = {
+  none: "不推理（none）", minimal: "最低（minimal）", low: "低（low）", medium: "中（medium）", high: "高（high）", xhigh: "最高（xhigh）",
+};
+const DEFAULT_EFFORT = "default";
+
+function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderChange, onModelChange, onEffortChange, onFastChange }: {
   purpose: Purpose;
   draft: AISettings | undefined;
-  suggestions: ChatGPTModel[];
+  catalogs: Record<CatalogProvider, LoadedCatalog>;
   error: string | undefined;
   inputRef: RefObject<HTMLInputElement | null>;
   onProviderChange: (provider: SettingsProvider) => void;
   onModelChange: (model: string) => void;
+  onEffortChange: (effort: ReasoningEffort | undefined) => void;
+  onFastChange: (fast: boolean) => void;
 }) {
   const id = useId();
   const config = purposes[purpose];
   const provider = draft?.[purpose].provider ?? config.providers[0];
   const model = (draft && modelsOf(draft, purpose)[provider]) ?? "";
+  const { catalog, reload } = catalogs[provider as CatalogProvider] ?? {};
+  const text = catalogHelp[provider as CatalogProvider];
+  // A list to pick from replaces the free-text field once the provider's catalog has loaded.
+  const choices = catalog?.status === "ok" && catalog.models.length ? catalog.models : undefined;
+  const unlisted = choices && model && !choices.some((m) => m.slug === model);
+  // Gateway analysis offers the fixed evaluation models (Jev and similar) instead of a loaded catalog.
+  const evaluation = purpose === "analysis" && provider === AiProviders.VercelAIGateway;
+  const help = error ?? (!catalog ? config.help(provider)
+    : choices && unlisted ? (evaluation ? `模型 ${model} 不是可选的评估模型，请重新选择。` : `模型 ${model} 不在${text.source}的模型列表中，请重新选择。`)
+    : choices ? (evaluation ? config.help(provider) : text.listed(config.help(provider)))
+    : catalog.status === "ok" ? `${text.source}没有返回可用模型，可直接填写模型 ID。`
+    : catalog.status === "loading" ? "正在读取可用模型…"
+    : catalog.status === "failed" ? "无法读取模型列表，可直接填写模型 ID，或稍后重试。"
+    : text.unavailable);
+  // The gateway's evaluation models answer decisions without reasoning, so there is nothing to tune.
+  const reasons = !evaluation;
+  const effort = draft?.[purpose].reasoningEffort;
+  // Fast mode is a ChatGPT plan option (the service tier Codex uses when signed in with ChatGPT).
+  const offersFast = provider === AiProviders.OpenAISubscription;
+  const fast = !!draft?.[purpose].fast;
   return (
     <section aria-labelledby={`${id}-heading`} className="space-y-4">
       <div>
@@ -418,28 +519,80 @@ function ModelSection({ purpose, draft, suggestions, error, inputRef, onProvider
         </div>
         <div className="space-y-2">
           <Label htmlFor={`${id}-model`}>{config.modelLabel}</Label>
-          <Input
-            ref={inputRef}
-            id={`${id}-model`}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={config.placeholder(provider)}
-            aria-invalid={!!error}
-            aria-describedby={`${id}-help`}
-            list={provider === AiProviders.OpenAISubscription ? `${id}-models` : undefined}
-            value={model}
-            onChange={(event) => onModelChange(event.target.value)}
-          />
-          {provider === AiProviders.OpenAISubscription && (
-            <datalist id={`${id}-models`}>
-              {suggestions.map((m) => <option key={m.slug} value={m.slug}>{m.displayName}</option>)}
-            </datalist>
+          {choices ? (
+            <Select value={model} onValueChange={onModelChange}>
+              <SelectTrigger id={`${id}-model`} className="w-full" aria-invalid={!!error || !!unlisted} aria-describedby={`${id}-help`}>
+                <SelectValue placeholder="选择模型" />
+              </SelectTrigger>
+              <SelectContent>
+                {unlisted && <SelectItem value={model}>{model}（不在列表中）</SelectItem>}
+                {choices.map((m) => (
+                  <SelectItem key={m.slug} value={m.slug}>
+                    {m.displayName}
+                    {m.displayName !== m.slug && <span className="ml-2 font-mono text-xs text-muted-foreground">{m.slug}</span>}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              ref={inputRef}
+              id={`${id}-model`}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={config.placeholder(provider)}
+              aria-invalid={!!error}
+              aria-describedby={`${id}-help`}
+              value={model}
+              onChange={(event) => onModelChange(event.target.value)}
+            />
           )}
         </div>
+        {reasons && (
+          <div className="space-y-2">
+            <Label htmlFor={`${id}-effort`}>推理强度</Label>
+            <Select value={effort ?? DEFAULT_EFFORT} onValueChange={(value) => onEffortChange(value === DEFAULT_EFFORT ? undefined : value as ReasoningEffort)}>
+              <SelectTrigger id={`${id}-effort`} className="w-full" aria-describedby={`${id}-effort-help`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={DEFAULT_EFFORT}>由模型决定</SelectItem>
+                {REASONING_EFFORTS.map((level) => <SelectItem key={level} value={level}>{effortLabels[level]}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {offersFast && (
+          <div className="space-y-2">
+            <Label htmlFor={`${id}-speed`}>处理速度</Label>
+            <Select value={fast ? "fast" : "standard"} onValueChange={(value) => onFastChange(value === "fast")}>
+              <SelectTrigger id={`${id}-speed`} className="w-full" aria-describedby={`${id}-speed-help`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="standard">标准</SelectItem>
+                <SelectItem value="fast">快速（Fast 模式）</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
-      <p id={`${id}-help`} className={cn("text-[13px]", error ? "text-destructive" : "text-muted-foreground")}>
-        {error ?? config.help(provider)}
+      <p id={`${id}-help`} className={cn("text-[13px]", error || unlisted ? "text-destructive" : "text-muted-foreground")}>
+        {help}
+        {catalog?.status === "failed" && (
+          <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-[13px]" onClick={reload}>重试</Button>
+        )}
       </p>
+      {reasons && (
+        <p id={`${id}-effort-help`} className="text-[13px] text-muted-foreground">
+          推理越强越慢、越费额度。不是每个模型都支持所有档位，不支持时请求会失败，原因记在「调试日志」。
+        </p>
+      )}
+      {offersFast && (
+        <p id={`${id}-speed-help`} className="text-[13px] text-muted-foreground">
+          Fast 模式生成更快，但按标准的 2.5 倍消耗 ChatGPT 套餐额度。支持的模型和可用性取决于你的套餐。
+        </p>
+      )}
     </section>
   );
 }

@@ -1,9 +1,11 @@
-import { Effect, Schema } from "effect";
+import { Schema, type Tracer } from "effect";
 import { storage } from "wxt/utils/storage";
 import { aiSettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
-import { missingConfiguration, translateBatch } from "../modules/translator/translate-batch";
+import { missingConfiguration, modelAttributes, TARGET_LANGUAGE, translateBatch } from "../modules/translator/translate-batch";
+import { createTranslationCache, translateWithCache } from "../modules/translation-cache";
+import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
 import {
   chatgptCredentials, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
 } from "../modules/ai/chatgpt-session";
@@ -11,9 +13,32 @@ import {
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import { createContextCarryover } from "../modules/translation-context/carryover";
 import type { TranslationContext } from "../modules/translation-context";
+import {
+  debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestWith, traceStore, type RunInSpan,
+} from "../modules/debug-log";
+import { listOpenAIModels } from "../modules/ai/openai-models";
+import { listGatewayModels } from "../modules/ai/gateway-models";
+import { AiProviders } from "../modules/ai/providers";
 
 const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
 const Blocks = Schema.Array(Schema.Struct({ text: Schema.String, tag: Schema.String }));
+const PageLog = Schema.Struct({
+  level: Schema.Literals(["info", "warn", "error"]),
+  event: Schema.String.check(Schema.isMaxLength(200)),
+  detail: Schema.optional(Schema.String),
+});
+const purposeNames = { analysis: "内容分析", translation: "翻译" } as const;
+const translationCache = createTranslationCache(createIndexedDbCacheStore());
+const originOf = (url: string | undefined) => {
+  try {
+    const origin = url ? new URL(url).origin : undefined;
+    return origin === "null" ? undefined : origin;
+  } catch { return undefined; }
+};
+
+// Translation requests are traced as OpenTelemetry spans kept locally (see debug-log/trace.ts).
+const traceRequest = <A>(name: string, attributes: Record<string, unknown>, body: (span: Tracer.Span, run: RunInSpan) => Promise<A>) =>
+  traceRequestWith(localTracer, name, attributes, body);
 
 export default defineBackground(() => {
   const contexts = createContextCarryover({
@@ -28,46 +53,163 @@ export default defineBackground(() => {
   browser.tabs.onRemoved.addListener((tabId) => { void handleChatGPTTabClosed(tabId); });
   browser.runtime.onMessage.addListener((message, sender) => {
     if (sender.id !== browser.runtime.id) return;
+    const page = pageOf(pageUrl(sender));
     if (message?.type === "open-settings") {
       return browser.runtime.openOptionsPage().then(() => ({ opened: true }));
     }
+    if (message?.type === "debug-log") {
+      try {
+        const entry = Schema.decodeUnknownSync(PageLog)(message.entry);
+        void debugLog.write(entry.level, entry.event, { detail: entry.detail, page, source: "page" });
+      } catch {}
+      return;
+    }
+    if (message?.type === "debug-log-clear") return debugLog.clear().then(() => ({ status: "ok" }));
+    if (message?.type === "traces-clear") return traceStore.clear().then(() => ({ status: "ok" }));
+    if (message?.type === "cache-stats") return translationCache.count().then((count) => ({ status: "ok", count }), () => ({ status: "failed" }));
+    if (message?.type === "cache-clear") return translationCache.clear().then(() => ({ status: "ok" }), () => ({ status: "failed" }));
     if (message?.type === "chatgpt-sign-in") return startChatGPTSignIn();
     if (message?.type === "chatgpt-sign-out") return signOutChatGPT().then(() => ({ status: "ok" }));
     if (message?.type === "chatgpt-models") {
-      return listChatGPTModels().then((models) => ({ status: "ok", models }), () => ({ status: "failed" }));
+      return listChatGPTModels().then((models) => {
+        if (!models.length) void debugLog.warn("ChatGPT 模型列表为空", { detail: "接口没有返回 visibility 为 list 的模型" });
+        return { status: "ok", models };
+      }, (error) => {
+        void debugLog.error("读取 ChatGPT 模型列表失败", { detail: describeError(error) });
+        return { status: "failed" };
+      });
     }
-    if (message?.type === "prepare-translation") {
+    if (message?.type === "openai-models") {
+      // The options page sends the key being edited, so the list follows it before it's saved.
       return (async () => {
         try {
-          const context = Schema.decodeUnknownSync(PageContext)(message.context);
-          if (context.sample.length > 12000 || context.title.length > 1000 || context.pagination.length > 20) return { status: "failed" };
-          const settings = await aiSettings.getValue();
-          const chatgpt = await chatgptCredentials();
-          const missing = missingConfiguration(settings, chatgpt);
-          if (missing) return { status: "not-configured", purpose: missing };
-          void contexts.notePage(pageUrl(sender), context.title);
-          return { status: "ok", plan: await Effect.runPromise(decideTranslationPlan(context, settings, chatgpt)) };
-        } catch { return { status: "failed" }; }
-      })();
-    }
-    if (message?.type === "analyze-content" || message?.type === "translate-content") {
-      return (async () => {
-        try {
-          const blocks = Schema.decodeUnknownSync(Blocks)(message.blocks);
-          if (blocks.length > ANALYSIS_BATCH_SIZE || blocks.reduce((sum, block) => sum + block.text.length, 0) > 200_000) {
-            return { status: "failed" };
-          }
-          const settings = await aiSettings.getValue();
-          const chatgpt = chatgptCredentials();
-          if (message.type === "translate-content") {
-            return await contexts.translate(pageUrl(sender), blocks, async (context) =>
-              Effect.runPromise(translateBatch(blocks, message.mode === "main" ? "main" : "all", settings, await chatgpt, context)));
-          }
-          return await Effect.runPromise(analyzePageContent(blocks, settings, await chatgpt));
-        } catch {
+          const apiKey = typeof message.apiKey === "string" && message.apiKey.trim()
+            ? message.apiKey.trim()
+            : (await aiSettings.getValue()).providers[AiProviders.OpenAIApi].apiKey.trim();
+          if (!apiKey) return { status: "no-key" };
+          const models = await listOpenAIModels(apiKey);
+          if (!models.length) void debugLog.warn("OpenAI 模型列表为空", { detail: "接口没有返回可生成文本的模型" });
+          return { status: "ok", models };
+        } catch (error) {
+          void debugLog.error("读取 OpenAI 模型列表失败", { detail: describeError(error) });
           return { status: "failed" };
         }
       })();
     }
+    if (message?.type === "gateway-models") {
+      return listGatewayModels().then((models) => {
+        if (!models.length) void debugLog.warn("Vercel AI Gateway 模型列表为空");
+        return { status: "ok", models };
+      }, (error) => {
+        void debugLog.error("读取 Vercel AI Gateway 模型列表失败", { detail: describeError(error) });
+        return { status: "failed" };
+      });
+    }
+    if (message?.type === "prepare-translation") {
+      return traceRequest("prepare-translation", { "obt.page": page }, async (span, run) => {
+        try {
+          const context = Schema.decodeUnknownSync(PageContext)(message.context);
+          span.attribute("obt.sample.chars", context.sample.length);
+          if (context.sample.length > 12000 || context.title.length > 1000 || context.pagination.length > 20) {
+            markFailed(span, `页面信息超出长度限制：sample ${context.sample.length}，title ${context.title.length}，pagination ${context.pagination.length}`);
+            return { status: "failed" };
+          }
+          const settings = await aiSettings.getValue();
+          const chatgpt = await chatgptCredentials();
+          for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
+          const missing = missingConfiguration(settings, chatgpt);
+          if (missing) {
+            markFailed(span, `${purposeNames[missing]}未配置`);
+            return { status: "not-configured", purpose: missing };
+          }
+          void contexts.notePage(pageUrl(sender), context.title);
+          const plan = await run(decideTranslationPlan(context, settings, chatgpt));
+          span.attribute("obt.plan.mode", plan.mode);
+          span.attribute("obt.plan.navigation", plan.navigation);
+          span.attribute("obt.plan.fallback", plan.fallback);
+          return { status: "ok", plan };
+        } catch (error) {
+          markFailed(span, "准备翻译时出现异常", error);
+          return { status: "failed" };
+        }
+      });
+    }
+    if (message?.type === "analyze-content" || message?.type === "translate-content") return handleBatch(message, sender);
   });
+
+  // Streaming translation: the page opens a port, sends one batch, and receives each
+  // block's translation as it grows ({ type: "partial" }) before the final result.
+  browser.runtime.onConnect.addListener((port) => {
+    if (port.name !== "translate-stream" || port.sender?.id !== browser.runtime.id) return;
+    let open = true;
+    port.onDisconnect.addListener(() => { open = false; });
+    port.onMessage.addListener((message: { blocks?: unknown; mode?: unknown }) => {
+      const post = (value: unknown) => { if (open) port.postMessage(value); };
+      // Cached translations are final; streamed ones are still being written.
+      void handleBatch({ ...message, type: "translate-content" }, port.sender!, (index, text, final) => post({ type: final ? "cached" : "partial", index, text }))
+        .then((result) => post({ type: "result", result }));
+    });
+  });
+
+  function handleBatch(
+    message: { type: "analyze-content" | "translate-content"; blocks?: unknown; mode?: unknown; analyzed?: unknown },
+    sender: Parameters<typeof pageUrl>[0],
+    onPartial?: (index: number, text: string, final?: boolean) => void,
+  ) {
+    const page = pageOf(pageUrl(sender));
+    return traceRequest(message.type, { "obt.page": page, ...(onPartial && { "obt.streaming": true }) }, async (span, run) => {
+      try {
+        const blocks = Schema.decodeUnknownSync(Blocks)(message.blocks);
+        const length = blocks.reduce((sum, block) => sum + block.text.length, 0);
+        span.attribute("obt.blocks", blocks.length);
+        span.attribute("obt.chars", length);
+        if (blocks.length > ANALYSIS_BATCH_SIZE || length > 200_000) {
+          markFailed(span, `请求超出限制：${blocks.length} 段，${length} 字符`);
+          return { status: "failed" };
+        }
+        const settings = await aiSettings.getValue();
+        const chatgpt = chatgptCredentials();
+        const mode = message.mode === "main" ? "main" : "all";
+        span.attribute("obt.mode", mode);
+        if (message.type === "translate-content") {
+          // The page analyzes blocks ahead of translation (to order them by priority) and sends
+          // only blocks to translate; older callers still get analysis here.
+          const analyzed = message.analyzed === true;
+          span.attribute("obt.analyzed", analyzed);
+          // Cached blocks are served from IndexedDB; only the rest reach the model and the site
+          // context. Private windows have no page URL here, so they bypass the cache.
+          const url = pageUrl(sender);
+          const origin = originOf(url);
+          const { provider, models } = settings.translation;
+          const result = await translateWithCache({
+            cache: translationCache,
+            scope: origin
+              ? { origin, target: TARGET_LANGUAGE, provider, model: (models as Record<string, string | undefined>)[provider] ?? "", mode }
+              : undefined,
+            blocks,
+            onCached: onPartial && ((index, text) => onPartial(index, text, true)),
+            translate: (misses, indexes) => contexts.translate(url, misses, async (context) =>
+              run(translateBatch(misses, mode, settings, await chatgpt, context, onPartial && ((index, text) => onPartial(indexes[index]!, text)), { analyzed }))),
+          });
+          span.attribute("obt.cache.hits", result.cacheHits ?? 0);
+          if (result.status === "ok") {
+            span.attribute("obt.translated", result.translations.filter((text) => text !== null).length);
+            span.attribute("obt.terms", result.terms.length);
+            span.attribute("obt.analysis.fallback", result.analysisFallbackCount);
+          } else if (result.status === "not-configured") {
+            markFailed(span, `${purposeNames[result.purpose]}未配置`);
+          } else {
+            markFailed(span, "翻译批次失败", result.error);
+          }
+          return result;
+        }
+        const result = await run(analyzePageContent(blocks, settings, await chatgpt, mode));
+        if (result.status === "failed") markFailed(span, "内容分析失败", result.error);
+        return result;
+      } catch (error) {
+        markFailed(span, "处理请求时出现异常", error);
+        return { status: "failed" };
+      }
+    });
+  }
 });

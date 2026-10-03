@@ -4,10 +4,13 @@ import { Effect, Schema } from "effect";
 import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import {
-  CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, parseCallback, refreshAccount, type ChatGPTAuth,
+  CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, listModels, parseCallback, refreshAccount, type ChatGPTAuth,
 } from "../src/modules/ai/chatgpt-auth";
 import { analysisLayerFromSettings, translationLayerFromSettings } from "../src/modules/ai/configured";
 import { AiProviders } from "../src/modules/ai/providers";
+import { listOpenAIModels } from "../src/modules/ai/openai-models";
+import { describeError } from "../src/modules/debug-log/model";
+import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/debug-log/trace";
 import { defaultSettings } from "../src/modules/settings/model";
 import { missingConfiguration } from "../src/modules/translator/translate-batch";
 
@@ -112,8 +115,11 @@ function sse(...events: unknown[]) {
 
 test("subscription translation streams Responses requests with the OAuth token", async () => {
   const settings = structuredClone(defaultSettings);
+  settings.analysis.provider = AiProviders.OpenAIApi;
   settings.translation.provider = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
+  settings.translation.reasoningEffort = "high";
+  settings.translation.fast = true;
   settings.providers.OpenAIApi.apiKey = "test-direct";
   assert.equal(missingConfiguration(settings), "translation");
   const credentials = { accessToken: async () => "oauth-token" };
@@ -126,6 +132,8 @@ test("subscription translation streams Responses requests with the OAuth token",
     assert.equal(body.model, "gpt-test");
     assert.equal(body.stream, true);
     assert.equal(body.store, false);
+    assert.deepEqual(body.reasoning, { effort: "high" });
+    assert.equal(body.service_tier, "fast");
     return sse({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } }, { type: "response.completed", response: completed });
   };
   const result = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
@@ -135,10 +143,53 @@ test("subscription translation streams Responses requests with the OAuth token",
   assert.equal(result.text, "你好");
 
   const limited: typeof fetch = async () => sse({ type: "response.failed", response: { ...completed, status: "failed", output: [], error: { code: "subscription_sharing_usage_limit_exceeded", message: "limit" } } });
-  await assert.rejects(Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+  const limit = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
     Effect.provide(translationLayerFromSettings(settings, credentials)),
     Effect.provideService(FetchHttpClient.Fetch, limited),
-  )));
+    Effect.flip,
+  ));
+  assert.equal(limit.reason._tag, "RateLimitError");
+
+  const streamFailed: typeof fetch = async () => sse({ type: "response.failed", response: { ...completed, status: "failed", output: [], error: { code: "server_error", message: "boom from the stream" } } });
+  const failed = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, streamFailed),
+    Effect.flip,
+  ));
+  assert.match(describeError(failed), /boom from the stream/);
+
+  // The plan endpoint can send output only as item events and finish with an empty `output`.
+  const message = completed.output[0]!;
+  const itemsOnly: typeof fetch = async () => sse(
+    { type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_1", summary: [] } },
+    { type: "response.output_item.done", output_index: 0, item: { type: "reasoning", id: "rs_1", summary: [] } },
+    { type: "response.output_item.done", output_index: 1, item: message },
+    { type: "response.completed", response: { ...completed, output: [] } },
+  );
+  const fromItems = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, itemsOnly),
+  ));
+  assert.equal(fromItems.text, "你好");
+  const deltasOnly: typeof fetch = async () => sse(
+    { type: "response.output_text.delta", item_id: "msg_1", output_index: 0, content_index: 0, delta: "你" },
+    { type: "response.output_text.delta", item_id: "msg_1", output_index: 0, content_index: 0, delta: "好" },
+    { type: "response.completed", response: { ...completed, output: [] } },
+  );
+  const fromDeltas = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, deltasOnly),
+  ));
+  assert.equal(fromDeltas.text, "你好");
+
+  // An HTTP error arrives as plain JSON, not a stream; its own message must survive.
+  const rejected: typeof fetch = async () => Response.json({ error: { message: "The 'gpt-test' model is not supported when using Codex with a ChatGPT account.", type: "invalid_request_error" } }, { status: 400 });
+  const failure = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, credentials)),
+    Effect.provideService(FetchHttpClient.Fetch, rejected),
+    Effect.flip,
+  ));
+  assert.match(describeError(failure), /not supported/);
 });
 
 test("the translator's structured output works over the subscription", async () => {
@@ -163,12 +214,14 @@ test("subscription analysis answers decisions through the same streamed Response
   const settings = structuredClone(defaultSettings);
   settings.analysis.provider = AiProviders.OpenAISubscription;
   settings.analysis.models.OpenAISubscription = "gpt-test";
+  settings.analysis.fast = true;
   const credentials = { accessToken: async () => "oauth-token" };
   const fetchMock: typeof fetch = async (input, init) => {
     assert.equal(String(input), "https://api.openai.com/v1/responses");
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer oauth-token");
     const body = JSON.parse(String(init?.body));
     assert.equal(body.model, "gpt-test");
+    assert.equal(body.service_tier, "fast");
     assert.equal(body.stream, true);
     assert.equal(body.text.format.name, "decisions");
     const text = JSON.stringify({ relevant: { probabilities: { false: 0.1, true: 0.9 } } });
@@ -181,4 +234,106 @@ test("subscription analysis answers decisions through the same streamed Response
     Effect.provideService(FetchHttpClient.Fetch, fetchMock),
   ));
   assert.equal(result.answers.relevant.probability, 0.9);
+});
+
+test("the model catalog lists the account's visible models from the `models` array", async () => {
+  const requests: Request[] = [];
+  const models = await listModels("test-token", async (input, init) => {
+    requests.push(new Request(input, init));
+    return Response.json({ models: [
+      { slug: "gpt-plan", display_name: "GPT Plan", visibility: "list" },
+      { slug: "gpt-hidden", display_name: "Hidden", visibility: "hide" },
+      { slug: "gpt-bare", visibility: "list" },
+    ] });
+  });
+  assert.deepEqual(models, [{ slug: "gpt-plan", displayName: "GPT Plan" }, { slug: "gpt-bare", displayName: "gpt-bare" }]);
+  assert.equal(requests[0]!.url, "https://api.openai.com/v1/models");
+  assert.equal(requests[0]!.headers.get("Authorization"), "Bearer test-token");
+  await assert.rejects(listModels("test-token", async () => new Response("nope", { status: 403 })), /403/);
+});
+
+test("an OpenAI API key's catalog keeps text models, newest first", async () => {
+  const requests: Request[] = [];
+  const models = await listOpenAIModels("test-direct", async (input, init) => {
+    requests.push(new Request(input, init));
+    return Response.json({ object: "list", data: [
+      { id: "gpt-old", created: 1 },
+      { id: "text-embedding-3-large", created: 5 },
+      { id: "gpt-6-luna", created: 9 },
+      { id: "whisper-1", created: 3 },
+    ] });
+  });
+  assert.deepEqual(models.map((m) => m.slug), ["gpt-6-luna", "gpt-old"]);
+  assert.equal(requests[0]!.url, "https://api.openai.com/v1/models");
+  assert.equal(requests[0]!.headers.get("Authorization"), "Bearer test-direct");
+  await assert.rejects(listOpenAIModels("bad", async () => new Response("invalid key", { status: 401 })), /401: invalid key/);
+});
+
+test("reading the plan's response stream is its own span, with time to first output and reasoning tokens", async () => {
+  const settings = structuredClone(defaultSettings);
+  settings.analysis.provider = AiProviders.OpenAIApi;
+  settings.translation.provider = AiProviders.OpenAISubscription;
+  settings.translation.models.OpenAISubscription = "gpt-test";
+  const signedIn = { accessToken: async () => "oauth-token" };
+  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Events arrive over time, as they do while the model thinks and then writes.
+  const slow: typeof fetch = async () => new Response(new ReadableStream({
+    async start(controller) {
+      const send = (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      send({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } });
+      await delay(80);
+      send({ type: "response.output_text.delta", item_id: "msg_1", output_index: 0, content_index: 0, delta: "你好" });
+      await delay(20);
+      send({ type: "response.completed", response: { ...completed, usage: { input_tokens: 30, output_tokens: 50, total_tokens: 80, output_tokens_details: { reasoning_tokens: 40 } } } });
+      controller.close();
+    },
+  }), { headers: { "Content-Type": "text/event-stream" } });
+  const spans: OtlpSpan[] = [];
+  const result = await Effect.runPromise(traced(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, signedIn)),
+  ), createLocalTracer((span) => spans.push(span))).pipe(Effect.provideService(FetchHttpClient.Fetch, slow)));
+  assert.equal(result.text, "你好");
+  const stream = spans.find((span) => span.name === "http.response.stream")!;
+  const model = spans.find((span) => span.name === "LanguageModel.generateText")!;
+  assert.equal(stream.parentSpanId, model.spanId, "the stream is read inside the model call");
+  const number = (key: string) => Number(stream.attributes.find((a) => a.key === key)?.value.intValue);
+  assert.ok(number("obt.stream.first_event_ms") < 60, "the first event arrives right away");
+  assert.ok(number("obt.stream.first_output_ms") >= 70, "output starts once the model stops thinking");
+  assert.equal(number("gen_ai.usage.output_tokens"), 50);
+  assert.equal(number("obt.usage.reasoning_tokens"), 40);
+  assert.equal(number("obt.stream.events"), 3);
+  const http = spans.find((span) => span.name === "http.client POST")!;
+  assert.ok(BigInt(http.endTimeUnixNano) <= BigInt(stream.startTimeUnixNano) + 5_000_000n, "the HTTP span ends at the headers; the stream span covers the rest");
+});
+
+test("streaming translation over the plan passes the event stream through and reports partial text", async () => {
+  const { Translator } = await import("../src/modules/translator");
+  const { Layer } = await import("effect");
+  const settings = structuredClone(defaultSettings);
+  settings.translation.provider = AiProviders.OpenAISubscription;
+  settings.translation.models.OpenAISubscription = "gpt-test";
+  const signedIn = { accessToken: async () => "oauth-token" };
+  const json = JSON.stringify({ translations: [{ id: 0, text: "你好，世界" }], terms: [] });
+  const deltas = json.match(/[\s\S]{1,6}/g)!;
+  const streamed: typeof fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.stream, true);
+    const message = { type: "message", id: "msg_1", role: "assistant", status: "completed", content: [{ type: "output_text", text: json, annotations: [] }] };
+    return sse(
+      { type: "response.created", sequence_number: 0, response: { ...completed, status: "in_progress", output: [] } },
+      { type: "response.output_item.added", sequence_number: 1, output_index: 0, item: { ...message, status: "in_progress", content: [] } },
+      { type: "response.content_part.added", sequence_number: 2, item_id: "msg_1", output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } },
+      ...deltas.map((delta, index) => ({ type: "response.output_text.delta", sequence_number: 3 + index, item_id: "msg_1", output_index: 0, content_index: 0, delta, logprobs: [] })),
+      { type: "response.output_item.done", sequence_number: 100, output_index: 0, item: message },
+      { type: "response.completed", sequence_number: 101, response: { ...completed, output: [message] } },
+    );
+  };
+  const partials: string[] = [];
+  const result = await Effect.runPromise(Translator.use((service) => service.translate(["Hello, world"], "简体中文", undefined, (_, text) => partials.push(text))).pipe(
+    Effect.provide(Translator.Live.pipe(Layer.provide(translationLayerFromSettings(settings, signedIn)))),
+    Effect.provideService(FetchHttpClient.Fetch, streamed),
+  ));
+  assert.deepEqual(result.translations, ["你好，世界"]);
+  assert.ok(partials.length > 1);
+  assert.equal(partials.at(-1), "你好，世界");
 });

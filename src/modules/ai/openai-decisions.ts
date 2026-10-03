@@ -4,6 +4,7 @@ import type * as Decision from "effect/unstable/ai/Decision";
 import { openAICompatibleLayer } from "./vercel";
 import { chatgptLayer, type ChatGPTCredentials } from "./chatgpt";
 import { DEFAULT_DECISION_MODEL } from "./providers";
+import type { ReasoningEffort } from "../settings/model";
 
 // OpenAI's Decisions API is in limited preview with no published request format, so
 // decisions run on a regular OpenAI model through structured outputs. Once the API is
@@ -75,14 +76,17 @@ export const languageModelDecisionLayer = Layer.effect(DecisionModel.DecisionMod
   });
 }));
 
-export function openAIDecisionLayer(options: { apiKey: Redacted.Redacted<string>; model?: string }) {
+export function openAIDecisionLayer(options: { apiKey: Redacted.Redacted<string>; model?: string; reasoningEffort?: ReasoningEffort }) {
   return languageModelDecisionLayer.pipe(Layer.provide(openAICompatibleLayer({
     apiKey: options.apiKey,
     model: options.model || DEFAULT_DECISION_MODEL,
     apiUrl: "https://api.openai.com/v1",
+    reasoningEffort: options.reasoningEffort,
   })));
 }
 
-export function chatgptDecisionLayer(options: { model?: string; credentials: ChatGPTCredentials }) {
-  return languageModelDecisionLayer.pipe(Layer.provide(chatgptLayer({ model: options.model || DEFAULT_DECISION_MODEL, credentials: options.credentials })));
+export function chatgptDecisionLayer(options: { model?: string; credentials: ChatGPTCredentials; reasoningEffort?: ReasoningEffort; fast?: boolean }) {
+  return languageModelDecisionLayer.pipe(Layer.provide(chatgptLayer({
+    model: options.model || DEFAULT_DECISION_MODEL, credentials: options.credentials, reasoningEffort: options.reasoningEffort, fast: options.fast,
+  })));
 }

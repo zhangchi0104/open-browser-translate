@@ -36,3 +36,74 @@ export function pickNearViewport<T>(
   // Array sort is stable, so equally near items keep document order.
   return near.sort((a, b) => a.distance - b.distance).slice(0, limit).map(({ item }) => item);
 }
+
+/**
+ * Like `pickNearViewport`, but higher-priority items (lower `priorityOf`) come first and
+ * distance to the viewport only orders items of the same priority.
+ */
+export function pickByPriority<T>(
+  pending: readonly T[],
+  spanOf: (item: T) => Span | null,
+  priorityOf: (item: T) => number,
+  viewportHeight: number,
+  limit: number,
+): T[] {
+  const near = pickNearViewport(pending, spanOf, viewportHeight, pending.length);
+  // Array sort is stable, so items of one priority stay nearest first.
+  return near.sort((a, b) => priorityOf(a) - priorityOf(b)).slice(0, limit);
+}
+
+/** How many batches the launcher translates at once. */
+export const MAX_CONCURRENT_BATCHES = 3;
+
+/**
+ * Runs batches with up to `limit` in flight, taking the next one from `next` (the nearest
+ * pending content) whenever a slot frees up. With nothing near the viewport it waits for
+ * `nudge` (scrolling, resizing, new content). A batch resolving to `false` stops the queue,
+ * e.g. when translation isn't configured; one that throws counts as finished.
+ */
+export function createBatchQueue<T>(options: {
+  limit: number;
+  next: () => T | undefined;
+  run: (batch: T) => Promise<boolean>;
+  onBusy: (inFlight: number) => void;
+  onIdle: () => void;
+}) {
+  let wake: (() => void) | undefined;
+  let stopped = false;
+  const nudge = () => {
+    const resolve = wake;
+    wake = undefined;
+    resolve?.();
+  };
+  return {
+    nudge,
+    stop() {
+      stopped = true;
+      nudge();
+    },
+    /** Resolves once `active` turns false or a batch stops the queue; batches still in flight are left to finish. */
+    async drain(active: () => boolean) {
+      const inFlight = new Set<Promise<void>>();
+      const fill = () => {
+        while (inFlight.size < options.limit) {
+          const batch = options.next();
+          if (batch === undefined) return;
+          const task: Promise<void> = new Promise<boolean>((resolve) => resolve(options.run(batch)))
+            .then((keepGoing) => { if (!keepGoing) stopped = true; }, () => {})
+            .finally(() => {
+              inFlight.delete(task);
+              nudge();
+            });
+          inFlight.add(task);
+        }
+      };
+      while (active() && !stopped) {
+        fill();
+        if (inFlight.size) options.onBusy(inFlight.size);
+        else options.onIdle();
+        await new Promise<void>((resolve) => { wake = resolve; });
+      }
+    },
+  };
+}

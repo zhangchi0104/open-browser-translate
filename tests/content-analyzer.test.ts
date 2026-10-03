@@ -6,7 +6,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { AI, openAIDecisionLayer } from "../src/modules/ai";
 import { toProviderAnswer } from "../src/modules/ai/openai-decisions";
 import { decisionResponse, isDecisionRequest } from "./decision-mock";
-import { ContentAnalyzer, type ContentRole } from "../src/modules/content-analyzer";
+import { ContentAnalyzer, TRANSLATION_PRIORITY, type ContentRole } from "../src/modules/content-analyzer";
 import type { TranslatableContent } from "../src/modules/dom-parser";
 
 const content = (text: string): TranslatableContent => ({
@@ -99,4 +99,17 @@ test("model-reported weights are normalized into valid decision answers", () => 
   const probability = Decision.probability({ instructions: "Is it?", criteria: { false: "No", true: "Yes" } });
   assert.deepEqual(toProviderAnswer("x", probability, { false: 0.2, true: 0.8 }), { _tag: "Probability", probability: 0.8 });
   assert.ok(AiError.isAiError(toProviderAnswer("x", classify, { a: 0, b: 0, c: 0 })));
+});
+
+test("each block gets a translation priority from its role: content first, ads last, unsure treated as unknown", async () => {
+  const layer = mockLayer(() => Effect.succeed({ answers: {
+    "0": answer("navigation"), "1": answer("content"), "2": answer("advertisement", 0.3), "3": answer("content", 0.5), "4": answer("auxiliary"),
+  }, usage: { inputTokens: undefined, outputTokens: undefined } }));
+  const result = await Effect.runPromise(ContentAnalyzer.use((service) => service.analyze(["a", "b", "c", "d", "e"].map(content))).pipe(Effect.provide(layer)));
+  assert.deepEqual(result.map((item) => item.priority), [2, 0, 1, 1, 3]);
+  assert.equal(TRANSLATION_PRIORITY.content < TRANSLATION_PRIORITY.navigation && TRANSLATION_PRIORITY.navigation < TRANSLATION_PRIORITY.advertisement, true);
+
+  const failed = mockLayer(() => Effect.fail(AiError.make({ module: "Test", method: "decide", reason: new AiError.UnknownError({}) })));
+  const fallback = await Effect.runPromise(ContentAnalyzer.use((service) => service.analyze([content("x")])).pipe(Effect.provide(failed)));
+  assert.equal(fallback[0]!.priority, TRANSLATION_PRIORITY.unknown, "a block analysis couldn't classify isn't pushed back");
 });

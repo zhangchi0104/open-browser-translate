@@ -56,6 +56,10 @@ and translation settings, discards TypeSafe keys and Jev model IDs, and points
 analysis at OpenAI: the ChatGPT sign-in when translation already used it,
 otherwise the OpenAI API key with `gpt-6-luna`.
 
+Settings v4 adds the Vercel AI Gateway for analysis and makes it the default,
+with `typesafe-ai/jev`. Analysis left on an OpenAI API key that was never
+filled in moves to the gateway; configured OpenAI and ChatGPT choices stay.
+
 ## Content analysis on OpenAI
 
 OpenAI announced a Decisions API (DevDay, 2026-09-29), but it is in limited
@@ -72,6 +76,21 @@ tuning against live pages.
 `chatgptDecisionLayer` runs it on the ChatGPT plan through `chatgpt.ts`. When the
 Decisions API is documented, replace the request in `openai-decisions.ts`; the
 rest of the extension depends only on `DecisionModel`.
+
+## Content analysis on the Vercel AI Gateway
+
+The default until the Decisions API opens. The gateway lists models of type
+`evaluation` (`typesafe-ai/jev`, `convaiinnovations/laya`, `liquid/d1`) that take
+typed questions and return probabilities without generating text.
+`vercelDecisionLayer` (`gateway-decisions.ts`) sends `DecisionModel` decisions to
+them through the TypeSafe-compatible System One API at
+`https://ai-gateway.vercel.sh/typesafe/v1`, so no structured-output simulation
+is involved. It mirrors `@effect/ai-typesafe`'s adapter but renormalizes each
+distribution: Jev rounds its probabilities, so they can sum to 0.9998, while
+`DecisionModel` accepts only 1e-6 off. Sums within 0.05 of 1 are rescaled
+(omitted labels count as 0); anything further off still fails. The options page offers the evaluation models hard-coded in
+`GATEWAY_DECISION_MODELS` (`providers.ts`) for gateway analysis, and loads the
+gateway's language models for gateway translation (`gateway-models.ts`).
 
 ## ChatGPT subscription (Sign in with ChatGPT)
 
@@ -91,6 +110,16 @@ https://developers.openai.com/siwc/token-sharing-open-source
 - `chatgpt.ts` provides `LanguageModel` through `@effect/ai-openai`'s Responses
   adapter. Plan usage requires `stream: true` and `store: false`, so the HTTP
   client streams every request and returns the `response.completed` payload to
-  the adapter.
+  the adapter. Reading the stream is its own `http.response.stream` span: the
+  HTTP span ends when the headers arrive, while the model thinks and writes
+  during the stream. The span records when the first event and the first
+  output text arrived (`obt.stream.first_event_ms`, `obt.stream.first_output_ms`)
+  and the token usage, including reasoning tokens.
+- Analysis and translation on the plan can each turn on Fast mode
+  (`fast` in their settings), sent as `service_tier: "fast"`, the tier Codex
+  uses when signed in with ChatGPT. It uses plan limits at 2.5x the standard
+  rate (https://learn.chatgpt.com/docs/agent-configuration/speed). The
+  sign-in docs for open-source apps don't mention it, so a plan or model that
+  doesn't allow it surfaces as a failed request in the trace.
 
 Analysis can use the same sign-in (see above).

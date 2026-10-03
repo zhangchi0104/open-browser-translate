@@ -5,6 +5,7 @@ import {
   type ChatGPTAuth, type SignInAttempt,
 } from "./chatgpt-auth";
 import type { ChatGPTCredentials } from "./chatgpt";
+import { debugLog } from "../debug-log";
 
 // Tokens live apart from AISettings so saving the settings form never overwrites them.
 export const chatgptAuth = storage.defineItem<ChatGPTAuth | null>("local:chatgptAuth", { fallback: null });
@@ -20,7 +21,8 @@ export type SignInResult =
 // signing in. `state` ties an outcome to the attempt the options page started.
 export const chatgptSignInResult = storage.defineItem<(SignInResult & { state: string }) | null>("session:chatgptSignInResult", { fallback: null });
 async function settle(state: string, result: SignInResult) {
-  if (result.status === "failed" && result.reason !== "cancelled") console.error("ChatGPT sign-in failed:", result.reason, result.detail);
+  if (result.status === "ok") void debugLog.info("ChatGPT 登录成功");
+  else if (result.reason !== "cancelled") void debugLog.error(`ChatGPT 登录失败：${result.reason}`, { detail: result.detail });
   await chatgptSignInResult.setValue({ ...result, state });
 }
 
