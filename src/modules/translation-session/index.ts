@@ -60,10 +60,10 @@ export function createTranslationSession<T extends Block>(
   let pending = items.slice();
   const analysis = new Map<T, { keep: boolean; priority: number }>();
   const analyzing = new Set<T>();
-  const progress: SessionProgress = { analyzing: 0, translating: 0, shown: 0, failed: 0, fallbacks: 0, pending: pending.length };
+  const counts = { translating: 0, shown: 0, failed: 0, fallbacks: 0 };
   let stopped = false;
   let notConfigured: Purpose | undefined;
-  const report = () => onProgress({ ...progress, pending: pending.length });
+  const report = () => onProgress({ ...counts, analyzing: analyzing.size, pending: pending.length });
   const dropDetached = () => { pending = pending.filter((item) => page.attached(item)); };
   const stopAll = (purpose: Purpose) => {
     notConfigured = purpose;
@@ -81,7 +81,6 @@ export function createTranslationSession<T extends Block>(
       return batch;
     },
     run: async (batch) => {
-      progress.analyzing += batch.length;
       try {
         const result = await page.analyze(batch, mode).catch((error): PageAnalysisResult => {
           page.log("error", "内容分析：发送请求失败", describeError(error));
@@ -89,23 +88,21 @@ export function createTranslationSession<T extends Block>(
         });
         if (stopped) return false;
         if (result.status === "not-configured") {
-          stopAll("analysis");
+          stopAll(result.purpose);
           return false;
         }
         const answer = result.status === "ok" && result.blocks.length === batch.length ? result : undefined;
-        if (answer) progress.fallbacks += answer.fallbackCount;
+        if (answer) counts.fallbacks += answer.fallbackCount;
         batch.forEach((item, index) => analysis.set(item, answer?.blocks[index] ?? { keep: true, priority: TRANSLATION_PRIORITY.unknown }));
         const skipped = new Set(batch.filter((item) => !analysis.get(item)!.keep));
         if (skipped.size) pending = pending.filter((item) => !skipped.has(item));
         translationQueue.nudge();
         return true;
       } finally {
-        progress.analyzing -= batch.length;
         for (const item of batch) analyzing.delete(item);
       }
     },
-    onBusy: report,
-    onIdle: report,
+    onChange: report,
   });
 
   const translationQueue = createBatchQueue<T[]>({
@@ -126,7 +123,7 @@ export function createTranslationSession<T extends Block>(
       return batch;
     },
     run: async (batch) => {
-      progress.translating += batch.length;
+      counts.translating += batch.length;
       try {
         page.loading(batch);
         const final = new Set<T>();
@@ -137,32 +134,27 @@ export function createTranslationSession<T extends Block>(
           if (isFinal) final.add(item);
         });
         if (stopped) return false;
-        if (result.status === "ok" && result.translations.length === batch.length) {
+        if (result.status === "ok") {
           batch.forEach((item, index) => page.show(item, result.translations[index]!, true));
-          progress.shown += batch.length;
+          counts.shown += batch.length;
           return true;
         }
         // Streamed text that didn't pass validation goes; blocks the cache served stay.
         const unfinished = batch.filter((item) => !final.has(item));
         page.discard(unfinished);
-        progress.shown += final.size;
+        counts.shown += final.size;
         if (result.status === "not-configured") {
           stopAll(result.purpose);
           return false;
         }
-        if (result.status === "ok") {
-          page.log("error", "翻译批次：译文数量与请求不一致", `请求 ${batch.length} 段，返回 ${result.translations.length} 段`);
-        } else if (result.error) {
-          page.log("error", "翻译批次失败", result.error);
-        }
-        progress.failed += unfinished.length;
+        if (result.error) page.log("error", "翻译批次失败", result.error);
+        counts.failed += unfinished.length;
         return true;
       } finally {
-        progress.translating -= batch.length;
+        counts.translating -= batch.length;
       }
     },
-    onBusy: report,
-    onIdle: report,
+    onChange: report,
   });
   const queues = [analysisQueue, translationQueue];
 
@@ -180,14 +172,14 @@ export function createTranslationSession<T extends Block>(
     /** Ends the session; batches in flight finish but their results are ignored. */
     stop() {
       stopped = true;
-      this.nudge();
+      for (const queue of queues) queue.stop();
     },
     /**
      * Runs until `stop`, or until a model turns out not to be configured, which it resolves with.
      * Batches in flight when it resolves are left to finish.
      */
     async run(): Promise<{ notConfigured?: Purpose }> {
-      await Promise.all(queues.map((queue) => queue.drain(() => !stopped)));
+      await Promise.all(queues.map((queue) => queue.drain()));
       return notConfigured ? { notConfigured } : {};
     },
   };

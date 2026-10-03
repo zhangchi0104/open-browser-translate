@@ -1,4 +1,4 @@
-import { Effect, Layer, ManagedRuntime, type Tracer } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { storage } from "wxt/utils/storage";
 import { aiSettings, Settings, SettingsLive, type AISettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
@@ -17,13 +17,10 @@ import { createTranslationCache } from "../modules/translation-cache";
 import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
 import { createContextCarryover } from "../modules/translation-context/carryover";
 import { siteOf, type TranslationContext } from "../modules/translation-context";
-import {
-  debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestOn, traceStore, tracingLayer, type RunInSpan,
-} from "../modules/debug-log";
-import { createDispatcher, type Block, type Failed, type ModelList, type Sender } from "../modules/protocol";
+import { debugLog, describeError, localTracer, markFailed, pageOf, traceStore, tracingLayer } from "../modules/debug-log";
+import { batchChars, createDispatcher, PURPOSE_NAMES, type Block, type Failed, type ModelList, type Sender } from "../modules/protocol";
 
 const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
-const purposeNames: Record<Purpose, string> = { analysis: "内容分析", translation: "翻译" };
 const translationCache = createTranslationCache(createIndexedDbCacheStore());
 
 // Every request runs on one runtime, so built model layers (and their HTTP clients) are shared
@@ -32,49 +29,47 @@ const BackgroundLive = Layer.mergeAll(ModelsLive, tracingLayer(localTracer)).pip
   Layer.provideMerge(Layer.mergeAll(SettingsLive, ChatGPTTokenLive)),
 );
 const runtime = ManagedRuntime.make(BackgroundLive);
-type Run = RunInSpan<ManagedRuntime.ManagedRuntime.Services<typeof runtime>>;
+type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
+/** What a traced request can end in; replies may carry more. */
+type Outcome = { status: "ok" } | { status: "not-configured"; purpose: Purpose } | { status: "failed"; error?: string };
 
 /**
  * Runs a translation request as a root span, traced locally (see debug-log/trace.ts). The request
  * reads the settings and sign-in once, so its steps (model choice, cache key, span attributes) all
  * see the same ones even if the options page saves mid-request. A not-configured or failed result,
- * or a throw, marks the span failed; `failure` describes the latter.
+ * or a defect, marks the span failed; `failure` describes a failed result.
  */
-const traceRequest = <A extends { status: string; purpose?: Purpose; error?: string }>(
+const traceRequest = <A extends Outcome, E>(
   name: string,
+  sender: Sender,
   attributes: Record<string, unknown>,
   failure: string,
-  body: (span: Tracer.Span, run: Run, settings: AISettings) => Promise<A>,
-) => traceRequestOn(runtime.runPromise, name, attributes, async (span, run): Promise<A | Failed> => {
-  try {
-    const [settings, token] = await run(Effect.all([
+  body: (settings: AISettings) => Effect.Effect<A, E, Services>,
+): Promise<A | Failed> => runtime.runPromise(Effect.gen(function* () {
+  const span = yield* Effect.orDie(Effect.currentSpan);
+  return yield* Effect.gen(function* () {
+    const [settings, token] = yield* Effect.all([
       Settings.use((settings) => settings.get),
       ChatGPTToken.use((token) => Effect.map(token.signedIn, (signedIn) => ({ ...token, signedIn: Effect.succeed(signedIn) }))),
-    ], { concurrency: 2 }));
-    const snapshot: Run = (effect) => run(effect.pipe(
+    ], { concurrency: 2 });
+    const result = yield* body(settings).pipe(
       Effect.provideService(Settings, { get: Effect.succeed(settings) }),
       Effect.provideService(ChatGPTToken, token),
-    ));
-    const result = await body(span, snapshot, settings);
-    if (result.status === "not-configured") markFailed(span, `${purposeNames[result.purpose ?? "analysis"]}未配置`);
-    else if (result.status === "failed") markFailed(span, failure, result.error);
+    );
+    const outcome: Outcome = result;
+    if (outcome.status === "not-configured") markFailed(span, `${PURPOSE_NAMES[outcome.purpose]}未配置`);
+    else if (outcome.status === "failed") markFailed(span, failure, outcome.error);
     return result;
-  } catch (error) {
-    markFailed(span, "处理请求时出现异常", error);
-    return { status: "failed" };
-  }
-});
+  }).pipe(Effect.catchCause((cause) => {
+    markFailed(span, "处理请求时出现异常", cause);
+    return Effect.succeed<Failed>({ status: "failed" });
+  }));
+}).pipe(Effect.withSpan(name, { kind: "server", attributes: { "obt.page": pageOf(pageUrl(sender)), ...attributes } })));
 
 // The sender's URL, not anything in the message, decides which page and site a request is for.
 // Private windows report none, so nothing about them is cached, logged or kept as site context.
 const pageUrl = (sender: Sender) => sender.tab?.incognito ? undefined : sender.tab?.url ?? sender.url;
-const batchAttributes = (blocks: readonly Block[]) => ({
-  "obt.blocks": blocks.length,
-  "obt.chars": blocks.reduce((sum, block) => sum + block.text.length, 0),
-});
-const recordModel = (span: Tracer.Span, settings: AISettings, purpose: Purpose) => {
-  for (const [key, value] of Object.entries(modelAttributes(settings, purpose))) span.attribute(key, value);
-};
+const batchAttributes = (blocks: readonly Block[]) => ({ "obt.blocks": blocks.length, "obt.chars": batchChars(blocks) });
 
 /** A model catalog for the options page; an empty one is logged, since it usually means a wrong key or plan. */
 const catalog = (provider: string, list: () => Promise<ChatGPTModel[]>, emptyDetail?: string): Promise<ModelList> =>
@@ -116,31 +111,24 @@ export default defineBackground(() => {
       },
       "gateway-models": () => catalog("Vercel AI Gateway", listGatewayModels),
       "prepare-translation": ({ context }, sender) => traceRequest(
-        "prepare-translation", { "obt.page": pageOf(pageUrl(sender)), "obt.sample.chars": context.sample.length }, "准备翻译失败",
-        (span, run, settings) => {
-          recordModel(span, settings, "analysis");
-          return run(Effect.gen(function* () {
-            yield* configuredSettings();
-            void contexts.notePage(siteOf(pageUrl(sender)), context.title);
-            const plan = yield* decideTranslationPlan(context);
-            span.attribute("obt.plan.mode", plan.mode);
-            span.attribute("obt.plan.navigation", plan.navigation);
-            span.attribute("obt.plan.fallback", plan.fallback);
-            return { status: "ok", plan } as const;
-          }).pipe(Effect.catchTag("ModelNotConfigured", ({ purpose }) => Effect.succeed({ status: "not-configured", purpose } as const))));
-        },
+        "prepare-translation", sender, { "obt.sample.chars": context.sample.length }, "准备翻译失败",
+        (settings) => Effect.gen(function* () {
+          yield* Effect.annotateCurrentSpan(modelAttributes(settings, "analysis"));
+          yield* configuredSettings();
+          void contexts.notePage(siteOf(pageUrl(sender)), context.title);
+          const plan = yield* decideTranslationPlan(context);
+          yield* Effect.annotateCurrentSpan({ "obt.plan.mode": plan.mode, "obt.plan.navigation": plan.navigation, "obt.plan.fallback": plan.fallback });
+          return { status: "ok", plan } as const;
+        }).pipe(Effect.catchTag("ModelNotConfigured", ({ purpose }) => Effect.succeed({ status: "not-configured", purpose } as const))),
       ),
       "analyze-content": ({ mode, blocks }, sender) => traceRequest(
-        "analyze-content", { "obt.page": pageOf(pageUrl(sender)), "obt.mode": mode, ...batchAttributes(blocks) }, "内容分析失败",
-        (span, run, settings) => {
-          recordModel(span, settings, "analysis");
-          return run(analyzePageContent(blocks, mode));
-        },
+        "analyze-content", sender, { "obt.mode": mode, ...batchAttributes(blocks) }, "内容分析失败",
+        (settings) => Effect.andThen(Effect.annotateCurrentSpan(modelAttributes(settings, "analysis")), analyzePageContent(blocks, mode)),
       ),
     },
     translate: (blocks, sender, onBlock) => traceRequest(
-      "translate-content", { "obt.page": pageOf(pageUrl(sender)), "obt.streaming": true, ...batchAttributes(blocks) }, "翻译批次失败",
-      (_span, run) => run(translatePageBatch(blocks, pageUrl(sender), { cache: translationCache, contexts }, onBlock)),
+      "translate-content", sender, { "obt.streaming": true, ...batchAttributes(blocks) }, "翻译批次失败",
+      () => translatePageBatch(blocks, pageUrl(sender), { cache: translationCache, contexts }, onBlock),
     ),
   });
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => dispatcher.onMessage(message, sender, sendResponse));

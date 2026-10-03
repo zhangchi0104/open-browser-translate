@@ -21,16 +21,23 @@ export const PAGE_CONTEXT_LIMITS = { title: 1000, sample: 12_000, pagination: 20
 export const Mode = Schema.Literals(["all", "main"]);
 export type Mode = typeof Mode.Type;
 
+/** A piece of page text translated as one unit, with the tag it came from. */
 export const Block = Schema.Struct({ text: Schema.String, tag: Schema.String });
 export type Block = typeof Block.Type;
 
-export const Batch = Schema.Array(Block).check(
+/** Characters in a batch, all blocks together. */
+export const batchChars = (blocks: readonly Block[]) => blocks.reduce((sum, block) => sum + block.text.length, 0);
+
+const Batch = Schema.Array(Block).check(
   Schema.isMaxLength(MAX_BATCH_BLOCKS),
   Schema.makeFilter((blocks: readonly Block[]) => {
-    const chars = blocks.reduce((sum, block) => sum + block.text.length, 0);
+    const chars = batchChars(blocks);
     return chars <= MAX_BATCH_CHARS || `${chars} characters is over ${MAX_BATCH_CHARS}`;
   }),
 );
+
+/** How each purpose is named to the reader. */
+export const PURPOSE_NAMES: Record<Purpose, string> = { analysis: "内容分析", translation: "翻译" };
 
 /** Bounded samples of the page, so the plan can be decided without sending the whole page. */
 export const PageContext = Schema.Struct({
@@ -42,7 +49,7 @@ export const PageContext = Schema.Struct({
 });
 export type PageContext = typeof PageContext.Type;
 
-export const PageLog = Schema.Struct({
+const PageLog = Schema.Struct({
   level: Schema.Literals(["info", "warn", "error"]),
   event: Schema.String.check(Schema.isMaxLength(200)),
   detail: Schema.optional(Schema.String),
@@ -68,17 +75,17 @@ export const Requests = {
   "prepare-translation": request("prepare-translation", { context: PageContext }),
   "analyze-content": request("analyze-content", { mode: Mode, blocks: Batch }),
 };
-export type RequestType = keyof typeof Requests;
+type RequestType = keyof typeof Requests;
 export type Request<K extends RequestType = RequestType> = { [T in K]: typeof Requests[T]["Type"] }[K];
 
 type Ok = { status: "ok" };
 /** Also the reply to any request that doesn't decode. */
 export type Failed = { status: "failed"; error?: string };
 export type ModelList = { status: "ok"; models: ChatGPTModel[] } | Failed;
-export type PrepareResult = { status: "ok"; plan: TranslationPlan } | { status: "not-configured"; purpose: Purpose } | Failed;
+type PrepareResult = { status: "ok"; plan: TranslationPlan } | { status: "not-configured"; purpose: Purpose } | Failed;
 
 /** The reply to each request. */
-export interface Responses {
+interface Responses {
   "open-settings": { opened: true };
   "debug-log": void;
   "debug-log-clear": Ok;
@@ -98,8 +105,10 @@ export type Response<K extends RequestType> = Responses[K] | Failed;
 // Streaming translation: the page opens a port, sends one batch, and receives each block's
 // text as it's written (or at once and final when it was cached), then the result.
 export const STREAM_PORT = "translate-stream";
-export const StreamRequest = Schema.Struct({ blocks: Batch });
-export type StreamEvent =
+const StreamRequest = Schema.Struct({ blocks: Batch });
+/** Receives a block's text by index in its batch; `final` once it won't change (cached, or validated). */
+export type OnBlock = (index: number, text: string, final: boolean) => void;
+type StreamEvent =
   | { type: "block"; index: number; text: string; final: boolean }
   | { type: "result"; result: TranslationBatchResult };
 
@@ -136,7 +145,7 @@ export function createClient(runtime: {
      * Resolves once with the result; losing the background (extension reloaded, worker stopped)
      * resolves it as failed.
      */
-    translate(blocks: readonly Block[], onBlock: (index: number, text: string, final: boolean) => void): Promise<TranslationBatchResult> {
+    translate(blocks: readonly Block[], onBlock: OnBlock): Promise<TranslationBatchResult> {
       return new Promise((resolve) => {
         let settled = false;
         let port: Port | undefined;
@@ -162,7 +171,6 @@ export function createClient(runtime: {
     },
   };
 }
-export type Client = ReturnType<typeof createClient>;
 
 /** Answers one request type; the request has already been decoded. */
 export type Handlers = {
@@ -177,7 +185,7 @@ export type Handlers = {
 export function createDispatcher(options: {
   trusted: (sender: Sender) => boolean;
   handlers: Handlers;
-  translate: (blocks: readonly Block[], sender: Sender, onBlock: (index: number, text: string, final: boolean) => void) => Promise<TranslationBatchResult>;
+  translate: (blocks: readonly Block[], sender: Sender, onBlock: OnBlock) => Promise<TranslationBatchResult>;
   onInvalid?: (type: string, error: string) => void;
 }) {
   const decode = <S extends Schema.Top & { readonly DecodingServices: never }>(schema: S, type: string, value: unknown): S["Type"] | undefined => {

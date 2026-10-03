@@ -7,7 +7,7 @@ import type { Span } from "../modules/viewport-queue";
 import type { Purpose } from "../modules/ai/models";
 import { createTranslationSession, type SessionProgress, type TranslationSession } from "../modules/translation-session";
 import { createCapturedContent } from "./captured-content";
-import { PAGE_CONTEXT_LIMITS } from "../modules/protocol";
+import { PAGE_CONTEXT_LIMITS, PURPOSE_NAMES } from "../modules/protocol";
 import { describeError, type LogLevel } from "../modules/debug-log/model";
 
 const BALL_SIZE = 52;
@@ -192,7 +192,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
   // Each click starts a new session; a later click or unmount stops the previous one.
   let session = 0;
   let stopSession = () => {};
-  const notConfiguredText = (purpose: Purpose) => `请在设置中填写${purpose === "translation" ? "翻译" : "内容分析"}的 API key 和模型。`;
+  const notConfiguredText = (purpose: Purpose) => `请在设置中填写${PURPOSE_NAMES[purpose]}的 API key 和模型。`;
 
   ball.addEventListener("click", async () => {
     if (ball.disabled) return;

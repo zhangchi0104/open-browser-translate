@@ -47,11 +47,9 @@ test("the queue keeps up to `limit` batches in flight and refills as each finish
       maxInFlight = Math.max(maxInFlight, running.size);
       return task.promise.finally(() => running.delete(batch));
     },
-    onBusy: (count) => states.push(`busy ${count}`),
-    onIdle: () => states.push("idle"),
+    onChange: (count) => states.push(count ? `busy ${count}` : "idle"),
   });
-  let active = true;
-  const drained = queue.drain(() => active);
+  const drained = queue.drain();
   await tick();
   assert.deepEqual([...running.keys()], [1, 2, 3], "three batches start at once");
   running.get(2)!.resolve(true);
@@ -69,8 +67,7 @@ test("the queue keeps up to `limit` batches in flight and refills as each finish
   await tick();
   assert.deepEqual([...running.keys()], [6], "a nudge (scroll, new content) picks up new work");
   running.get(6)!.resolve(true);
-  active = false;
-  queue.nudge();
+  queue.stop();
   await drained;
 });
 
@@ -85,10 +82,9 @@ test("a batch that returns false stops the queue, and a failed batch doesn't", a
       if (batch === 1) throw new Error("network");
       return batch !== 2;
     },
-    onBusy: () => {},
-    onIdle: () => {},
+    onChange: () => {},
   });
-  await queue.drain(() => true);
+  await queue.drain();
   assert.deepEqual(started, [1, 2], "a thrown batch continues; returning false (not configured) stops");
 });
 

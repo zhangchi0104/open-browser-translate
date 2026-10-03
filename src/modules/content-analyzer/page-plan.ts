@@ -2,10 +2,10 @@ import { Effect, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/unstable/ai";
 import { AnalysisModel } from "../ai/models";
 import { describeError } from "../debug-log/model";
-import { PageContext } from "../protocol";
+import { PageContext, type Mode } from "../protocol";
 
 export interface TranslationPlan {
-  mode: "all" | "main";
+  mode: Mode;
   navigation: "single" | "paginated" | "dynamic";
   fallback: boolean;
   /** Why planning failed, when it did. */

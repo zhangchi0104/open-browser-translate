@@ -16,9 +16,9 @@ seven days from when it was translated (`CACHE_TTL`), whatever the page's ETag
 says, and the least recently used entries are dropped past 20,000
 (`MAX_CACHE_ENTRIES`).
 
-`translateWithCache` serves a batch: cached blocks go to the page at once
-(shown as final), the rest go to the model and the site context, and only a
-successful result is cached. `../batch-translation` decides the scope; pages
-without a site, including private windows, bypass the cache. The
-options page shows the entry count and clears the cache through `cache-stats`
-and `cache-clear` messages; traces record `obt.cache.hits`.
+`../batch-translation` serves a batch through `get` and `put`: cached blocks go
+to the page at once (shown as final), the rest go to the model and the site
+context, and only a successful result is cached. Pages without a site,
+including private windows, bypass the cache. The options
+page shows the entry count and clears the cache through `cache-stats` and
+`cache-clear` messages; traces record `obt.cache.hits`.

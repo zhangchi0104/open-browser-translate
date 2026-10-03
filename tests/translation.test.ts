@@ -7,7 +7,7 @@ import { defaultSettings } from "../src/modules/settings/model";
 import { AiProviders } from "../src/modules/ai/providers";
 import { decideTranslationPlan } from "../src/modules/content-analyzer/page-plan";
 import { translateBatch } from "../src/modules/translator/translate-batch";
-import { decisionResponse, isDecisionRequest } from "./decision-mock";
+import { chatCompletion, chatCompletionStream, decisionResponse, isDecisionRequest } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
 settings.analysis.provider = AiProviders.OpenAIApi;
@@ -27,7 +27,7 @@ function mockFetch(output: unknown, requests: string[], bodies: any[] = []): typ
     }
     assert.equal(body.model, "test/translator");
     assert.ok(body.response_format);
-    return Response.json({ id: "test", object: "chat.completion", created: 1, model: body.model, choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(output) }, finish_reason: "stop" }] });
+    return chatCompletion(body.model, JSON.stringify(output));
   };
 }
 
@@ -90,11 +90,7 @@ function streamingFetch(content: string, bodies: any[] = []): typeof globalThis.
     bodies.push(body);
     if (isDecisionRequest(body)) return decisionResponse(body, () => "content");
     assert.equal(body.stream, true, "translation streams when the caller wants partial results");
-    const chunk = (delta: object, finish: string | null = null) =>
-      `data: ${JSON.stringify({ id: "s", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
-    const pieces = content.match(/[\s\S]{1,7}/g) ?? [];
-    const sse = chunk({ role: "assistant", content: "" }) + pieces.map((piece) => chunk({ content: piece })).join("") + chunk({}, "stop") + "data: [DONE]\n\n";
-    return new Response(sse, { headers: { "Content-Type": "text/event-stream" } });
+    return chatCompletionStream(body.model, content);
   };
 }
 

@@ -62,11 +62,14 @@ test("only glossary terms that appear in the batch are sent", () => {
   assert.equal(promptContext(emptyContext(0), ["anything"]), undefined);
 });
 
-// Runs a batch through the carryover and returns the context the batch was sent with. By
-// default the batch fails, so it leaves nothing behind.
+// Runs a batch through the carryover, as a page's batch does, and returns the context it was
+// sent with. By default the batch fails, so it leaves nothing behind.
 async function batch(carryover: ReturnType<typeof createContextCarryover>, url: string, blocks: { text: string; tag: string }[], result: TranslationBatchResult = { status: "failed" }) {
-  let sent: PromptContext | undefined;
-  await carryover.translate(siteOf(url), blocks, async (context) => { sent = context; return result; });
+  const site = siteOf(url);
+  const sent = await carryover.contextFor(site, blocks.map(({ text }) => text));
+  if (result.status === "ok") {
+    await carryover.record(site, blocks.map(({ text }, index) => ({ source: text, target: result.translations[index]! })), result.terms);
+  }
   await carryover.flush();
   return sent;
 }

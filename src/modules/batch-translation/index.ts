@@ -1,11 +1,11 @@
 import { Effect } from "effect";
-import type { ContentBlock } from "../content-analyzer";
 import { modelConfig } from "../ai/models";
 import { describeError } from "../debug-log/model";
+import type { Block, OnBlock } from "../protocol";
 import { Settings } from "../settings/service";
 import { siteOf } from "../translation-context";
 import type { ContextCarryover } from "../translation-context/carryover";
-import { translateWithCache, type TranslationCache } from "../translation-cache";
+import type { TranslationCache } from "../translation-cache";
 import { TARGET_LANGUAGE, translateBatch, type TranslationBatchResult } from "../translator/translate-batch";
 
 /** Where a page's batches find earlier work: cached translations and the site's context. */
@@ -13,8 +13,6 @@ export interface BatchStores {
   readonly cache: TranslationCache;
   readonly contexts: ContextCarryover;
 }
-
-export type BatchResult = TranslationBatchResult & { cacheHits?: number };
 
 /**
  * Translates one batch of a page's blocks, in this order:
@@ -28,32 +26,34 @@ export type BatchResult = TranslationBatchResult & { cacheHits?: number };
  * A page without a site (`siteOf`; private windows pass no URL) uses neither store. Never fails:
  * the outcome is in the result, with one translation per block in `blocks` order when it's ok.
  */
-export function translatePageBatch(
-  blocks: readonly ContentBlock[],
-  pageUrl: string | undefined,
-  stores: BatchStores,
-  onBlock?: (index: number, text: string, final: boolean) => void,
-) {
+export function translatePageBatch(blocks: readonly Block[], pageUrl: string | undefined, stores: BatchStores, onBlock?: OnBlock) {
   return Effect.gen(function* () {
     const site = siteOf(pageUrl);
     const { provider, model } = modelConfig(yield* Settings.use((settings) => settings.get), "translation");
-    // The stores call back from promises; effects started there still belong to this request.
-    const runPromise = Effect.runPromiseWith(yield* Effect.context<Effect.Services<ReturnType<typeof translateBatch>>>());
-    const result: BatchResult = yield* Effect.tryPromise(() => translateWithCache({
-      cache: site ? stores.cache : undefined,
-      scope: site ? { origin: site, target: TARGET_LANGUAGE, provider, model } : undefined,
-      blocks,
-      onCached: onBlock && ((index, text) => onBlock(index, text, true)),
-      translate: (misses, indexes) => stores.contexts.translate(site, misses, (context) => runPromise(translateBatch(misses, {
-        context,
-        onPartial: onBlock && ((index, text) => onBlock(indexes[index]!, text, false)),
-      }))),
-    })).pipe(Effect.catch((error) => Effect.succeed<BatchResult>({ status: "failed", error: describeError(error) })));
-    yield* Effect.annotateCurrentSpan({
-      "obt.blocks": blocks.length,
-      "obt.cache.hits": result.cacheHits ?? 0,
-      ...(result.status === "ok" && { "obt.terms": result.terms.length }),
+    const scope = site && { origin: site, target: TARGET_LANGUAGE, provider, model };
+    const texts = blocks.map(({ text }) => text);
+    const cached = scope ? yield* Effect.tryPromise(() => stores.cache.get(scope, texts)) : texts.map(() => undefined);
+    cached.forEach((translation, index) => { if (translation !== undefined) onBlock?.(index, translation, true); });
+    const misses = cached.flatMap((translation, index) => translation === undefined ? [index] : []);
+    const cacheHits = blocks.length - misses.length;
+    yield* Effect.annotateCurrentSpan({ "obt.cache.hits": cacheHits });
+    if (!misses.length) return { status: "ok", translations: cached as string[], terms: [], cacheHits } satisfies TranslationBatchResult;
+
+    const missed = misses.map((index) => blocks[index]!);
+    const result = yield* translateBatch(missed, {
+      context: yield* Effect.tryPromise(() => stores.contexts.contextFor(site, missed.map(({ text }) => text))),
+      onPartial: onBlock && ((index, text) => onBlock(misses[index]!, text, false)),
     });
-    return result;
-  });
+    if (result.status !== "ok") return result;
+    yield* Effect.annotateCurrentSpan({ "obt.terms": result.terms.length });
+    const segments = missed.map(({ text }, position) => ({ source: text, target: result.translations[position]! }));
+    if (scope) yield* Effect.tryPromise(() => stores.cache.put(scope, segments.map(({ source, target }) => ({ text: source, translation: target }))));
+    // Not awaited: the reader shouldn't wait on storage to see the translation.
+    void stores.contexts.record(site, segments, result.terms);
+    const translations = cached.slice();
+    misses.forEach((index, position) => { translations[index] = result.translations[position]; });
+    return { ...result, translations: translations as string[], cacheHits };
+  }).pipe(
+    Effect.catch((error) => Effect.succeed<TranslationBatchResult>({ status: "failed", error: describeError(error) })),
+  );
 }

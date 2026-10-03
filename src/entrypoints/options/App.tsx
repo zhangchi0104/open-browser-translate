@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { background } from "@/lib/background";
-import type { Request } from "@/modules/protocol";
+import { PURPOSE_NAMES, type Request } from "@/modules/protocol";
 import { Bug, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import {
   aiSettings, REASONING_EFFORTS, validateModel,
@@ -22,8 +22,8 @@ import {
 import { cn } from "@/lib/utils";
 import { DebugLog } from "./DebugLog";
 import { CacheSettings } from "./CacheSettings";
+import type { Purpose } from "@/modules/ai/models";
 
-type Purpose = "analysis" | "translation";
 type Status = { text: string; error?: boolean };
 
 const providerLabels: Record<SettingsProvider, string> = {
@@ -74,7 +74,6 @@ const sections = {
     icon: Bug,
   },
 } as const;
-const purposeNames: Record<Purpose, string> = { analysis: "内容分析", translation: "翻译" };
 const signInErrors: Record<Exclude<SignInResult, { status: "ok" }>["reason"], string> = {
   cancelled: "登录已取消。",
   denied: "你拒绝了授权，未登录。",
@@ -207,7 +206,7 @@ export function App() {
       const error = validateModel(provider, model);
       if (error) {
         setErrors({ [purpose]: error });
-        setStatus({ text: `${purposeNames[purpose]}：${error}`, error: true });
+        setStatus({ text: `${PURPOSE_NAMES[purpose]}：${error}`, error: true });
         setSection("models");
         // The models card may be hidden until this render commits.
         requestAnimationFrame(() => modelInputs[purpose].current?.focus());
@@ -277,7 +276,7 @@ export function App() {
   }
 
   const uses = draft
-    ? (["analysis", "translation"] as const).filter((p) => draft[p].provider === active).map((p) => purposeNames[p])
+    ? (["analysis", "translation"] as const).filter((p) => draft[p].provider === active).map((p) => PURPOSE_NAMES[p])
     : [];
 
   return (

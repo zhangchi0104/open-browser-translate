@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import { describeError } from "../debug-log/model";
 import { Translator } from "./index";
-import type { ContentBlock } from "../content-analyzer";
+import type { Block } from "../protocol";
 import { configuredSettings, modelAttributes, TranslationModel, type Purpose } from "../ai/models";
 import type { PromptContext, TermPair } from "../translation-context";
 
@@ -9,7 +9,8 @@ import type { PromptContext, TermPair } from "../translation-context";
 export const TARGET_LANGUAGE = "简体中文";
 
 export type TranslationBatchResult =
-  | { status: "ok"; translations: string[]; terms: readonly TermPair[] }
+  /** `cacheHits`: how many blocks the page's batch found in the cache. */
+  | { status: "ok"; translations: string[]; terms: readonly TermPair[]; cacheHits?: number }
   | { status: "not-configured"; purpose: Purpose }
   | { status: "failed"; error?: string };
 
@@ -24,7 +25,7 @@ export interface TranslateBatchOptions {
  * Translates one batch of blocks the page already chose to translate, on the configured model.
  * Never fails: the outcome is in the result, with one translation per block when it's ok.
  */
-export function translateBatch(blocks: readonly ContentBlock[], options: TranslateBatchOptions = {}) {
+export function translateBatch(blocks: readonly Block[], options: TranslateBatchOptions = {}) {
   return Effect.gen(function* () {
     const settings = yield* configuredSettings();
     const translated = yield* Translator.use((service) => service.translate(

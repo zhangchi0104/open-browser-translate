@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import {
-  createClient, createDispatcher, MAX_BATCH_BLOCKS, PAGE_CONTEXT_LIMITS, STREAM_PORT,
+  createClient, createDispatcher, MAX_BATCH_BLOCKS, MAX_BATCH_CHARS, PAGE_CONTEXT_LIMITS, STREAM_PORT,
   type Block, type Handlers, type Port, type Sender,
 } from "../src/modules/protocol";
 import type { TranslationBatchResult } from "../src/modules/translator/translate-batch";
@@ -99,7 +99,7 @@ test("requests over the limits, or malformed, fail without reaching a handler", 
   const context = { title: "T", sample: "S", hasArticle: false, pagination: [] as string[] };
   for (const message of [
     { type: "analyze-content", mode: "all", blocks: Array.from({ length: MAX_BATCH_BLOCKS + 1 }, () => block) },
-    { type: "analyze-content", mode: "all", blocks: [{ text: "x".repeat(200_001), tag: "p" }] },
+    { type: "analyze-content", mode: "all", blocks: [{ text: "x".repeat(MAX_BATCH_CHARS + 1), tag: "p" }] },
     { type: "analyze-content", mode: "everything", blocks: [block] },
     { type: "prepare-translation", context: { ...context, title: "x".repeat(PAGE_CONTEXT_LIMITS.title + 1) } },
     { type: "prepare-translation", context: { ...context, pagination: Array.from({ length: PAGE_CONTEXT_LIMITS.pagination + 1 }, () => "1") } },

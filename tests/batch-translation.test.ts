@@ -9,6 +9,7 @@ import { defaultSettings } from "../src/modules/settings/model";
 import { createMemoryCacheStore, createTranslationCache } from "../src/modules/translation-cache";
 import type { TranslationContext } from "../src/modules/translation-context";
 import { createContextCarryover } from "../src/modules/translation-context/carryover";
+import { chatCompletion, chatCompletionStream } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
 settings.providers.VercelAIGateway.apiKey = "test-gateway";
@@ -29,14 +30,7 @@ function translationModel() {
       translations: input.blocks.map(({ id, text }: { id: number; text: string }) => ({ id, text: `译：${text}` })),
       terms: input.blocks.some(({ text }: { text: string }) => text.includes("Fiber")) ? [{ source: "Fiber", target: "纤程" }] : [],
     });
-    if (!body.stream) {
-      return Response.json({ id: "t", object: "chat.completion", created: 1, model: body.model, choices: [{ index: 0, message: { role: "assistant", content: output }, finish_reason: "stop" }] });
-    }
-    const chunk = (delta: object, finish: string | null = null) =>
-      `data: ${JSON.stringify({ id: "t", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
-    const pieces = output.match(/[\s\S]{1,9}/g) ?? [];
-    return new Response(chunk({ role: "assistant", content: "" }) + pieces.map((piece) => chunk({ content: piece })).join("") + chunk({}, "stop") + "data: [DONE]\n\n",
-      { headers: { "Content-Type": "text/event-stream" } });
+    return body.stream ? chatCompletionStream(body.model, output) : chatCompletion(body.model, output);
   };
   return { fetch, requests, fail: () => { failing = true; } };
 }
@@ -74,6 +68,10 @@ test("cached blocks show at once and final; only the rest reach the model, and e
   const streamed = shown.filter(([, , final]) => !final);
   assert.ok(streamed.length > 0 && streamed.every(([index]) => index === 0), "the streamed block is reported at its index in the batch, not among the misses");
   assert.equal(streamed.at(-1)![1], "译：Gamma");
+
+  const cachedOnly = await translate(model, stores, ["Beta"]);
+  assert.equal(model.requests.length, 2, "a fully cached batch makes no request");
+  assert.deepEqual(cachedOnly.result, { status: "ok", translations: ["译：Beta"], terms: [], cacheHits: 1 });
 });
 
 test("the site's context from earlier batches rides along with later ones on any of its pages", async () => {

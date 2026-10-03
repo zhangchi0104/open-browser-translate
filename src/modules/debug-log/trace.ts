@@ -125,26 +125,6 @@ export function traced<A, E, R>(effect: Effect.Effect<A, E, R>, tracer: Tracer.T
   return effect.pipe(Effect.provide(tracingLayer(tracer)));
 }
 
-/** Runs effects needing `R` to completion from plain async code; `ManagedRuntime#runPromise` in the background. */
-export type RunInSpan<R = never> = <A, E>(effect: Effect.Effect<A, E, R>) => Promise<A>;
-
-/**
- * Runs an async request handler as a root span on `runPromise`, whose tracer records it.
- * Effects the handler starts through `run` are children of that span; `Effect.useSpan`
- * alone wouldn't parent them, and each `runPromise` starts a fresh fiber.
- */
-export function traceRequest<A, R>(
-  runPromise: RunInSpan<R>,
-  name: string,
-  attributes: Record<string, unknown>,
-  body: (span: Tracer.Span, run: RunInSpan<R>) => Promise<A>,
-): Promise<A> {
-  return runPromise(Effect.useSpan(name, { attributes, kind: "server" }, (span) => {
-    const run: RunInSpan<R> = (effect) => runPromise(effect.pipe(Effect.withParentSpan(span)));
-    return Effect.promise(() => body(span, run));
-  }));
-}
-
 /** Marks a span as failed when the handler turned the failure into a result instead of failing. */
 export function markFailed(span: Tracer.Span, description: string, error?: unknown) {
   span.attribute(STATUS_CODE, "ERROR");
@@ -168,19 +148,27 @@ export function createTraceStore(store: TraceStore, maxTraces = MAX_TRACES) {
     parse: (stored) => Array.isArray(stored) ? stored as OtlpSpan[] : [],
     onError: (error) => console.error("Trace write failed:", error),
   });
+  // Spans ending together (a request and its steps) are trimmed once, in the write that saves them.
+  let ended: OtlpSpan[] = [];
+  const trim = (current: OtlpSpan[]) => {
+    if (!ended.length) return current;
+    const all = current.concat(ended);
+    ended = [];
+    // A trace's recency is where its latest span landed.
+    const order: string[] = [];
+    for (const { traceId } of all) {
+      const index = order.indexOf(traceId);
+      if (index >= 0) order.splice(index, 1);
+      order.push(traceId);
+    }
+    const kept = new Set(order.slice(-maxTraces));
+    return all.filter(({ traceId }) => kept.has(traceId));
+  };
   return {
-    record: (span: OtlpSpan) => spans.update((current) => {
-      const all = current.concat(span);
-      // A trace's recency is where its latest span landed.
-      const order: string[] = [];
-      for (const { traceId } of all) {
-        const index = order.indexOf(traceId);
-        if (index >= 0) order.splice(index, 1);
-        order.push(traceId);
-      }
-      const kept = new Set(order.slice(-maxTraces));
-      return all.filter(({ traceId }) => kept.has(traceId));
-    }),
+    record: (span: OtlpSpan) => {
+      ended.push(span);
+      return spans.update(trim);
+    },
     clear: () => spans.update(() => []),
     flush: spans.flush,
   };

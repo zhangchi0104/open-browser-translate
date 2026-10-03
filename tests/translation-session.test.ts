@@ -128,7 +128,7 @@ test("a model that isn't configured ends the session and says which", async () =
   const { done } = start([item("Story", 0), item("More", 50)], fake.page);
   assert.deepEqual(await done, { notConfigured: "translation" });
 
-  const unanalyzed = fakePage({ analyze: async () => ({ status: "not-configured" }) });
+  const unanalyzed = fakePage({ analyze: async () => ({ status: "not-configured", purpose: "analysis" }) });
   assert.deepEqual(await start([item("Story", 0)], unanalyzed.page).done, { notConfigured: "analysis" });
   assert.deepEqual(unanalyzed.translated, []);
 });

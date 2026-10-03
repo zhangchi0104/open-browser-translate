@@ -1,6 +1,4 @@
 import { Schema } from "effect";
-import type { ContentBlock } from "../content-analyzer";
-import type { TranslationBatchResult } from "../translator/translate-batch";
 import {
   emptyContext,
   isFresh,
@@ -9,6 +7,7 @@ import {
   recordBatch,
   TranslationContext,
   type PromptContext,
+  type TermPair,
 } from "./index";
 import { createStoredValue, type ValueStore } from "../stored-value";
 
@@ -49,22 +48,15 @@ export function createContextCarryover(store: ContextStore, now: () => number = 
       if (site) await update(site, (context) => notePage(context, title, now()));
     },
 
-    /**
-     * Runs one batch with the site's context and folds the result back in, so
-     * the next batch or page on the site sees it.
-     */
-    translate: async (
-      site: string | undefined,
-      blocks: readonly ContentBlock[],
-      run: (context: PromptContext | undefined) => Promise<TranslationBatchResult>,
-    ): Promise<TranslationBatchResult> => {
+    /** The part of `site`'s context worth sending with a batch of these texts. */
+    contextFor: async (site: string | undefined, texts: readonly string[]): Promise<PromptContext | undefined> => {
       const context = site ? freshIn(await contexts.get(), site) : undefined;
-      const result = await run(context && promptContext(context, blocks.map(({ text }) => text)));
-      if (!site || result.status !== "ok") return result;
-      const segments = blocks.map(({ text }, index) => ({ source: text, target: result.translations[index]! }));
-      // Not awaited: the reader shouldn't wait on storage to see the translation.
-      if (segments.length) void update(site, (current) => recordBatch(current, segments, result.terms, now()));
-      return result;
+      return context && promptContext(context, texts);
+    },
+
+    /** Folds a translated batch into `site`'s context, so the next batch or page on the site sees it. */
+    record: async (site: string | undefined, segments: readonly TermPair[], terms: readonly TermPair[]) => {
+      if (site && segments.length) await update(site, (current) => recordBatch(current, segments, terms, now()));
     },
 
     /** Resolves once every pending write has reached the store. */

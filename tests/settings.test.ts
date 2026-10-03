@@ -79,7 +79,7 @@ test("page analysis requires configuration and returns only serializable decisio
   const settings = structuredClone(defaultSettings);
   settings.analysis.provider = AiProviders.OpenAIApi;
   const blocks = [{ text: "Article text", tag: "p" }, { text: "Home", tag: "a" }];
-  assert.deepEqual(await Effect.runPromise(analyzePageContent(blocks).pipe(Effect.provide(modelsFor(settings)))), { status: "not-configured" });
+  assert.deepEqual(await Effect.runPromise(analyzePageContent(blocks).pipe(Effect.provide(modelsFor(settings)))), { status: "not-configured", purpose: "analysis" });
   settings.providers.OpenAIApi.apiKey = "test-direct";
   const fetchMock: typeof globalThis.fetch = async (input, init) => {
     assert.equal(String(input), "https://api.openai.com/v1/chat/completions");
