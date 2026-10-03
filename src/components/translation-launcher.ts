@@ -49,7 +49,6 @@ const log = (level: LogLevel, event: string, detail?: string) => {
  */
 function translateStreaming(
   batch: readonly TranslatableContent[],
-  mode: TranslationPlan["mode"],
   onPartial: (index: number, text: string, final: boolean) => void,
 ): Promise<TranslationBatchResult> {
   return new Promise((resolve) => {
@@ -78,8 +77,7 @@ function translateStreaming(
       if (!settled) log("error", "翻译批次：与后台的连接中断", browser.runtime.lastError?.message);
       finish({ status: "failed" });
     });
-    // The page has analyzed these blocks already, so the background only translates them.
-    port.postMessage({ mode, analyzed: true, blocks: batch.map(({ text, tag }) => ({ text, tag })) });
+    port.postMessage({ blocks: batch.map(({ text, tag }) => ({ text, tag })) });
   });
 }
 
@@ -425,7 +423,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
             // A skeleton holds each block's place; its translation then streams in, faded until
             // the batch is done.
             capturedContent.loading(batch);
-            const result = await translateStreaming(batch, plan.mode, (index, text, final) => {
+            const result = await translateStreaming(batch, (index, text, final) => {
               if (active() && batch[index]) capturedContent.update(batch[index], text, !final);
             });
             if (!active()) return false;
@@ -443,12 +441,8 @@ export function mountTranslationLauncher(container: HTMLElement) {
               failures += batch.length;
               return true;
             }
-            batch.forEach((item, index) => {
-              const translation = result.translations[index];
-              if (translation === null || translation === undefined) capturedContent.discard([item]);
-              else capturedContent.update(item, translation, false);
-            });
-            kept += result.translations.filter((text) => text !== null).length;
+            batch.forEach((item, index) => capturedContent.update(item, result.translations[index]!, false));
+            kept += batch.length;
             return true;
           } finally {
             translating -= batch.length;

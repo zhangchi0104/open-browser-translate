@@ -3,8 +3,8 @@ import { storage } from "wxt/utils/storage";
 import { aiSettings, Settings, SettingsLive, type AISettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
-import { modelAttributes, TARGET_LANGUAGE, translateBatch } from "../modules/translator/translate-batch";
-import { configuredSettings, modelConfig, ModelsLive } from "../modules/ai/models";
+import { TARGET_LANGUAGE, translateBatch } from "../modules/translator/translate-batch";
+import { configuredSettings, modelAttributes, modelConfig, ModelsLive } from "../modules/ai/models";
 import { ChatGPTToken } from "../modules/ai/chatgpt";
 import { createTranslationCache, translateWithCache } from "../modules/translation-cache";
 import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
@@ -158,7 +158,7 @@ export default defineBackground(() => {
         }
       });
     }
-    if (message?.type === "analyze-content" || message?.type === "translate-content") return handleBatch(message, sender);
+    if (message?.type === "analyze-content") return handleBatch(message, sender);
   });
 
   // Streaming translation: the page opens a port, sends one batch, and receives each
@@ -191,14 +191,8 @@ export default defineBackground(() => {
           markFailed(span, `请求超出限制：${blocks.length} 段，${length} 字符`);
           return { status: "failed" };
         }
-        const mode = message.mode === "main" ? "main" : "all";
-        span.attribute("obt.mode", mode);
         if (message.type === "translate-content") {
-          // The page analyzes blocks ahead of translation (to order them by priority) and sends
-          // only blocks to translate; older callers still get analysis here.
-          const analyzed = message.analyzed === true;
-          span.attribute("obt.analyzed", analyzed);
-          // Cached blocks are served from IndexedDB; only the rest reach the model and the site
+          // The page sends only blocks its analysis chose to translate. Cached blocks are served from IndexedDB; only the rest reach the model and the site
           // context. Private windows have no page URL here, so they bypass the cache.
           const url = pageUrl(sender);
           const origin = originOf(url);
@@ -206,18 +200,16 @@ export default defineBackground(() => {
           const result = await translateWithCache({
             cache: translationCache,
             scope: origin
-              ? { origin, target: TARGET_LANGUAGE, provider, model, mode }
+              ? { origin, target: TARGET_LANGUAGE, provider, model }
               : undefined,
             blocks,
             onCached: onPartial && ((index, text) => onPartial(index, text, true)),
             translate: (misses, indexes) => contexts.translate(url, misses, async (context) =>
-              run(translateBatch(misses, mode, { context, analyzed, onPartial: onPartial && ((index, text) => onPartial(indexes[index]!, text)) }))),
+              run(translateBatch(misses, { context, onPartial: onPartial && ((index, text) => onPartial(indexes[index]!, text)) }))),
           });
           span.attribute("obt.cache.hits", result.cacheHits ?? 0);
           if (result.status === "ok") {
-            span.attribute("obt.translated", result.translations.filter((text) => text !== null).length);
             span.attribute("obt.terms", result.terms.length);
-            span.attribute("obt.analysis.fallback", result.analysisFallbackCount);
           } else if (result.status === "not-configured") {
             markFailed(span, `${purposeNames[result.purpose]}未配置`);
           } else {
@@ -225,6 +217,9 @@ export default defineBackground(() => {
           }
           return result;
         }
+        const mode = message.mode === "main" ? "main" : "all";
+        span.attribute("obt.mode", mode);
+        for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
         const result = await run(analyzePageContent(blocks, mode));
         if (result.status === "failed") markFailed(span, "内容分析失败", result.error);
         return result;

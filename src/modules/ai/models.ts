@@ -39,6 +39,17 @@ export function modelConfig(settings: AISettings, purpose: Purpose): ModelConfig
   };
 }
 
+/** Provider and model of a purpose, as recorded on its span. */
+export function modelAttributes(settings: AISettings, purpose: Purpose) {
+  const { provider, model, reasoningEffort, fast } = modelConfig(settings, purpose);
+  return {
+    "obt.provider": provider,
+    "gen_ai.request.model": model,
+    ...(reasoningEffort && { "obt.reasoning_effort": reasoningEffort }),
+    ...(fast && provider === AiProviders.OpenAISubscription && { "obt.fast": true }),
+  };
+}
+
 /** The first of `purposes` whose provider isn't connected or has no model. */
 export function missingConfiguration(settings: AISettings, signedIn: boolean, purposes: readonly Purpose[] = ["analysis", "translation"]): Purpose | undefined {
   for (const purpose of purposes) {

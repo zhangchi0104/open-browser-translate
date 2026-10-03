@@ -24,7 +24,7 @@ test("one runtime translates on whatever model the settings select when each req
     const content = JSON.stringify({ translations: [{ id: 0, text: "你好" }], terms: [] });
     return Response.json({ id: "test", object: "chat.completion", created: 1, model: body.model, choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }] });
   };
-  const translate = () => runtime.runPromise(translateBatch([{ text: "Hello", tag: "p" }], "all", { analyzed: true })
+  const translate = () => runtime.runPromise(translateBatch([{ text: "Hello", tag: "p" }])
     .pipe(Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
 
   assert.equal((await translate()).status, "ok");

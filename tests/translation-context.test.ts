@@ -15,8 +15,8 @@ import {
 import { createContextCarryover, MAX_SITES } from "../src/modules/translation-context/carryover";
 import type { TranslationBatchResult } from "../src/modules/translator/translate-batch";
 
-const ok = (translations: (string | null)[], terms: { source: string; target: string }[] = []): TranslationBatchResult =>
-  ({ status: "ok", translations, terms, analysisFallbackCount: 0 });
+const ok = (translations: string[], terms: { source: string; target: string }[] = []): TranslationBatchResult =>
+  ({ status: "ok", translations, terms });
 
 function memoryStore(initial: unknown = undefined) {
   let value = initial;
@@ -62,8 +62,9 @@ test("only glossary terms that appear in the batch are sent", () => {
   assert.equal(promptContext(emptyContext(0), ["anything"]), undefined);
 });
 
-// Runs a batch through the carryover and returns the context the batch was sent with.
-async function batch(carryover: ReturnType<typeof createContextCarryover>, url: string, blocks: { text: string; tag: string }[], result: TranslationBatchResult = ok(blocks.map(() => null))) {
+// Runs a batch through the carryover and returns the context the batch was sent with. By
+// default the batch fails, so it leaves nothing behind.
+async function batch(carryover: ReturnType<typeof createContextCarryover>, url: string, blocks: { text: string; tag: string }[], result: TranslationBatchResult = { status: "failed" }) {
   let sent: PromptContext | undefined;
   await carryover.translate(url, blocks, async (context) => { sent = context; return result; });
   await carryover.flush();
@@ -74,8 +75,8 @@ test("context carries from one viewport batch to the next and across pages on th
   const store = memoryStore();
   const carryover = createContextCarryover(store, () => 1000);
   await carryover.notePage("https://docs.example.com/intro", "Intro to Fibers");
-  assert.deepEqual(await batch(carryover, "https://docs.example.com/intro", [{ text: "A Fiber is a virtual thread", tag: "p" }, { text: "Menu", tag: "a" }],
-    ok(["纤程是一种虚拟线程", null], [{ source: "Fiber", target: "纤程" }])),
+  assert.deepEqual(await batch(carryover, "https://docs.example.com/intro", [{ text: "A Fiber is a virtual thread", tag: "p" }],
+    ok(["纤程是一种虚拟线程"], [{ source: "Fiber", target: "纤程" }])),
   { pages: ["Intro to Fibers"], glossary: [], recent: [] });
 
   // The first viewport batch taught the glossary; the next batch on the page sees it...

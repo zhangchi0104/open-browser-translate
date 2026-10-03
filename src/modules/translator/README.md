@@ -13,10 +13,11 @@ unsure 1, controls and navigation 2, auxiliary text and ads 3. A role below the
 confidence threshold counts as unsure, so possible content isn't pushed back.
 Translation batches take the highest-priority analyzed groups near the
 viewport, distance only breaking ties, and wait until everything on screen has
-been analyzed so visible navigation doesn't go before visible content. They are
-sent with `analyzed: true`, so the background translates them without asking
-the analysis model again; `Translator` sends them to the independently
-configured translation provider using Effect `LanguageModel`.
+been analyzed so visible navigation doesn't go before visible content. Only
+blocks analysis chose to translate are sent, and `translateBatch` translates
+exactly those: `Translator` sends them to the independently configured
+translation provider using Effect `LanguageModel`, and the result has one
+translation per block.
 The current target language is Simplified Chinese.
 
 Translation uses schema-validated structured output with one ID per retained

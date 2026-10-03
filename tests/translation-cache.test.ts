@@ -5,36 +5,36 @@ import {
 } from "../src/modules/translation-cache";
 import type { TranslationBatchResult } from "../src/modules/translator/translate-batch";
 
-const scope: CacheScope = { origin: "https://example.com", target: "简体中文", provider: "VercelAIGateway", model: "openai/gpt-6-luna", mode: "all" };
+const scope: CacheScope = { origin: "https://example.com", target: "简体中文", provider: "VercelAIGateway", model: "openai/gpt-6-luna" };
 const block = (text: string) => ({ text, tag: "p" });
-const ok = (translations: (string | null)[]): TranslationBatchResult => ({ status: "ok", translations, terms: [], analysisFallbackCount: 0 });
+const ok = (translations: string[]): TranslationBatchResult => ({ status: "ok", translations, terms: [] });
 
 test("a cached block is served without the model; only the misses are translated", async () => {
   const cache = createTranslationCache(createMemoryCacheStore());
   const asked: string[][] = [];
   const translate = async (blocks: readonly { text: string }[]) => {
     asked.push(blocks.map(({ text }) => text));
-    return ok(blocks.map(({ text }) => text === "Home" ? null : `译：${text}`));
+    return ok(blocks.map(({ text }) => `译：${text}`));
   };
   const first = await translateWithCache({ cache, scope, blocks: [block("Hello"), block("Home")], translate });
-  assert.deepEqual(first, { ...ok(["译：Hello", null]), cacheHits: 0 });
+  assert.deepEqual(first, { ...ok(["译：Hello", "译：Home"]), cacheHits: 0 });
 
   const shown: [number, string][] = [];
   const second = await translateWithCache({ cache, scope, blocks: [block("New"), block("Hello"), block("Home")], translate, onCached: (index, text) => shown.push([index, text]) });
   assert.deepEqual(asked, [["Hello", "Home"], ["New"]], "only the uncached block goes to the model");
-  assert.deepEqual(second, { ...ok(["译：New", "译：Hello", null]), cacheHits: 2 }, "a block analysis skipped is cached as skipped too");
-  assert.deepEqual(shown, [[1, "译：Hello"]], "cached translations show right away");
+  assert.deepEqual(second, { ...ok(["译：New", "译：Hello", "译：Home"]), cacheHits: 2 });
+  assert.deepEqual(shown, [[1, "译：Hello"], [2, "译：Home"]], "cached translations show right away");
 
   const allCached = await translateWithCache({ cache, scope, blocks: [block("Hello")], translate });
   assert.equal(asked.length, 2, "a fully cached batch makes no request");
   assert.deepEqual(allCached, { ...ok(["译：Hello"]), cacheHits: 1 });
 });
 
-test("the model, mode, site and target language are part of the key", async () => {
+test("the model, site and target language are part of the key", async () => {
   const cache = createTranslationCache(createMemoryCacheStore());
   await cache.put(scope, [{ text: "Hello", translation: "你好" }]);
   assert.deepEqual(await cache.get(scope, ["Hello"]), ["你好"]);
-  for (const other of [{ model: "vendor/other" }, { mode: "main" as const }, { origin: "https://other.com" }, { target: "日本語" }, { provider: "OpenAIApi" }]) {
+  for (const other of [{ model: "vendor/other" }, { origin: "https://other.com" }, { target: "日本語" }, { provider: "OpenAIApi" }]) {
     assert.deepEqual(await cache.get({ ...scope, ...other }, ["Hello"]), [undefined], JSON.stringify(other));
   }
 });

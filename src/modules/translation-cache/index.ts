@@ -3,8 +3,7 @@ import type { TranslationBatchResult } from "../translator/translate-batch";
 
 // Translations are cached per block so revisiting a page, or text repeated across a site's
 // pages, needs no model call. A key covers everything that changes the translation: the site
-// (its glossary differs), target language, provider, model, mode (which decides whether a
-// block is translated at all) and the exact source text. Changed text is a new key, so an
+// (its glossary differs), target language, provider, model and the exact source text. Changed text is a new key, so an
 // entry only goes stale with time: it's kept for seven days from when it was translated.
 
 export const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -15,13 +14,11 @@ export interface CacheScope {
   target: string;
   provider: string;
   model: string;
-  mode: "all" | "main";
 }
-/** `translation` is null for a block analysis decided not to translate. */
 export interface CacheEntry {
   key: string;
   origin: string;
-  translation: string | null;
+  translation: string;
   savedAt: number;
   usedAt: number;
 }
@@ -38,7 +35,7 @@ export interface CacheStore {
 
 /** A hash of the scope and text, so the store keeps no source text. */
 async function keyOf(scope: CacheScope, text: string) {
-  const data = new TextEncoder().encode(JSON.stringify([scope.origin, scope.target, scope.provider, scope.model, scope.mode, text]));
+  const data = new TextEncoder().encode(JSON.stringify([scope.origin, scope.target, scope.provider, scope.model, text]));
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -47,8 +44,8 @@ export function createTranslationCache(store: CacheStore, options: { now?: () =>
   const now = options.now ?? Date.now;
   const maxEntries = options.maxEntries ?? MAX_CACHE_ENTRIES;
   return {
-    /** Each text's cached translation: a string, null (not translated), or undefined (not cached). */
-    async get(scope: CacheScope, texts: readonly string[]): Promise<(string | null | undefined)[]> {
+    /** Each text's cached translation, or undefined when it isn't cached. */
+    async get(scope: CacheScope, texts: readonly string[]): Promise<(string | undefined)[]> {
       const keys = await Promise.all(texts.map((text) => keyOf(scope, text)));
       const entries = await store.get(keys);
       const time = now();
@@ -59,7 +56,7 @@ export function createTranslationCache(store: CacheStore, options: { now?: () =>
       if (used.length) await store.put(used);
       return fresh.map((entry) => entry?.translation);
     },
-    async put(scope: CacheScope, items: readonly { text: string; translation: string | null }[]) {
+    async put(scope: CacheScope, items: readonly { text: string; translation: string }[]) {
       if (!items.length) return;
       const time = now();
       await store.put(await Promise.all(items.map(async ({ text, translation }) => ({
@@ -91,18 +88,16 @@ export async function translateWithCache(options: {
   const cached = cache && scope ? await cache.get(scope, blocks.map(({ text }) => text)) : blocks.map(() => undefined);
   const misses = blocks.flatMap((_, index) => cached[index] === undefined ? [index] : []);
   const hits = blocks.length - misses.length;
-  cached.forEach((translation, index) => { if (translation) options.onCached?.(index, translation); });
-  if (!misses.length) {
-    return { status: "ok", translations: cached as (string | null)[], terms: [], analysisFallbackCount: 0, cacheHits: hits };
-  }
+  cached.forEach((translation, index) => { if (translation !== undefined) options.onCached?.(index, translation); });
+  if (!misses.length) return { status: "ok", translations: cached as string[], terms: [], cacheHits: hits };
   const result = await options.translate(misses.map((index) => blocks[index]!), misses);
   if (result.status !== "ok") return result;
   if (cache && scope) {
-    await cache.put(scope, misses.map((index, position) => ({ text: blocks[index]!.text, translation: result.translations[position] ?? null })));
+    await cache.put(scope, misses.map((index, position) => ({ text: blocks[index]!.text, translation: result.translations[position]! })));
   }
-  const translations = cached.slice() as (string | null)[];
-  misses.forEach((index, position) => { translations[index] = result.translations[position] ?? null; });
-  return { ...result, translations, cacheHits: hits };
+  const translations = cached.slice();
+  misses.forEach((index, position) => { translations[index] = result.translations[position]!; });
+  return { ...result, translations: translations as string[], cacheHits: hits };
 }
 
 /** An in-memory store, for tests. */

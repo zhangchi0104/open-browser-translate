@@ -5,7 +5,7 @@ import { createIndexedDbCacheStore } from "../src/modules/translation-cache/inde
 function assert(value: boolean, message: string) {
   if (!value) throw new Error(message);
 }
-const scope: CacheScope = { origin: "https://example.com", target: "简体中文", provider: "VercelAIGateway", model: "m", mode: "all" };
+const scope: CacheScope = { origin: "https://example.com", target: "简体中文", provider: "VercelAIGateway", model: "m" };
 
 try {
   const name = `translation-cache-test-${Date.now()}`;
@@ -13,8 +13,8 @@ try {
   const cache = createTranslationCache(createIndexedDbCacheStore(name), { now: () => now, maxEntries: 2 });
   await cache.put(scope, [{ text: "Hello", translation: "你好" }]);
   now += 10;
-  await cache.put(scope, [{ text: "Home", translation: null }]);
-  assert(JSON.stringify(await cache.get(scope, ["Hello", "Home", "Missing"])) === JSON.stringify(["你好", null, undefined]), "entries round-trip, including a skipped block");
+  await cache.put(scope, [{ text: "Home", translation: "主页" }]);
+  assert(JSON.stringify(await cache.get(scope, ["Hello", "Home", "Missing"])) === JSON.stringify(["你好", "主页", undefined]), "entries round-trip");
   now += 10;
   await cache.get(scope, ["Home"]);
   now += 10;
@@ -27,7 +27,7 @@ try {
   await reopened.clear();
   assert(await reopened.count() === 0, "clear empties the store");
   indexedDB.deleteDatabase(name);
-  document.body.textContent = "PASS: IndexedDB round-trip, null entries, trimming by last use, reopen, clear";
+  document.body.textContent = "PASS: IndexedDB round-trip, trimming by last use, reopen, clear";
 } catch (error) {
   document.body.textContent = `FAIL: ${String(error)}`;
 }
