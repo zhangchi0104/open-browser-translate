@@ -15,11 +15,12 @@ export type TranslationBatchResult =
 
 /** Provider and model of a purpose, as recorded on its span. */
 export function modelAttributes(settings: AISettings, purpose: Purpose) {
-  const { provider, models, reasoningEffort } = settings[purpose];
+  const { provider, models, reasoningEffort, fast } = settings[purpose];
   return {
     "obt.provider": provider,
     "gen_ai.request.model": (models as Record<string, string | undefined>)[provider] ?? "",
     ...(reasoningEffort && { "obt.reasoning_effort": reasoningEffort }),
+    ...(fast && provider === AiProviders.OpenAISubscription && { "obt.fast": true }),
   };
 }
 

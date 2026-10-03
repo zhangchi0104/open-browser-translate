@@ -119,6 +119,7 @@ test("subscription translation streams Responses requests with the OAuth token",
   settings.translation.provider = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
   settings.translation.reasoningEffort = "high";
+  settings.translation.fast = true;
   settings.providers.OpenAIApi.apiKey = "test-direct";
   assert.equal(missingConfiguration(settings), "translation");
   const credentials = { accessToken: async () => "oauth-token" };
@@ -132,6 +133,7 @@ test("subscription translation streams Responses requests with the OAuth token",
     assert.equal(body.stream, true);
     assert.equal(body.store, false);
     assert.deepEqual(body.reasoning, { effort: "high" });
+    assert.equal(body.service_tier, "fast");
     return sse({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } }, { type: "response.completed", response: completed });
   };
   const result = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
@@ -212,12 +214,14 @@ test("subscription analysis answers decisions through the same streamed Response
   const settings = structuredClone(defaultSettings);
   settings.analysis.provider = AiProviders.OpenAISubscription;
   settings.analysis.models.OpenAISubscription = "gpt-test";
+  settings.analysis.fast = true;
   const credentials = { accessToken: async () => "oauth-token" };
   const fetchMock: typeof fetch = async (input, init) => {
     assert.equal(String(input), "https://api.openai.com/v1/responses");
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer oauth-token");
     const body = JSON.parse(String(init?.body));
     assert.equal(body.model, "gpt-test");
+    assert.equal(body.service_tier, "fast");
     assert.equal(body.stream, true);
     assert.equal(body.text.format.name, "decisions");
     const text = JSON.stringify({ relevant: { probabilities: { false: 0.1, true: 0.9 } } });

@@ -20,8 +20,9 @@ export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 export interface AISettings {
   providers: Record<KeyProvider, { apiKey: string }>;
   // `reasoningEffort` applies to OpenAI-style models; the gateway's evaluation models don't reason.
-  analysis: { provider: AnalysisProvider; models: Record<AnalysisProvider, string>; reasoningEffort?: ReasoningEffort };
-  translation: { provider: TranslationProvider; models: Record<TranslationProvider, string>; reasoningEffort?: ReasoningEffort };
+  // `fast` asks the ChatGPT plan for Fast mode; other providers ignore it.
+  analysis: { provider: AnalysisProvider; models: Record<AnalysisProvider, string>; reasoningEffort?: ReasoningEffort; fast?: boolean };
+  translation: { provider: TranslationProvider; models: Record<TranslationProvider, string>; reasoningEffort?: ReasoningEffort; fast?: boolean };
 }
 export const defaultSettings: AISettings = {
   providers: {

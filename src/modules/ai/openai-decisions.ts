@@ -85,8 +85,8 @@ export function openAIDecisionLayer(options: { apiKey: Redacted.Redacted<string>
   })));
 }
 
-export function chatgptDecisionLayer(options: { model?: string; credentials: ChatGPTCredentials; reasoningEffort?: ReasoningEffort }) {
+export function chatgptDecisionLayer(options: { model?: string; credentials: ChatGPTCredentials; reasoningEffort?: ReasoningEffort; fast?: boolean }) {
   return languageModelDecisionLayer.pipe(Layer.provide(chatgptLayer({
-    model: options.model || DEFAULT_DECISION_MODEL, credentials: options.credentials, reasoningEffort: options.reasoningEffort,
+    model: options.model || DEFAULT_DECISION_MODEL, credentials: options.credentials, reasoningEffort: options.reasoningEffort, fast: options.fast,
   })));
 }

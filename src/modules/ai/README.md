@@ -112,5 +112,11 @@ https://developers.openai.com/siwc/token-sharing-open-source
   during the stream. The span records when the first event and the first
   output text arrived (`obt.stream.first_event_ms`, `obt.stream.first_output_ms`)
   and the token usage, including reasoning tokens.
+- Analysis and translation on the plan can each turn on Fast mode
+  (`fast` in their settings), sent as `service_tier: "fast"`, the tier Codex
+  uses when signed in with ChatGPT. It uses plan limits at 2.5x the standard
+  rate (https://learn.chatgpt.com/docs/agent-configuration/speed). The
+  sign-in docs for open-source apps don't mention it, so a plan or model that
+  doesn't allow it surfaces as a failed request in the trace.
 
 Analysis can use the same sign-in (see above).

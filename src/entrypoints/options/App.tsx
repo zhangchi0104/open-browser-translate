@@ -321,6 +321,10 @@ export function App() {
                         if (effort) next[purpose].reasoningEffort = effort;
                         else delete next[purpose].reasoningEffort;
                       })}
+                      onFastChange={(fast) => edit((next) => {
+                        if (fast) next[purpose].fast = true;
+                        else delete next[purpose].fast;
+                      })}
                     />
                   ))}
                 </CardContent>
@@ -453,7 +457,7 @@ const effortLabels: Record<ReasoningEffort, string> = {
 };
 const DEFAULT_EFFORT = "default";
 
-function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderChange, onModelChange, onEffortChange }: {
+function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderChange, onModelChange, onEffortChange, onFastChange }: {
   purpose: Purpose;
   draft: AISettings | undefined;
   catalogs: Record<CatalogProvider, LoadedCatalog>;
@@ -462,6 +466,7 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
   onProviderChange: (provider: SettingsProvider) => void;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: ReasoningEffort | undefined) => void;
+  onFastChange: (fast: boolean) => void;
 }) {
   const id = useId();
   const config = purposes[purpose];
@@ -484,6 +489,9 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
   // The gateway's evaluation models answer decisions without reasoning, so there is nothing to tune.
   const reasons = !evaluation;
   const effort = draft?.[purpose].reasoningEffort;
+  // Fast mode is a ChatGPT plan option (the service tier Codex uses when signed in with ChatGPT).
+  const offersFast = provider === AiProviders.OpenAISubscription;
+  const fast = !!draft?.[purpose].fast;
   return (
     <section aria-labelledby={`${id}-heading`} className="space-y-4">
       <div>
@@ -547,6 +555,20 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
             </Select>
           </div>
         )}
+        {offersFast && (
+          <div className="space-y-2">
+            <Label htmlFor={`${id}-speed`}>处理速度</Label>
+            <Select value={fast ? "fast" : "standard"} onValueChange={(value) => onFastChange(value === "fast")}>
+              <SelectTrigger id={`${id}-speed`} className="w-full" aria-describedby={`${id}-speed-help`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="standard">标准</SelectItem>
+                <SelectItem value="fast">快速（Fast 模式）</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
       <p id={`${id}-help`} className={cn("text-[13px]", error || unlisted ? "text-destructive" : "text-muted-foreground")}>
         {help}
@@ -557,6 +579,11 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
       {reasons && (
         <p id={`${id}-effort-help`} className="text-[13px] text-muted-foreground">
           推理越强越慢、越费额度。不是每个模型都支持所有档位，不支持时请求会失败，原因记在「调试日志」。
+        </p>
+      )}
+      {offersFast && (
+        <p id={`${id}-speed-help`} className="text-[13px] text-muted-foreground">
+          Fast 模式生成更快，但按标准的 2.5 倍消耗 ChatGPT 套餐额度。支持的模型和可用性取决于你的套餐。
         </p>
       )}
     </section>
