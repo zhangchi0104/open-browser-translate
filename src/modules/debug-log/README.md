@@ -8,8 +8,9 @@ extension storage; nothing is uploaded.
 
 Translation requests (`prepare-translation`, `translate-content`,
 `analyze-content`) are recorded as OpenTelemetry traces (`trace.ts`). The
-background runs each request as a root span with `traceRequest`; effects it
-starts through the `run` it hands out become child spans. `translateBatch` adds
+background runs each request as a root span with `traceRequest` on its
+`ManagedRuntime`, whose `tracingLayer` records spans locally; effects it starts
+through the `run` it hands out become child spans. `translateBatch` adds
 `content-analysis` and `translation` spans, and Effect's own AI and HTTP modules
 add `DecisionModel.decide`, `LanguageModel.*` (with `gen_ai.*` model and token
 attributes) and `http.client` spans below them.

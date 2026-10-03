@@ -1,9 +1,7 @@
 import { Effect, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/unstable/ai";
-import { analysisLayerFromSettings } from "../ai/configured";
+import { AnalysisModel } from "../ai/models";
 import { describeError } from "../debug-log/model";
-import type { ChatGPTCredentials } from "../ai/chatgpt";
-import type { AISettings } from "../settings/model";
 
 export const PageContext = Schema.Struct({
   title: Schema.String,
@@ -39,9 +37,10 @@ const definition = Decision.make({
     }),
   },
 });
-export function decideTranslationPlan(context: PageContext, settings: AISettings, chatgpt?: ChatGPTCredentials) {
+/** Asks the analysis model how to translate the page; falls back to translating everything. */
+export function decideTranslationPlan(context: PageContext) {
   return DecisionModel.decide(definition, { input: context }).pipe(
-    Effect.provide(analysisLayerFromSettings(settings, chatgpt)),
+    Effect.provide(AnalysisModel),
     Effect.timeout("10 seconds"),
     Effect.match({
       onFailure: (error): TranslationPlan => ({ mode: "all", navigation: "single", fallback: true, error: describeError(error) }),

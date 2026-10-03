@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Option, Tracer } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Tracer } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { describeError, truncate } from "./model";
 
@@ -107,33 +107,47 @@ export function createLocalTracer(onEnd: (span: OtlpSpan) => void): Tracer.Trace
   return Tracer.make({ span: (options) => new RecordingSpan(options, onEnd) });
 }
 
+// Trace headers would tell the provider about local spans, and headers can carry keys.
+const localOnly = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(
+  Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+  Effect.provideService(HttpClient.TracerHeaderFilter, () => false),
+);
+
 /** Runs `effect` under `tracer`, without trace headers on outgoing requests or headers in spans. */
 export function traced<A, E, R>(effect: Effect.Effect<A, E, R>, tracer: Tracer.Tracer): Effect.Effect<A, E, R> {
-  return effect.pipe(
-    Effect.withTracer(tracer),
-    Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-    Effect.provideService(HttpClient.TracerHeaderFilter, () => false),
+  return localOnly(effect.pipe(Effect.withTracer(tracer)));
+}
+
+/** `traced` as a layer: effects run on a runtime built from it record their spans with `tracer`. */
+export function tracingLayer(tracer: Tracer.Tracer) {
+  return Layer.mergeAll(
+    Layer.succeed(Tracer.Tracer, tracer),
+    Layer.succeed(HttpClient.TracerPropagationEnabled, false),
+    Layer.succeed(HttpClient.TracerHeaderFilter, () => false),
   );
 }
 
+/** Runs effects needing `R` to completion; `ManagedRuntime#runPromise` in the background. */
+export type RunPromise<R> = <A, E>(effect: Effect.Effect<A, E, R>) => Promise<A>;
+
 /** Runs effects under a request's span from plain async code. */
-export type RunInSpan = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
+export type RunInSpan<R = never> = RunPromise<R>;
 
 /**
- * Runs an async request handler as a root span. Effects it starts through `run` are
- * children of that span; `Effect.useSpan` alone wouldn't parent them, and each
- * `runPromise` starts a fresh fiber.
+ * Runs an async request handler as a root span on `runPromise`, whose tracer records it.
+ * Effects the handler starts through `run` are children of that span; `Effect.useSpan`
+ * alone wouldn't parent them, and each `runPromise` starts a fresh fiber.
  */
-export function traceRequest<A>(
-  tracer: Tracer.Tracer,
+export function traceRequest<A, R>(
+  runPromise: RunPromise<R>,
   name: string,
   attributes: Record<string, unknown>,
-  body: (span: Tracer.Span, run: RunInSpan) => Promise<A>,
+  body: (span: Tracer.Span, run: RunInSpan<R>) => Promise<A>,
 ): Promise<A> {
-  return Effect.runPromise(traced(Effect.useSpan(name, { attributes, kind: "server" }, (span) => {
-    const run: RunInSpan = (effect) => Effect.runPromise(traced(effect.pipe(Effect.withParentSpan(span)), tracer));
+  return runPromise(Effect.useSpan(name, { attributes, kind: "server" }, (span) => {
+    const run: RunInSpan<R> = (effect) => runPromise(effect.pipe(Effect.withParentSpan(span)));
     return Effect.promise(() => body(span, run));
-  }), tracer));
+  }));
 }
 
 /** Marks a span as failed when the handler turned the failure into a result instead of failing. */

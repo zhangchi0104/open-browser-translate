@@ -46,10 +46,16 @@ Settings store provider connections separately from task selections:
 Analysis supports OpenAI with an API key or the ChatGPT sign-in; translation
 supports Vercel, OpenAI with an API key, or the ChatGPT sign-in.
 
-`analysisLayerFromSettings` and `translationLayerFromSettings` in `configured.ts`
-resolve the independent model and shared provider key into the appropriate
-Effect layer. Callers should ensure the selected key and model are configured
-before invoking a model. The button runs both helpers in the background, with independent provider settings.
+`models.ts` turns the settings into models. `AnalysisModel` (a `DecisionModel`)
+and `TranslationModel` (a `LanguageModel`) are layers that read the `Settings`
+and `ChatGPTToken` services when they're provided, so a settings change applies
+to the next request. They fail with `ModelNotConfigured` when the purpose's
+provider isn't connected or has no model, before any request is sent. Built
+model layers are kept in `LayerMap`s (`ModelsLive`) keyed by everything that
+picks the model, so requests on the same settings share one HTTP client.
+
+The background provides `SettingsLive`, `ChatGPTTokenLive` and `ModelsLive` once,
+in its `ManagedRuntime`. Tests use `modelsFor(settings, token?)`.
 
 Settings v3 dropped Jev (TypeSafe). The migration keeps Vercel and OpenAI keys
 and translation settings, discards TypeSafe keys and Jev model IDs, and points

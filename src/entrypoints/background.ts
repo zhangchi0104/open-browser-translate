@@ -1,20 +1,21 @@
-import { Schema, type Tracer } from "effect";
+import { Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { storage } from "wxt/utils/storage";
-import { aiSettings } from "../modules/settings";
+import { aiSettings, Settings, SettingsLive } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
-import { missingConfiguration, modelAttributes, TARGET_LANGUAGE, translateBatch } from "../modules/translator/translate-batch";
+import { modelAttributes, TARGET_LANGUAGE, translateBatch } from "../modules/translator/translate-batch";
+import { configuredSettings, modelConfig, ModelsLive } from "../modules/ai/models";
 import { createTranslationCache, translateWithCache } from "../modules/translation-cache";
 import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
 import {
-  chatgptCredentials, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
+  ChatGPTTokenLive, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
 } from "../modules/ai/chatgpt-session";
 
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import { createContextCarryover } from "../modules/translation-context/carryover";
 import type { TranslationContext } from "../modules/translation-context";
 import {
-  debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestWith, traceStore, type RunInSpan,
+  debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestOn, traceStore, tracingLayer,
 } from "../modules/debug-log";
 import { listOpenAIModels } from "../modules/ai/openai-models";
 import { listGatewayModels } from "../modules/ai/gateway-models";
@@ -36,9 +37,17 @@ const originOf = (url: string | undefined) => {
   } catch { return undefined; }
 };
 
+// Every request runs on one runtime, so built model layers (and their HTTP clients) are shared
+// across requests. Settings and the ChatGPT sign-in are read when a request starts.
+const BackgroundLive = Layer.mergeAll(ModelsLive, tracingLayer(localTracer)).pipe(
+  Layer.provideMerge(Layer.mergeAll(SettingsLive, ChatGPTTokenLive)),
+);
+const runtime = ManagedRuntime.make(BackgroundLive);
+type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
+
 // Translation requests are traced as OpenTelemetry spans kept locally (see debug-log/trace.ts).
-const traceRequest = <A>(name: string, attributes: Record<string, unknown>, body: (span: Tracer.Span, run: RunInSpan) => Promise<A>) =>
-  traceRequestWith(localTracer, name, attributes, body);
+const traceRequest = <A>(name: string, attributes: Record<string, unknown>, body: Parameters<typeof traceRequestOn<A, Services>>[3]) =>
+  traceRequestOn(runtime.runPromise, name, attributes, body);
 
 export default defineBackground(() => {
   const contexts = createContextCarryover({
@@ -114,20 +123,20 @@ export default defineBackground(() => {
             markFailed(span, `页面信息超出长度限制：sample ${context.sample.length}，title ${context.title.length}，pagination ${context.pagination.length}`);
             return { status: "failed" };
           }
-          const settings = await aiSettings.getValue();
-          const chatgpt = await chatgptCredentials();
-          for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
-          const missing = missingConfiguration(settings, chatgpt);
-          if (missing) {
-            markFailed(span, `${purposeNames[missing]}未配置`);
-            return { status: "not-configured", purpose: missing };
-          }
-          void contexts.notePage(pageUrl(sender), context.title);
-          const plan = await run(decideTranslationPlan(context, settings, chatgpt));
-          span.attribute("obt.plan.mode", plan.mode);
-          span.attribute("obt.plan.navigation", plan.navigation);
-          span.attribute("obt.plan.fallback", plan.fallback);
-          return { status: "ok", plan };
+          return await run(Effect.gen(function* () {
+            const settings = yield* Settings.use((settings) => settings.get);
+            for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
+            yield* configuredSettings();
+            void contexts.notePage(pageUrl(sender), context.title);
+            const plan = yield* decideTranslationPlan(context);
+            span.attribute("obt.plan.mode", plan.mode);
+            span.attribute("obt.plan.navigation", plan.navigation);
+            span.attribute("obt.plan.fallback", plan.fallback);
+            return { status: "ok", plan } as const;
+          }).pipe(Effect.catchTag("ModelNotConfigured", ({ purpose }) => {
+            markFailed(span, `${purposeNames[purpose]}未配置`);
+            return Effect.succeed({ status: "not-configured", purpose } as const);
+          })));
         } catch (error) {
           markFailed(span, "准备翻译时出现异常", error);
           return { status: "failed" };
@@ -167,8 +176,6 @@ export default defineBackground(() => {
           markFailed(span, `请求超出限制：${blocks.length} 段，${length} 字符`);
           return { status: "failed" };
         }
-        const settings = await aiSettings.getValue();
-        const chatgpt = chatgptCredentials();
         const mode = message.mode === "main" ? "main" : "all";
         span.attribute("obt.mode", mode);
         if (message.type === "translate-content") {
@@ -180,16 +187,16 @@ export default defineBackground(() => {
           // context. Private windows have no page URL here, so they bypass the cache.
           const url = pageUrl(sender);
           const origin = originOf(url);
-          const { provider, models } = settings.translation;
+          const { provider, model } = modelConfig(await run(Settings.use((settings) => settings.get)), "translation");
           const result = await translateWithCache({
             cache: translationCache,
             scope: origin
-              ? { origin, target: TARGET_LANGUAGE, provider, model: (models as Record<string, string | undefined>)[provider] ?? "", mode }
+              ? { origin, target: TARGET_LANGUAGE, provider, model, mode }
               : undefined,
             blocks,
             onCached: onPartial && ((index, text) => onPartial(index, text, true)),
             translate: (misses, indexes) => contexts.translate(url, misses, async (context) =>
-              run(translateBatch(misses, mode, settings, await chatgpt, context, onPartial && ((index, text) => onPartial(indexes[index]!, text)), { analyzed }))),
+              run(translateBatch(misses, mode, { context, analyzed, onPartial: onPartial && ((index, text) => onPartial(indexes[index]!, text)) }))),
           });
           span.attribute("obt.cache.hits", result.cacheHits ?? 0);
           if (result.status === "ok") {
@@ -203,7 +210,7 @@ export default defineBackground(() => {
           }
           return result;
         }
-        const result = await run(analyzePageContent(blocks, settings, await chatgpt, mode));
+        const result = await run(analyzePageContent(blocks, mode));
         if (result.status === "failed") markFailed(span, "内容分析失败", result.error);
         return result;
       } catch (error) {
