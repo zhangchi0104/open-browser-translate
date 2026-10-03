@@ -61,6 +61,8 @@ jobs:
           name: extension-zips
           path: .output/*.zip
           if-no-files-found: error
+          # .output is a dot-directory, which upload-artifact skips by default.
+          include-hidden-files: true
 
   # Tags, writes CHANGELOG.md, bumps package.json, rebuilds the zips at the new
   # version and publishes a GitHub release — only when commits since the last
