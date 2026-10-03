@@ -10,12 +10,12 @@ import {
   TranslationContext,
   type PromptContext,
 } from "./index";
+import { createStoredValue, type ValueStore } from "../stored-value";
 
-/** Where contexts live; extension storage in the background, a Map in tests. */
-export interface ContextStore {
-  get(): Promise<unknown>;
-  set(value: Record<string, TranslationContext>): Promise<void>;
-}
+type Contexts = Record<string, TranslationContext>;
+
+/** Where contexts live; extension storage in the background, a variable in tests. */
+export type ContextStore = ValueStore<Contexts>;
 
 // Keeps storage bounded: the most recently translated sites survive.
 export const MAX_SITES = 50;
@@ -23,34 +23,25 @@ export const MAX_SITES = 50;
 const Stored = Schema.Record(Schema.String, TranslationContext);
 
 /**
- * Carries translation context across viewport batches and page navigations on
- * the same site. Contexts are read from the store once and kept in memory;
- * writes go through one queue so they land in order.
+ * Carries translation context across viewport batches and page navigations on the same site.
+ * Stale contexts are dropped, and at most `MAX_SITES` sites are kept, the most recent first.
  */
 export function createContextCarryover(store: ContextStore, now: () => number = Date.now) {
-  let cache: Promise<Record<string, TranslationContext>> | undefined;
-  const load = () => cache ??= store.get()
-    .then((value): Record<string, TranslationContext> => ({ ...Schema.decodeUnknownSync(Stored)(value ?? {}) }))
-    .catch((): Record<string, TranslationContext> => ({}));
-  const fresh = async (key: string) => {
-    const context = (await load())[key];
+  const contexts = createStoredValue(store, {
+    parse: (stored) => ({ ...Schema.decodeUnknownSync(Stored)(stored ?? {}) }),
+    onError: (error) => console.error("Translation context write failed:", error),
+  });
+  const freshIn = (all: Contexts, site: string) => {
+    const context = all[site];
     return context && isFresh(context, now()) ? context : undefined;
   };
-
-  let writes: Promise<void> = Promise.resolve();
-  const update = (key: string, change: (context: TranslationContext) => TranslationContext) => {
-    writes = writes.then(async () => {
-      const all = await load();
-      all[key] = change((await fresh(key)) ?? emptyContext(now()));
-      const kept = Object.entries(all)
-        .filter(([, context]) => isFresh(context, now()))
-        .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
-        .slice(0, MAX_SITES);
-      cache = Promise.resolve(Object.fromEntries(kept));
-      await store.set(Object.fromEntries(kept));
-    }).catch(() => {});
-    return writes;
-  };
+  const update = (site: string, change: (context: TranslationContext) => TranslationContext) => contexts.update((all) => {
+    const next = { ...all, [site]: change(freshIn(all, site) ?? emptyContext(now())) };
+    return Object.fromEntries(Object.entries(next)
+      .filter(([, context]) => isFresh(context, now()))
+      .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
+      .slice(0, MAX_SITES));
+  });
 
   return {
     /** Remembers the page title when translation starts on a page of `site` (see `siteOf`). */
@@ -67,7 +58,7 @@ export function createContextCarryover(store: ContextStore, now: () => number = 
       blocks: readonly ContentBlock[],
       run: (context: PromptContext | undefined) => Promise<TranslationBatchResult>,
     ): Promise<TranslationBatchResult> => {
-      const context = site ? await fresh(site) : undefined;
+      const context = site ? freshIn(await contexts.get(), site) : undefined;
       const result = await run(context && promptContext(context, blocks.map(({ text }) => text)));
       if (!site || result.status !== "ok") return result;
       const segments = blocks.map(({ text }, index) => ({ source: text, target: result.translations[index]! }));
@@ -77,7 +68,7 @@ export function createContextCarryover(store: ContextStore, now: () => number = 
     },
 
     /** Resolves once every pending write has reached the store. */
-    flush: () => writes,
+    flush: contexts.flush,
   };
 }
 export type ContextCarryover = ReturnType<typeof createContextCarryover>;

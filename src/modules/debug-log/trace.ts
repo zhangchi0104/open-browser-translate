@@ -1,6 +1,7 @@
 import { Cause, Effect, Exit, Layer, Option, Tracer } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { describeError, truncate } from "./model";
+import { createStoredValue, type ValueStore } from "../stored-value";
 
 // Spans in the OTLP JSON shape (https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding),
 // so an export opens in any OpenTelemetry viewer. Nothing is sent anywhere: spans are
@@ -157,41 +158,31 @@ export function markFailed(span: Tracer.Span, description: string, error?: unkno
 }
 
 /** Where spans live; extension storage in the background, an array in tests. */
-export interface TraceStore {
-  get(): Promise<OtlpSpan[] | null>;
-  set(value: OtlpSpan[]): Promise<void>;
-}
+export type TraceStore = ValueStore<OtlpSpan[]>;
 
 export const MAX_TRACES = 100;
 
-/** Keeps the spans of the newest traces. Writes go through one queue, like the debug log. */
+/** Keeps the spans of the newest traces. */
 export function createTraceStore(store: TraceStore, maxTraces = MAX_TRACES) {
-  let pending: OtlpSpan[] = [];
-  let writes: Promise<void> = Promise.resolve();
-  const enqueue = (change: (spans: OtlpSpan[]) => OtlpSpan[]) => {
-    writes = writes.then(async () => { await store.set(change((await store.get()) ?? [])); })
-      .catch((error) => console.error("Trace write failed:", error));
-    return writes;
-  };
+  const spans = createStoredValue(store, {
+    parse: (stored) => Array.isArray(stored) ? stored as OtlpSpan[] : [],
+    onError: (error) => console.error("Trace write failed:", error),
+  });
   return {
-    record(span: OtlpSpan) {
-      if (pending.push(span) > 1) return writes;
-      return enqueue((spans) => {
-        const all = spans.concat(pending);
-        pending = [];
-        // A trace's recency is where its latest span landed.
-        const order: string[] = [];
-        for (const { traceId } of all) {
-          const index = order.indexOf(traceId);
-          if (index >= 0) order.splice(index, 1);
-          order.push(traceId);
-        }
-        const kept = new Set(order.slice(-maxTraces));
-        return all.filter(({ traceId }) => kept.has(traceId));
-      });
-    },
-    clear: () => enqueue(() => []),
-    flush: () => writes,
+    record: (span: OtlpSpan) => spans.update((current) => {
+      const all = current.concat(span);
+      // A trace's recency is where its latest span landed.
+      const order: string[] = [];
+      for (const { traceId } of all) {
+        const index = order.indexOf(traceId);
+        if (index >= 0) order.splice(index, 1);
+        order.push(traceId);
+      }
+      const kept = new Set(order.slice(-maxTraces));
+      return all.filter(({ traceId }) => kept.has(traceId));
+    }),
+    clear: () => spans.update(() => []),
+    flush: spans.flush,
   };
 }
 
