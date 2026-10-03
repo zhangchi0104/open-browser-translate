@@ -2,7 +2,9 @@ import { Effect } from "effect";
 import { storage } from "wxt/utils/storage";
 import { browser } from "wxt/browser";
 import { DomParser, type TranslatableContent } from "../modules/dom-parser";
-import { createBatchQueue, MAX_CONCURRENT_BATCHES, pickNearViewport, type Span } from "../modules/viewport-queue";
+import { createBatchQueue, MAX_CONCURRENT_BATCHES, pickByPriority, pickNearViewport, viewportDistance, type Span } from "../modules/viewport-queue";
+import { TRANSLATION_PRIORITY } from "../modules/content-analyzer";
+import type { PageAnalysisResult } from "../modules/content-analyzer/page-analysis";
 import { createCapturedContent } from "./captured-content";
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import type { TranslationBatchResult } from "../modules/translator/translate-batch";
@@ -76,7 +78,8 @@ function translateStreaming(
       if (!settled) log("error", "翻译批次：与后台的连接中断", browser.runtime.lastError?.message);
       finish({ status: "failed" });
     });
-    port.postMessage({ mode, blocks: batch.map(({ text, tag }) => ({ text, tag })) });
+    // The page has analyzed these blocks already, so the background only translates them.
+    port.postMessage({ mode, analyzed: true, blocks: batch.map(({ text, tag }) => ({ text, tag })) });
   });
 }
 
@@ -246,9 +249,9 @@ export function mountTranslationLauncher(container: HTMLElement) {
       if (busy) ball.setAttribute("aria-busy", "true");
       else ball.removeAttribute("aria-busy");
     };
-    let queue: ReturnType<typeof createBatchQueue<TranslatableContent[]>> | undefined;
+    let queues: ReturnType<typeof createBatchQueue<TranslatableContent[]>>[] = [];
     // Scrolling, resizing, new content and stopping the session all wake the queue.
-    const nudge = () => queue?.nudge();
+    const nudge = () => { for (const queue of queues) queue.nudge(); };
     let observer: MutationObserver | undefined;
     stopSession = () => {
       observer?.disconnect();
@@ -325,14 +328,92 @@ export function mountTranslationLauncher(container: HTMLElement) {
       const summary = () => `${modeLabel} · 已显示 ${kept} 段译文。`
         + (failures ? `${failures} 段翻译失败，请重试。` : "")
         + (fallbackCount || plan.fallback ? "部分内容使用本地筛选回退。" : "");
-      // Several batches are translated at once, nearest first; each shows as soon as it's done.
+      // Analysis runs ahead of translation: Jev classifies nearby blocks, which gives each a
+      // priority (reading content first, then interface text, ads last). Translation then takes
+      // the highest-priority analyzed blocks near the viewport, several batches at once.
+      const analysis = new Map<TranslatableContent, { keep: boolean; priority: number }>();
+      const analyzing = new Set<TranslatableContent>();
+      let analyzingCount = 0;
       let translating = 0;
       let notConfigured: "analysis" | "translation" | undefined;
-      queue = createBatchQueue<TranslatableContent[]>({
+      const stopAll = (purpose: "analysis" | "translation") => {
+        notConfigured = purpose;
+        for (const queue of queues) queue.stop();
+      };
+      const render = () => {
+        if (translating || analyzingCount) {
+          setBusy(true);
+          setBadge("translating");
+          status.textContent = translating
+            ? `${modeLabel} · 正在翻译附近 ${translating} 段，已显示 ${kept} 段…`
+            : `${modeLabel} · 正在分析附近 ${analyzingCount} 段…`;
+        } else {
+          status.textContent = summary() + (pending.length ? "滚动页面时继续翻译附近内容。" : "");
+          setBusy(false);
+          setBadge(failures ? "failed" : "done");
+        }
+      };
+      const analysisQueue = createBatchQueue<TranslatableContent[]>({
         limit: MAX_CONCURRENT_BATCHES,
         next: () => {
           pending = pending.filter(({ element }) => element.isConnected);
-          const batch = pickNearViewport(pending, spanOf, window.innerHeight, ANALYSIS_BATCH_SIZE);
+          const unanalyzed = pending.filter((item) => !analysis.has(item) && !analyzing.has(item));
+          const batch = pickNearViewport(unanalyzed, spanOf, window.innerHeight, ANALYSIS_BATCH_SIZE);
+          if (batch.length === 0) return undefined;
+          for (const item of batch) analyzing.add(item);
+          return batch;
+        },
+        run: async (batch) => {
+          analyzingCount += batch.length;
+          try {
+            let result: PageAnalysisResult;
+            try {
+              result = await browser.runtime.sendMessage({
+                type: "analyze-content",
+                mode: plan.mode,
+                blocks: batch.map(({ text, tag }) => ({ text, tag })),
+              });
+            } catch (error) {
+              log("error", "内容分析：发送请求失败", describeError(error));
+              result = { status: "failed" };
+            }
+            if (!active()) return false;
+            if (result.status === "not-configured") {
+              stopAll("analysis");
+              return false;
+            }
+            // Without an answer every block is kept, at the priority of an unsure block.
+            const answer = result.status === "ok" && result.keep.length === batch.length ? result : undefined;
+            if (answer) fallbackCount += answer.fallbackCount;
+            batch.forEach((item, index) => analysis.set(item, {
+              keep: answer ? answer.keep[index]! : true,
+              priority: answer ? answer.priority[index]! : TRANSLATION_PRIORITY.unknown,
+            }));
+            const skipped = new Set(batch.filter((item) => !analysis.get(item)!.keep));
+            if (skipped.size) pending = pending.filter((item) => !skipped.has(item));
+            translationQueue.nudge();
+            return true;
+          } finally {
+            analyzingCount -= batch.length;
+            for (const item of batch) analyzing.delete(item);
+          }
+        },
+        onBusy: render,
+        onIdle: render,
+      });
+      const translationQueue = createBatchQueue<TranslatableContent[]>({
+        limit: MAX_CONCURRENT_BATCHES,
+        next: () => {
+          pending = pending.filter(({ element }) => element.isConnected);
+          // Priority only means something among analyzed blocks, so translation waits until
+          // everything on screen has been classified; blocks further away don't hold it up.
+          const onScreen = (item: TranslatableContent) => {
+            const span = spanOf(item);
+            return span !== null && viewportDistance(span, window.innerHeight) === 0;
+          };
+          if (pending.some((item) => !analysis.has(item) && onScreen(item))) return undefined;
+          const ready = pending.filter((item) => analysis.get(item)?.keep);
+          const batch = pickByPriority(ready, spanOf, (item) => analysis.get(item)!.priority, window.innerHeight, ANALYSIS_BATCH_SIZE);
           if (batch.length === 0) return undefined;
           const picked = new Set(batch);
           pending = pending.filter((item) => !picked.has(item));
@@ -350,7 +431,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
             if (!active()) return false;
             if (result.status === "not-configured") {
               capturedContent.discard(batch);
-              notConfigured = result.purpose;
+              stopAll(result.purpose);
               return false;
             }
             if (result.status === "ok" && result.translations.length !== batch.length) {
@@ -368,24 +449,16 @@ export function mountTranslationLauncher(container: HTMLElement) {
               else capturedContent.update(item, translation, false);
             });
             kept += result.translations.filter((text) => text !== null).length;
-            fallbackCount += result.analysisFallbackCount;
             return true;
           } finally {
             translating -= batch.length;
           }
         },
-        onBusy: () => {
-          setBusy(true);
-          setBadge("translating");
-          status.textContent = `${modeLabel} · 正在翻译附近 ${translating} 段，已显示 ${kept} 段…`;
-        },
-        onIdle: () => {
-          status.textContent = summary() + (pending.length ? "滚动页面时继续翻译附近内容。" : "");
-          setBusy(false);
-          setBadge(failures ? "failed" : "done");
-        },
+        onBusy: render,
+        onIdle: render,
       });
-      await queue.drain(active);
+      queues = [analysisQueue, translationQueue];
+      await Promise.all(queues.map((queue) => queue.drain(active)));
       if (active() && notConfigured) {
         status.textContent = `请在设置中填写${notConfigured === "translation" ? "翻译" : "内容分析"}的 API key 和模型。`;
       }

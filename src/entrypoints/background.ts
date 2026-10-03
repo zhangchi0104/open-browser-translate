@@ -152,7 +152,7 @@ export default defineBackground(() => {
   });
 
   function handleBatch(
-    message: { type: "analyze-content" | "translate-content"; blocks?: unknown; mode?: unknown },
+    message: { type: "analyze-content" | "translate-content"; blocks?: unknown; mode?: unknown; analyzed?: unknown },
     sender: Parameters<typeof pageUrl>[0],
     onPartial?: (index: number, text: string, final?: boolean) => void,
   ) {
@@ -169,9 +169,13 @@ export default defineBackground(() => {
         }
         const settings = await aiSettings.getValue();
         const chatgpt = chatgptCredentials();
+        const mode = message.mode === "main" ? "main" : "all";
+        span.attribute("obt.mode", mode);
         if (message.type === "translate-content") {
-          const mode = message.mode === "main" ? "main" : "all";
-          span.attribute("obt.mode", mode);
+          // The page analyzes blocks ahead of translation (to order them by priority) and sends
+          // only blocks to translate; older callers still get analysis here.
+          const analyzed = message.analyzed === true;
+          span.attribute("obt.analyzed", analyzed);
           // Cached blocks are served from IndexedDB; only the rest reach the model and the site
           // context. Private windows have no page URL here, so they bypass the cache.
           const url = pageUrl(sender);
@@ -185,7 +189,7 @@ export default defineBackground(() => {
             blocks,
             onCached: onPartial && ((index, text) => onPartial(index, text, true)),
             translate: (misses, indexes) => contexts.translate(url, misses, async (context) =>
-              run(translateBatch(misses, mode, settings, await chatgpt, context, onPartial && ((index, text) => onPartial(indexes[index]!, text))))),
+              run(translateBatch(misses, mode, settings, await chatgpt, context, onPartial && ((index, text) => onPartial(indexes[index]!, text)), { analyzed }))),
           });
           span.attribute("obt.cache.hits", result.cacheHits ?? 0);
           if (result.status === "ok") {
@@ -199,7 +203,7 @@ export default defineBackground(() => {
           }
           return result;
         }
-        const result = await run(analyzePageContent(blocks, settings, await chatgpt));
+        const result = await run(analyzePageContent(blocks, settings, await chatgpt, mode));
         if (result.status === "failed") markFailed(span, "内容分析失败", result.error);
         return result;
       } catch (error) {

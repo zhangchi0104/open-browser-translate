@@ -124,3 +124,12 @@ test("a streamed response that isn't the promised JSON fails the batch with the 
     .pipe(Effect.provideService(FetchHttpClient.Fetch, streamingFetch(JSON.stringify({ translations: [{ id: 0, text: "你好" }], terms: [] })))));
   assert.match(missing.status === "failed" ? missing.error ?? "" : "", /missing ids \[1\]/);
 });
+
+test("blocks the page already analyzed are translated without asking the analysis model again", async () => {
+  const bodies: any[] = [];
+  const fetch = mockFetch({ translations: [{ id: 0, text: "主页" }, { id: 1, text: "你好" }], terms: [] }, [], bodies);
+  const result = await Effect.runPromise(translateBatch([{ text: "Home", tag: "a" }, { text: "Hello", tag: "p" }], "all", settings, undefined, undefined, undefined, { analyzed: true })
+    .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
+  assert.deepEqual(result, { status: "ok", translations: ["主页", "你好"], terms: [], analysisFallbackCount: 0 });
+  assert.equal(bodies.some(isDecisionRequest), false);
+});

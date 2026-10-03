@@ -15,12 +15,24 @@ const ROLES = {
 } as const;
 
 export type ContentRole = keyof typeof ROLES;
+
+/** Translation order by role, lower first: reading content before interface text, ads last. */
+export const TRANSLATION_PRIORITY: Record<ContentRole, number> = {
+  content: 0,
+  unknown: 1,
+  control: 2,
+  navigation: 2,
+  auxiliary: 3,
+  advertisement: 3,
+};
 export interface ContentBlock { text: string; tag: string; }
 
 export interface AnalyzedContent<T extends ContentBlock = ContentBlock> {
   content: T;
   role: ContentRole;
   shouldTranslate: boolean;
+  /** When to translate it relative to other blocks (`TRANSLATION_PRIORITY`); unsure blocks count as unknown. */
+  priority: number;
   confidence?: number;
   fallbackReason?: "request-failed" | "input-too-large";
   /** Why the analysis request failed, for the debug log. */
@@ -46,7 +58,9 @@ const fallback = <T extends ContentBlock>(
   content: T,
   fallbackReason: AnalyzedContent["fallbackReason"],
   fallbackDetail?: string,
-): AnalyzedContent<T> => ({ content, role: "unknown", shouldTranslate: true, fallbackReason, ...(fallbackDetail && { fallbackDetail }) });
+): AnalyzedContent<T> => ({
+  content, role: "unknown", shouldTranslate: true, priority: TRANSLATION_PRIORITY.unknown, fallbackReason, ...(fallbackDetail && { fallbackDetail }),
+});
 
 export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
   readonly analyze: <T extends ContentBlock>(
@@ -101,6 +115,7 @@ export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
               role: answer.label,
               confidence: answer.confidence,
               shouldTranslate: !(confident && excluded),
+              priority: confident ? TRANSLATION_PRIORITY[answer.label] : TRANSLATION_PRIORITY.unknown,
             });
           }
         }

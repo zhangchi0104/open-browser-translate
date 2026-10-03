@@ -5,9 +5,18 @@ bounded text samples, title, article presence, and pagination labels. High
 confidence selects `all` (ordinary webpages) or `main` (reading content only).
 Uncertain or failed planning defaults to `all` and reports fallback.
 
-Each batch of up to eight groups is sent to the background. `ContentAnalyzer`
-classifies with the selected scope; `Translator` sends retained texts to the
-independently configured translation provider using Effect `LanguageModel`.
+Analysis runs ahead of translation. The launcher sends nearby groups to the
+background in batches of up to eight (`analyze-content`); `ContentAnalyzer`
+classifies each group's role with the selected scope, which decides whether it
+is translated and its priority (`TRANSLATION_PRIORITY`): reading content 0,
+unsure 1, controls and navigation 2, auxiliary text and ads 3. A role below the
+confidence threshold counts as unsure, so possible content isn't pushed back.
+Translation batches take the highest-priority analyzed groups near the
+viewport, distance only breaking ties, and wait until everything on screen has
+been analyzed so visible navigation doesn't go before visible content. They are
+sent with `analyzed: true`, so the background translates them without asking
+the analysis model again; `Translator` sends them to the independently
+configured translation provider using Effect `LanguageModel`.
 The current target language is Simplified Chinese.
 
 Translation uses schema-validated structured output with one ID per retained

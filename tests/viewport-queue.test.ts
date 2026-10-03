@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { createBatchQueue, pickNearViewport, viewportDistance, type Span } from "../src/modules/viewport-queue";
+import { createBatchQueue, pickByPriority, pickNearViewport, viewportDistance, type Span } from "../src/modules/viewport-queue";
 
 const HEIGHT = 1000;
 const at = (top: number, height = 50): Span => ({ top, bottom: top + height });
@@ -90,4 +90,17 @@ test("a batch that returns false stops the queue, and a failed batch doesn't", a
   });
   await queue.drain(() => true);
   assert.deepEqual(started, [1, 2], "a thrown batch continues; returning false (not configured) stops");
+});
+
+test("translation batches take higher-priority content first; distance only breaks ties", () => {
+  const items = [
+    { id: "nav", span: at(10), priority: 2 },
+    { id: "ad", span: at(60), priority: 3 },
+    { id: "body-far", span: at(1300), priority: 0 },
+    { id: "body-near", span: at(300), priority: 0 },
+    { id: "unsure", span: at(200), priority: 1 },
+    { id: "body-offscreen", span: at(5000), priority: 0 },
+  ];
+  const picked = pickByPriority(items, ({ span }) => span, ({ priority }) => priority, HEIGHT, 4).map(({ id }) => id);
+  assert.deepEqual(picked, ["body-near", "body-far", "unsure", "nav"], "content first, nearest first within a priority, nothing outside the window");
 });

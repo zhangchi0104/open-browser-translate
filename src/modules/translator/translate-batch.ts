@@ -44,12 +44,14 @@ export function translateBatch(
   context?: PromptContext,
   /** Receives a block's translation (by its index in `blocks`) as it streams; omit to translate without streaming. */
   onPartial?: (index: number, text: string) => void,
+  /** `analyzed`: the page already ran analysis and sends only blocks to translate. */
+  options: { analyzed?: boolean } = {},
 ) {
   const missing = missingConfiguration(settings, chatgpt);
   if (missing) return Effect.succeed<TranslationBatchResult>({ status: "not-configured", purpose: missing });
   // Each step is a span, so a trace shows how long analysis and translation took and which failed.
   return Effect.gen(function* () {
-    const analyzed = yield* ContentAnalyzer.use((service) => service.analyze(blocks, { mode })).pipe(
+    const analyzed = options.analyzed ? blocks.map((block) => ({ content: block, shouldTranslate: true, fallbackReason: undefined, fallbackDetail: undefined })) : yield* ContentAnalyzer.use((service) => service.analyze(blocks, { mode })).pipe(
       Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(analysisLayerFromSettings(settings, chatgpt)))),
       Effect.tap((items) => Effect.annotateCurrentSpan({
         "obt.blocks.kept": items.filter((item) => item.shouldTranslate).length,

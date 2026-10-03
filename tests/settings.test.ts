@@ -90,10 +90,10 @@ test("page analysis requires configuration and returns only serializable decisio
     });
   };
   const result = await Effect.runPromise(analyzePageContent(blocks, settings).pipe(Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
-  assert.deepEqual(result, { status: "ok", keep: [true, false], fallbackCount: 0 });
+  assert.deepEqual(result, { status: "ok", keep: [true, false], priority: [0, 2], fallbackCount: 0 });
   const failedFetch: typeof globalThis.fetch = async () => Response.json({ message: "Unauthorized", error_type: "authentication_error" }, { status: 401 });
   const fallback = await Effect.runPromise(analyzePageContent(blocks, settings).pipe(Effect.provideService(FetchHttpClient.Fetch, failedFetch)));
-  assert.deepEqual(fallback, { status: "ok", keep: [true, true], fallbackCount: 2 });
+  assert.deepEqual(fallback, { status: "ok", keep: [true, true], priority: [1, 1], fallbackCount: 2 });
 });
 
 test("version 4 moves analysis without an OpenAI key to the gateway and keeps configured choices", () => {
