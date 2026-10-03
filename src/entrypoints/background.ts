@@ -5,7 +5,6 @@ import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan } from "../modules/content-analyzer/page-plan";
 import { configuredSettings, modelAttributes, ModelsLive } from "../modules/ai/models";
 import { ChatGPTToken } from "../modules/ai/chatgpt";
-import type { ChatGPTModel } from "../modules/ai/chatgpt-auth";
 import {
   ChatGPTTokenLive, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
 } from "../modules/ai/chatgpt-session";
@@ -18,7 +17,7 @@ import { createIndexedDbCacheStore } from "../modules/translation-cache/indexedd
 import { createContextCarryover } from "../modules/translation-context/carryover";
 import { siteOf, type TranslationContext } from "../modules/translation-context";
 import { debugLog, describeError, localTracer, markFailed, pageOf, traceStore, tracingLayer } from "../modules/debug-log";
-import { batchChars, createDispatcher, PURPOSE_NAMES, type Block, type Failed, type ModelList, type Purpose, type Sender } from "../modules/protocol";
+import { batchChars, createDispatcher, PURPOSE_NAMES, type Block, type ChatGPTModel, type Failed, type ModelList, type Purpose, type Sender } from "../modules/protocol";
 
 const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
 const translationCache = createTranslationCache(createIndexedDbCacheStore());

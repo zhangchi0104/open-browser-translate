@@ -13,15 +13,18 @@ const ChatRequest = Schema.Struct({
 });
 export type ChatRequest = typeof ChatRequest.Type;
 
+const decodeChatRequest = Schema.decodeUnknownSync(Schema.fromJsonString(ChatRequest));
+const decodeModel = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({ model: Schema.String })));
+
 /** The Chat Completions request a mocked fetch received. */
-export const chatRequest = (init?: RequestInit): ChatRequest => Schema.decodeUnknownSync(ChatRequest)(JSON.parse(String(init?.body)));
+export const chatRequest = (init?: RequestInit): ChatRequest => decodeChatRequest(String(init?.body));
 
 /** The model any mocked request named. */
-export const requestedModel = (init?: RequestInit) => Schema.decodeUnknownSync(Schema.Struct({ model: Schema.String }))(JSON.parse(String(init?.body))).model;
+export const requestedModel = (init?: RequestInit) => decodeModel(String(init?.body)).model;
 
 /** The JSON the request's last message carries, decoded with `schema`. */
-const lastMessage = <S extends Schema.Top & { readonly DecodingServices: never }>(body: ChatRequest, schema: S): S["Type"] =>
-  Schema.decodeUnknownSync(schema)(JSON.parse(body.messages.at(-1)!.content));
+const lastMessage = <A>(body: ChatRequest, schema: Schema.Codec<A>): A =>
+  Schema.decodeUnknownSync(Schema.fromJsonString(schema))(body.messages.at(-1)!.content);
 
 /** Blocks as content analysis sends them to the model. */
 export const blocksIn = (input: unknown) =>

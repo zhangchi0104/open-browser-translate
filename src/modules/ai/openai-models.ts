@@ -1,4 +1,4 @@
-import type { ChatGPTModel } from "./chatgpt-auth";
+import type { ChatGPTModel } from "../protocol";
 
 export const OPENAI_API_URL = "https://api.openai.com/v1";
 // The catalog also lists models that can't generate text; these never fit analysis or translation.

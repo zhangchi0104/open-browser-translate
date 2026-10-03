@@ -20,8 +20,18 @@ const ok = (translations: string[], terms: { source: string; target: string }[] 
 
 /** A store holding `initial` (anything an older version left) until the first write. */
 function memoryStore(initial: unknown = undefined) {
-  let saved: Record<string, TranslationContext> | undefined;
-  return { get: async () => saved ?? initial, set: async (next: Record<string, TranslationContext>) => { saved = next; }, peek: () => saved };
+  let written: Record<string, TranslationContext> | undefined;
+  return {
+    get: async () => written ?? initial,
+    set: async (next: Record<string, TranslationContext>) => { written = next; },
+    /** Whether anything was written. */
+    written: () => written !== undefined,
+    /** What was written last; fails the test when nothing was. */
+    saved: () => {
+      assert.ok(written, "nothing was written");
+      return written;
+    },
+  };
 }
 
 test("context is keyed by site, so it follows navigation within an origin only", () => {
@@ -104,11 +114,9 @@ test("failed batches record nothing and concurrent updates are not lost", async 
   const store = memoryStore();
   const carryover = createContextCarryover(store, () => 1000);
   await batch(carryover, "https://a.example/", [{ text: "Hello", tag: "p" }], { status: "failed" });
-  assert.equal(store.peek(), undefined);
+  assert.equal(store.written(), false);
   await Promise.all(Array.from({ length: 5 }, (_, index) => carryover.notePage(siteOf("https://a.example/"), `Page ${index}`)));
-  const saved = store.peek();
-  assert.ok(saved);
-  assert.equal(saved["https://a.example"]!.pages.length, 5);
+  assert.equal(store.saved()["https://a.example"]!.pages.length, 5);
 });
 
 test("stale, corrupt and excess site contexts are dropped", async () => {
@@ -124,8 +132,6 @@ test("stale, corrupt and excess site contexts are dropped", async () => {
   let clock = 0;
   const carryover = createContextCarryover(store, () => ++clock);
   for (let index = 0; index <= MAX_SITES; index++) await carryover.notePage(siteOf(`https://site${index}.example/`), "Home");
-  const saved = store.peek();
-  assert.ok(saved);
-  assert.equal(Object.keys(saved).length, MAX_SITES);
-  assert.equal(saved["https://site0.example"], undefined);
+  assert.equal(Object.keys(store.saved()).length, MAX_SITES);
+  assert.equal(store.saved()["https://site0.example"], undefined);
 });

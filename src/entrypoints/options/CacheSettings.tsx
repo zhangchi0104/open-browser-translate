@@ -19,7 +19,7 @@ export function CacheSettings() {
     setBusy(true);
     try {
       const response = await background.request({ type: "cache-clear" });
-      if (response.status !== "ok") throw new Error(response?.status);
+      if (response.status !== "ok") throw new Error(response.status);
       setStatus({ text: "缓存已清空" });
       await refresh();
     } catch {
