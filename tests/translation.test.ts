@@ -84,3 +84,43 @@ test("a batch traces analysis and translation as separate steps, down to the mod
   assert.equal(byName("translation").status.code, 2, "the failing step is marked as an error");
   assert.equal(byName("content-analysis").status.code, 1);
 });
+
+/** A streamed Chat Completions response that writes `content` a few characters at a time. */
+function streamingFetch(content: string, bodies: any[] = []): typeof globalThis.fetch {
+  return async (input, init) => {
+    const body = JSON.parse(String(init?.body));
+    bodies.push(body);
+    if (isDecisionRequest(body)) return decisionResponse(body, () => "content");
+    assert.equal(body.stream, true, "translation streams when the caller wants partial results");
+    const chunk = (delta: object, finish: string | null = null) =>
+      `data: ${JSON.stringify({ id: "s", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+    const pieces = content.match(/[\s\S]{1,7}/g) ?? [];
+    const sse = chunk({ role: "assistant", content: "" }) + pieces.map((piece) => chunk({ content: piece })).join("") + chunk({}, "stop") + "data: [DONE]\n\n";
+    return new Response(sse, { headers: { "Content-Type": "text/event-stream" } });
+  };
+}
+
+test("streaming translation reports each block's text as it grows, then the validated result", async () => {
+  const output = { translations: [{ id: 0, text: "你好，世界" }, { id: 1, text: "第二段译文" }], terms: [{ source: "World", target: "世界" }] };
+  const partials: [number, string][] = [];
+  const blocks = [{ text: "Hello, world", tag: "p" }, { text: "Second paragraph", tag: "p" }];
+  const result = await Effect.runPromise(translateBatch(blocks, "all", settings, undefined, undefined, (index, text) => partials.push([index, text]))
+    .pipe(Effect.provideService(FetchHttpClient.Fetch, streamingFetch(JSON.stringify(output)))));
+  assert.deepEqual(result, { status: "ok", translations: ["你好，世界", "第二段译文"], terms: output.terms, analysisFallbackCount: 0 });
+  const first = partials.filter(([index]) => index === 0).map(([, text]) => text);
+  assert.ok(first.length > 1, "the first block arrives in several steps");
+  assert.ok(first.every((text, step) => step === 0 || text.startsWith(first[step - 1]!)), "each step extends the previous text");
+  assert.equal(first.at(-1), "你好，世界");
+  assert.equal(partials.filter(([index]) => index === 1).at(-1)?.[1], "第二段译文");
+});
+
+test("a streamed response that isn't the promised JSON fails the batch with the reason", async () => {
+  const blocks = [{ text: "Hello", tag: "p" }];
+  const garbled = await Effect.runPromise(translateBatch(blocks, "all", settings, undefined, undefined, () => {})
+    .pipe(Effect.provideService(FetchHttpClient.Fetch, streamingFetch('{"translations":[{"id":0,"text":"你'))));
+  assert.equal(garbled.status, "failed");
+  assert.match(garbled.status === "failed" ? garbled.error ?? "" : "", /TranslationOutputError: .*JSON/);
+  const missing = await Effect.runPromise(translateBatch([...blocks, { text: "World", tag: "p" }], "all", settings, undefined, undefined, () => {})
+    .pipe(Effect.provideService(FetchHttpClient.Fetch, streamingFetch(JSON.stringify({ translations: [{ id: 0, text: "你好" }], terms: [] })))));
+  assert.match(missing.status === "failed" ? missing.error ?? "" : "", /missing ids \[1\]/);
+});

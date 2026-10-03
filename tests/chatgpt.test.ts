@@ -305,3 +305,35 @@ test("reading the plan's response stream is its own span, with time to first out
   const http = spans.find((span) => span.name === "http.client POST")!;
   assert.ok(BigInt(http.endTimeUnixNano) <= BigInt(stream.startTimeUnixNano) + 5_000_000n, "the HTTP span ends at the headers; the stream span covers the rest");
 });
+
+test("streaming translation over the plan passes the event stream through and reports partial text", async () => {
+  const { Translator } = await import("../src/modules/translator");
+  const { Layer } = await import("effect");
+  const settings = structuredClone(defaultSettings);
+  settings.translation.provider = AiProviders.OpenAISubscription;
+  settings.translation.models.OpenAISubscription = "gpt-test";
+  const signedIn = { accessToken: async () => "oauth-token" };
+  const json = JSON.stringify({ translations: [{ id: 0, text: "你好，世界" }], terms: [] });
+  const deltas = json.match(/[\s\S]{1,6}/g)!;
+  const streamed: typeof fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.stream, true);
+    const message = { type: "message", id: "msg_1", role: "assistant", status: "completed", content: [{ type: "output_text", text: json, annotations: [] }] };
+    return sse(
+      { type: "response.created", sequence_number: 0, response: { ...completed, status: "in_progress", output: [] } },
+      { type: "response.output_item.added", sequence_number: 1, output_index: 0, item: { ...message, status: "in_progress", content: [] } },
+      { type: "response.content_part.added", sequence_number: 2, item_id: "msg_1", output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } },
+      ...deltas.map((delta, index) => ({ type: "response.output_text.delta", sequence_number: 3 + index, item_id: "msg_1", output_index: 0, content_index: 0, delta, logprobs: [] })),
+      { type: "response.output_item.done", sequence_number: 100, output_index: 0, item: message },
+      { type: "response.completed", sequence_number: 101, response: { ...completed, output: [message] } },
+    );
+  };
+  const partials: string[] = [];
+  const result = await Effect.runPromise(Translator.use((service) => service.translate(["Hello, world"], "简体中文", undefined, (_, text) => partials.push(text))).pipe(
+    Effect.provide(Translator.Live.pipe(Layer.provide(translationLayerFromSettings(settings, signedIn)))),
+    Effect.provideService(FetchHttpClient.Fetch, streamed),
+  ));
+  assert.deepEqual(result.translations, ["你好，世界"]);
+  assert.ok(partials.length > 1);
+  assert.equal(partials.at(-1), "你好，世界");
+});

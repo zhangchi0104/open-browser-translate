@@ -39,6 +39,8 @@ export function translateBatch(
   settings: AISettings,
   chatgpt?: ChatGPTCredentials,
   context?: PromptContext,
+  /** Receives a block's translation (by its index in `blocks`) as it streams; omit to translate without streaming. */
+  onPartial?: (index: number, text: string) => void,
 ) {
   const missing = missingConfiguration(settings, chatgpt);
   if (missing) return Effect.succeed<TranslationBatchResult>({ status: "not-configured", purpose: missing });
@@ -53,7 +55,10 @@ export function translateBatch(
       Effect.withSpan("content-analysis", { attributes: { ...modelAttributes(settings, "analysis"), "obt.blocks": blocks.length, "obt.mode": mode } }),
     );
     const selected = analyzed.flatMap((item, index) => item.shouldTranslate ? [index] : []);
-    const translated = yield* Translator.use((service) => service.translate(selected.map((index) => blocks[index]!.text), "简体中文", context)).pipe(
+    const translated = yield* Translator.use((service) => service.translate(
+      selected.map((index) => blocks[index]!.text), "简体中文", context,
+      onPartial && ((id, text) => onPartial(selected[id]!, text)),
+    )).pipe(
       Effect.provide(Translator.Live.pipe(Layer.provide(translationLayerFromSettings(settings, chatgpt)))),
       Effect.tap((result) => Effect.annotateCurrentSpan({ "obt.terms": result.terms.length })),
       Effect.withSpan("translation", { attributes: { ...modelAttributes(settings, "translation"), "obt.blocks": selected.length } }),

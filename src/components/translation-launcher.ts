@@ -40,6 +40,43 @@ const log = (level: LogLevel, event: string, detail?: string) => {
   browser.runtime.sendMessage({ type: "debug-log", entry: { level, event, detail } }).catch(() => {});
 };
 
+/**
+ * Translates a batch over a `translate-stream` port: `onPartial` receives each block's text
+ * (by index in `batch`) as it grows, and the promise resolves with the validated result.
+ */
+function translateStreaming(
+  batch: readonly TranslatableContent[],
+  mode: TranslationPlan["mode"],
+  onPartial: (index: number, text: string) => void,
+): Promise<TranslationBatchResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let port: ReturnType<typeof browser.runtime.connect>;
+    const finish = (result: TranslationBatchResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+      try { port.disconnect(); } catch {}
+    };
+    try {
+      port = browser.runtime.connect({ name: "translate-stream" });
+    } catch (error) {
+      log("error", "翻译批次：无法连接后台", describeError(error));
+      return finish({ status: "failed" });
+    }
+    port.onMessage.addListener((message: { type?: string; index?: number; text?: string; result?: TranslationBatchResult }) => {
+      if (message?.type === "partial" && typeof message.index === "number" && typeof message.text === "string") onPartial(message.index, message.text);
+      else if (message?.type === "result" && message.result) finish(message.result);
+    });
+    // The background going away (extension reloaded, worker stopped) ends the batch.
+    port.onDisconnect.addListener(() => {
+      if (!settled) log("error", "翻译批次：与后台的连接中断", browser.runtime.lastError?.message);
+      finish({ status: "failed" });
+    });
+    port.postMessage({ mode, blocks: batch.map(({ text, tag }) => ({ text, tag })) });
+  });
+}
+
 export function mountTranslationLauncher(container: HTMLElement) {
   const root = document.createElement("div");
   root.className = "translation-launcher";
@@ -301,19 +338,13 @@ export function mountTranslationLauncher(container: HTMLElement) {
         run: async (batch) => {
           translating += batch.length;
           try {
-            let result: TranslationBatchResult;
-            try {
-              result = await browser.runtime.sendMessage({
-                type: "translate-content",
-                mode: plan.mode,
-                blocks: batch.map(({ text, tag }) => ({ text, tag })),
-              });
-            } catch (error) {
-              log("error", "翻译批次：发送请求失败", describeError(error));
-              result = { status: "failed" };
-            }
+            // Each block's translation appears as it streams in, faded until the batch is done.
+            const result = await translateStreaming(batch, plan.mode, (index, text) => {
+              if (active() && batch[index]) capturedContent.update(batch[index], text, true);
+            });
             if (!active()) return false;
             if (result.status === "not-configured") {
+              capturedContent.discard(batch);
               notConfigured = result.purpose;
               return false;
             }
@@ -321,12 +352,17 @@ export function mountTranslationLauncher(container: HTMLElement) {
               log("error", "翻译批次：译文数量与请求不一致", `请求 ${batch.length} 段，返回 ${result.translations.length} 段`);
             }
             if (result.status !== "ok" || result.translations.length !== batch.length) {
+              // The streamed text didn't pass validation, so none of it is kept.
+              capturedContent.discard(batch);
               failures += batch.length;
               return true;
             }
-            const selected = batch.flatMap((item, index) => result.translations[index] !== null ? [item] : []);
-            capturedContent.append(selected, result.translations.filter((text): text is string => text !== null));
-            kept += selected.length;
+            batch.forEach((item, index) => {
+              const translation = result.translations[index];
+              if (translation === null || translation === undefined) capturedContent.discard([item]);
+              else capturedContent.update(item, translation, false);
+            });
+            kept += result.translations.filter((text) => text !== null).length;
             fallbackCount += result.analysisFallbackCount;
             return true;
           } finally {

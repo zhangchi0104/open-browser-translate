@@ -53,7 +53,23 @@ try {
   assert(fixture.querySelector("#snippet")!.nextElementSibling?.localName === "open-browser-translate-placeholder", "a clamped translation moves outside the clip");
   assert(snippet!.fontSize === "18px" && snippet!.fontWeight === "700" && snippet!.color === "rgb(1, 2, 3)", "a translation moved outside a clip keeps the source styles");
   preview.remove();
-  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles";
+
+  // Streaming: one placeholder per item, updated in place, faded until final, discardable.
+  fixture.innerHTML = '<p id="one">First streamed paragraph</p><p id="two">Second streamed paragraph</p>';
+  const streamed = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  preview.update(streamed[0]!, "第", true);
+  preview.update(streamed[0]!, "第一段", true);
+  const growing = fixture.querySelectorAll("#one open-browser-translate-placeholder");
+  assert(growing.length === 1, "updates reuse the item's placeholder");
+  assert((growing[0] as HTMLElement).dataset.streaming === "" && getComputedStyle(growing[0]!).opacity === "0.6", "streaming text is faded");
+  preview.update(streamed[0]!, "第一段译文", false);
+  assert(!("streaming" in (growing[0] as HTMLElement).dataset) && getComputedStyle(growing[0]!).opacity === "1", "final text is shown normally");
+  preview.update(streamed[1]!, "第二", true);
+  preview.discard([streamed[1]!]);
+  assert(fixture.querySelector("#two open-browser-translate-placeholder") === null, "a failed batch's partial text is removed");
+  preview.remove();
+  assert(fixture.querySelectorAll("open-browser-translate-placeholder").length === 0, "cleanup removes streamed translations");
+  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming";
 } catch (error) {
   preview.remove();
   document.body.textContent = `FAIL: ${String(error)}`;

@@ -123,43 +123,63 @@ export default defineBackground(() => {
         }
       });
     }
-    if (message?.type === "analyze-content" || message?.type === "translate-content") {
-      return traceRequest(message.type, { "obt.page": page }, async (span, run) => {
-        try {
-          const blocks = Schema.decodeUnknownSync(Blocks)(message.blocks);
-          const length = blocks.reduce((sum, block) => sum + block.text.length, 0);
-          span.attribute("obt.blocks", blocks.length);
-          span.attribute("obt.chars", length);
-          if (blocks.length > ANALYSIS_BATCH_SIZE || length > 200_000) {
-            markFailed(span, `请求超出限制：${blocks.length} 段，${length} 字符`);
-            return { status: "failed" };
-          }
-          const settings = await aiSettings.getValue();
-          const chatgpt = chatgptCredentials();
-          if (message.type === "translate-content") {
-            const mode = message.mode === "main" ? "main" : "all";
-            span.attribute("obt.mode", mode);
-            const result = await contexts.translate(pageUrl(sender), blocks, async (context) =>
-              run(translateBatch(blocks, mode, settings, await chatgpt, context)));
-            if (result.status === "ok") {
-              span.attribute("obt.translated", result.translations.filter((text) => text !== null).length);
-              span.attribute("obt.terms", result.terms.length);
-              span.attribute("obt.analysis.fallback", result.analysisFallbackCount);
-            } else if (result.status === "not-configured") {
-              markFailed(span, `${purposeNames[result.purpose]}未配置`);
-            } else {
-              markFailed(span, "翻译批次失败", result.error);
-            }
-            return result;
-          }
-          const result = await run(analyzePageContent(blocks, settings, await chatgpt));
-          if (result.status === "failed") markFailed(span, "内容分析失败", result.error);
-          return result;
-        } catch (error) {
-          markFailed(span, "处理请求时出现异常", error);
+    if (message?.type === "analyze-content" || message?.type === "translate-content") return handleBatch(message, sender);
+  });
+
+  // Streaming translation: the page opens a port, sends one batch, and receives each
+  // block's translation as it grows ({ type: "partial" }) before the final result.
+  browser.runtime.onConnect.addListener((port) => {
+    if (port.name !== "translate-stream" || port.sender?.id !== browser.runtime.id) return;
+    let open = true;
+    port.onDisconnect.addListener(() => { open = false; });
+    port.onMessage.addListener((message: { blocks?: unknown; mode?: unknown }) => {
+      const post = (value: unknown) => { if (open) port.postMessage(value); };
+      void handleBatch({ ...message, type: "translate-content" }, port.sender!, (index, text) => post({ type: "partial", index, text }))
+        .then((result) => post({ type: "result", result }));
+    });
+  });
+
+  function handleBatch(
+    message: { type: "analyze-content" | "translate-content"; blocks?: unknown; mode?: unknown },
+    sender: Parameters<typeof pageUrl>[0],
+    onPartial?: (index: number, text: string) => void,
+  ) {
+    const page = pageOf(pageUrl(sender));
+    return traceRequest(message.type, { "obt.page": page, ...(onPartial && { "obt.streaming": true }) }, async (span, run) => {
+      try {
+        const blocks = Schema.decodeUnknownSync(Blocks)(message.blocks);
+        const length = blocks.reduce((sum, block) => sum + block.text.length, 0);
+        span.attribute("obt.blocks", blocks.length);
+        span.attribute("obt.chars", length);
+        if (blocks.length > ANALYSIS_BATCH_SIZE || length > 200_000) {
+          markFailed(span, `请求超出限制：${blocks.length} 段，${length} 字符`);
           return { status: "failed" };
         }
-      });
-    }
-  });
+        const settings = await aiSettings.getValue();
+        const chatgpt = chatgptCredentials();
+        if (message.type === "translate-content") {
+          const mode = message.mode === "main" ? "main" : "all";
+          span.attribute("obt.mode", mode);
+          const result = await contexts.translate(pageUrl(sender), blocks, async (context) =>
+            run(translateBatch(blocks, mode, settings, await chatgpt, context, onPartial)));
+          if (result.status === "ok") {
+            span.attribute("obt.translated", result.translations.filter((text) => text !== null).length);
+            span.attribute("obt.terms", result.terms.length);
+            span.attribute("obt.analysis.fallback", result.analysisFallbackCount);
+          } else if (result.status === "not-configured") {
+            markFailed(span, `${purposeNames[result.purpose]}未配置`);
+          } else {
+            markFailed(span, "翻译批次失败", result.error);
+          }
+          return result;
+        }
+        const result = await run(analyzePageContent(blocks, settings, await chatgpt));
+        if (result.status === "failed") markFailed(span, "内容分析失败", result.error);
+        return result;
+      } catch (error) {
+        markFailed(span, "处理请求时出现异常", error);
+        return { status: "failed" };
+      }
+    });
+  }
 });
