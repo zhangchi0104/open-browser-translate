@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { TraceView } from "./TraceView";
 
 type Filter = "all" | "problems" | "error";
 const filters: Record<Filter, { label: string; keep: (level: LogLevel) => boolean }> = {
@@ -21,7 +22,34 @@ const timeFormat = new Intl.DateTimeFormat("zh-CN", {
   month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
 });
 
+type View = "traces" | "log";
+const views: Record<View, string> = { traces: "请求追踪", log: "其他日志" };
+
+/** Translation requests as local OpenTelemetry traces, and the plain log for everything else. */
 export function DebugLog() {
+  const [view, setView] = useState<View>("traces");
+  return (
+    <div className="space-y-4">
+      <div role="tablist" aria-label="调试数据" className="inline-flex rounded-lg bg-muted p-1">
+        {(Object.keys(views) as View[]).map((key) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={view === key}
+            className={cn("rounded-md px-3 py-1 text-sm", view === key ? "bg-card font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            onClick={() => setView(key)}
+          >
+            {views[key]}
+          </button>
+        ))}
+      </div>
+      {view === "traces" ? <TraceView /> : <LogView />}
+    </div>
+  );
+}
+
+function LogView() {
   const [entries, setEntries] = useState<LogEntry[]>();
   const [filter, setFilter] = useState<Filter>("all");
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
@@ -71,7 +99,7 @@ export function DebugLog() {
         <CardContent className="px-0">
           {entries && !visible.length ? (
             <p className="px-5 py-8 text-center text-sm text-muted-foreground">
-              {entries.length ? "没有符合筛选条件的日志。" : "暂无日志。点击网页上的翻译按钮后，这里会显示每一步的记录。"}
+              {entries.length ? "没有符合筛选条件的日志。" : "暂无日志。登录、读取模型列表和网页端的错误会记在这里；翻译请求见「请求追踪」。"}
             </p>
           ) : (
             <ol className="divide-y">

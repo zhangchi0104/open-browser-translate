@@ -1,9 +1,9 @@
-import { Effect, Schema } from "effect";
+import { Schema, type Tracer } from "effect";
 import { storage } from "wxt/utils/storage";
-import { aiSettings, type AISettings } from "../modules/settings";
+import { aiSettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
-import { missingConfiguration, translateBatch } from "../modules/translator/translate-batch";
+import { missingConfiguration, modelAttributes, translateBatch } from "../modules/translator/translate-batch";
 import {
   chatgptCredentials, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
 } from "../modules/ai/chatgpt-session";
@@ -11,7 +11,9 @@ import {
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import { createContextCarryover } from "../modules/translation-context/carryover";
 import type { TranslationContext } from "../modules/translation-context";
-import { debugLog, describeError, pageOf } from "../modules/debug-log";
+import {
+  debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestWith, traceStore, type RunInSpan,
+} from "../modules/debug-log";
 import { listOpenAIModels } from "../modules/ai/openai-models";
 import { listGatewayModels } from "../modules/ai/gateway-models";
 import { AiProviders } from "../modules/ai/providers";
@@ -24,15 +26,10 @@ const PageLog = Schema.Struct({
   detail: Schema.optional(Schema.String),
 });
 const purposeNames = { analysis: "内容分析", translation: "翻译" } as const;
-const modelOf = (settings: AISettings, purpose: "analysis" | "translation") => {
-  const { provider, models, reasoningEffort } = settings[purpose];
-  const effort = reasoningEffort && !(purpose === "analysis" && provider === AiProviders.VercelAIGateway) ? `，推理 ${reasoningEffort}` : "";
-  return `${provider} / ${(models as Record<string, string | undefined>)[provider] || "（未填写）"}${effort}`;
-};
-/** One step's line: the model it ran on and how long it took, when it ran. */
-const stepOf = (name: string, model: string, ms: number | undefined) => `${name}：${model}${ms === undefined ? "" : `，耗时 ${ms} ms`}`;
-const since = (start: number) => `${Date.now() - start} ms`;
-const withError = (text: string, error?: string) => error ? `${text}\n${error}` : text;
+
+// Translation requests are traced as OpenTelemetry spans kept locally (see debug-log/trace.ts).
+const traceRequest = <A>(name: string, attributes: Record<string, unknown>, body: (span: Tracer.Span, run: RunInSpan) => Promise<A>) =>
+  traceRequestWith(localTracer, name, attributes, body);
 
 export default defineBackground(() => {
   const contexts = createContextCarryover({
@@ -59,6 +56,7 @@ export default defineBackground(() => {
       return;
     }
     if (message?.type === "debug-log-clear") return debugLog.clear().then(() => ({ status: "ok" }));
+    if (message?.type === "traces-clear") return traceStore.clear().then(() => ({ status: "ok" }));
     if (message?.type === "chatgpt-sign-in") return startChatGPTSignIn();
     if (message?.type === "chatgpt-sign-out") return signOutChatGPT().then(() => ({ status: "ok" }));
     if (message?.type === "chatgpt-models") {
@@ -97,80 +95,71 @@ export default defineBackground(() => {
       });
     }
     if (message?.type === "prepare-translation") {
-      return (async () => {
-        const start = Date.now();
+      return traceRequest("prepare-translation", { "obt.page": page }, async (span, run) => {
         try {
           const context = Schema.decodeUnknownSync(PageContext)(message.context);
+          span.attribute("obt.sample.chars", context.sample.length);
           if (context.sample.length > 12000 || context.title.length > 1000 || context.pagination.length > 20) {
-            void debugLog.error("准备翻译：页面信息超出长度限制", {
-              page, detail: `sample ${context.sample.length}，title ${context.title.length}，pagination ${context.pagination.length}`,
-            });
+            markFailed(span, `页面信息超出长度限制：sample ${context.sample.length}，title ${context.title.length}，pagination ${context.pagination.length}`);
             return { status: "failed" };
           }
           const settings = await aiSettings.getValue();
           const chatgpt = await chatgptCredentials();
+          for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
           const missing = missingConfiguration(settings, chatgpt);
           if (missing) {
-            void debugLog.warn(`准备翻译：${purposeNames[missing]}未配置`, {
-              page, detail: `分析：${modelOf(settings, "analysis")}\n翻译：${modelOf(settings, "translation")}\nChatGPT 已登录：${chatgpt ? "是" : "否"}`,
-            });
+            markFailed(span, `${purposeNames[missing]}未配置`);
             return { status: "not-configured", purpose: missing };
           }
           void contexts.notePage(pageUrl(sender), context.title);
-          const planStart = Date.now();
-          const plan = await Effect.runPromise(decideTranslationPlan(context, settings, chatgpt));
-          const summary = `模式 ${plan.mode}，导航 ${plan.navigation}，总耗时 ${since(start)}\n`
-            + stepOf("页面规划", modelOf(settings, "analysis"), Date.now() - planStart);
-          if (plan.error) void debugLog.warn("准备翻译：页面规划失败，按普通网页翻译", { page, detail: withError(summary, plan.error) });
-          else void debugLog.info(plan.fallback ? "准备翻译：规划置信度不足，按普通网页翻译" : "准备翻译：完成", { page, detail: summary });
+          const plan = await run(decideTranslationPlan(context, settings, chatgpt));
+          span.attribute("obt.plan.mode", plan.mode);
+          span.attribute("obt.plan.navigation", plan.navigation);
+          span.attribute("obt.plan.fallback", plan.fallback);
           return { status: "ok", plan };
         } catch (error) {
-          void debugLog.error("准备翻译：异常", { page, detail: withError(`耗时 ${since(start)}`, describeError(error)) });
+          markFailed(span, "准备翻译时出现异常", error);
           return { status: "failed" };
         }
-      })();
+      });
     }
     if (message?.type === "analyze-content" || message?.type === "translate-content") {
-      return (async () => {
-        const start = Date.now();
-        const label = message.type === "translate-content" ? "翻译批次" : "内容分析";
+      return traceRequest(message.type, { "obt.page": page }, async (span, run) => {
         try {
           const blocks = Schema.decodeUnknownSync(Blocks)(message.blocks);
           const length = blocks.reduce((sum, block) => sum + block.text.length, 0);
+          span.attribute("obt.blocks", blocks.length);
+          span.attribute("obt.chars", length);
           if (blocks.length > ANALYSIS_BATCH_SIZE || length > 200_000) {
-            void debugLog.error(`${label}：请求超出限制`, { page, detail: `${blocks.length} 段，${length} 字符` });
+            markFailed(span, `请求超出限制：${blocks.length} 段，${length} 字符`);
             return { status: "failed" };
           }
           const settings = await aiSettings.getValue();
           const chatgpt = chatgptCredentials();
           if (message.type === "translate-content") {
             const mode = message.mode === "main" ? "main" : "all";
+            span.attribute("obt.mode", mode);
             const result = await contexts.translate(pageUrl(sender), blocks, async (context) =>
-              Effect.runPromise(translateBatch(blocks, mode, settings, await chatgpt, context)));
-            const timings = result.status === "not-configured" ? undefined : result.timings;
-            const summary = `${blocks.length} 段 / ${length} 字符，模式 ${mode}，总耗时 ${since(start)}\n`
-              + `${stepOf("分析", modelOf(settings, "analysis"), timings?.analysisMs)}\n`
-              + stepOf("翻译", modelOf(settings, "translation"), timings?.translationMs);
+              run(translateBatch(blocks, mode, settings, await chatgpt, context)));
             if (result.status === "ok") {
-              const shown = result.translations.filter((text) => text !== null).length;
-              const detail = `${summary}\n译出 ${shown} 段，术语 ${result.terms.length} 条，分析回退 ${result.analysisFallbackCount} 段`;
-              if (result.analysisError) void debugLog.warn(`${label}：完成，但内容分析失败`, { page, detail: withError(detail, result.analysisError) });
-              else void debugLog.info(`${label}：完成`, { page, detail });
+              span.attribute("obt.translated", result.translations.filter((text) => text !== null).length);
+              span.attribute("obt.terms", result.terms.length);
+              span.attribute("obt.analysis.fallback", result.analysisFallbackCount);
             } else if (result.status === "not-configured") {
-              void debugLog.warn(`${label}：${purposeNames[result.purpose]}未配置`, { page, detail: summary });
+              markFailed(span, `${purposeNames[result.purpose]}未配置`);
             } else {
-              void debugLog.error(`${label}：失败`, { page, detail: withError(summary, result.error) });
+              markFailed(span, "翻译批次失败", result.error);
             }
             return result;
           }
-          const result = await Effect.runPromise(analyzePageContent(blocks, settings, await chatgpt));
-          if (result.status === "failed") void debugLog.error(`${label}：失败`, { page, detail: withError(`耗时 ${since(start)}`, result.error) });
+          const result = await run(analyzePageContent(blocks, settings, await chatgpt));
+          if (result.status === "failed") markFailed(span, "内容分析失败", result.error);
           return result;
         } catch (error) {
-          void debugLog.error(`${label}：异常`, { page, detail: withError(`耗时 ${since(start)}`, describeError(error)) });
+          markFailed(span, "处理请求时出现异常", error);
           return { status: "failed" };
         }
-      })();
+      });
     }
   });
 });

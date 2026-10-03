@@ -62,7 +62,7 @@ const sections = {
   keys: { title: "服务商连接", description: "同一服务商的连接可同时用于内容分析和翻译。", icon: KeyRound },
   debug: {
     title: "调试日志",
-    description: "记录每次翻译请求的模型、耗时、结果和错误详情，只保留最近 500 条。日志只保存在本机，会记录网址路径，不记录网页正文和 API key（服务商返回的错误信息可能引用模型输出）。",
+    description: "每次翻译请求按 OpenTelemetry 格式记录为一条追踪：每一步的模型、耗时和错误。数据只保存在本机、不会上传，保留最近 100 次请求，可导出为 OTLP JSON。会记录网址路径，不记录网页正文和 API key（服务商返回的错误信息可能引用模型输出）。",
     icon: Bug,
   },
 } as const;

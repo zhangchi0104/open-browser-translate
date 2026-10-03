@@ -8,12 +8,20 @@ import { AiProviders } from "../ai/providers";
 import type { AISettings } from "../settings/model";
 import type { PromptContext, TermPair } from "../translation-context";
 
-/** Milliseconds spent on content analysis and on translation in one batch. */
-export interface BatchTimings { analysisMs: number; translationMs?: number }
 export type TranslationBatchResult =
-  | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number; analysisError?: string; timings: BatchTimings }
+  | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number; analysisError?: string }
   | { status: "not-configured"; purpose: "analysis" | "translation" }
-  | { status: "failed"; error?: string; timings?: Partial<BatchTimings> };
+  | { status: "failed"; error?: string };
+
+/** Provider and model of a purpose, as recorded on its span. */
+export function modelAttributes(settings: AISettings, purpose: Purpose) {
+  const { provider, models, reasoningEffort } = settings[purpose];
+  return {
+    "obt.provider": provider,
+    "gen_ai.request.model": (models as Record<string, string | undefined>)[provider] ?? "",
+    ...(reasoningEffort && { "obt.reasoning_effort": reasoningEffort }),
+  };
+}
 
 type Purpose = "analysis" | "translation";
 export function missingConfiguration(settings: AISettings, chatgpt?: ChatGPTCredentials, purposes: readonly Purpose[] = ["analysis", "translation"]): Purpose | undefined {
@@ -33,39 +41,31 @@ export function translateBatch(
 ) {
   const missing = missingConfiguration(settings, chatgpt);
   if (missing) return Effect.succeed<TranslationBatchResult>({ status: "not-configured", purpose: missing });
-  // Each step's duration, filled in as it finishes; a step cut short by a failure gets its elapsed time.
-  const timings: Partial<BatchTimings> = {};
-  let running: { step: keyof BatchTimings; start: number } | undefined;
-  const begin = (step: keyof BatchTimings) => { running = { step, start: Date.now() }; };
-  const end = () => {
-    if (running) timings[running.step] = Date.now() - running.start;
-    running = undefined;
-  };
+  // Each step is a span, so a trace shows how long analysis and translation took and which failed.
   return Effect.gen(function* () {
-    begin("analysisMs");
     const analyzed = yield* ContentAnalyzer.use((service) => service.analyze(blocks, { mode })).pipe(
       Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(analysisLayerFromSettings(settings, chatgpt)))),
+      Effect.tap((items) => Effect.annotateCurrentSpan({
+        "obt.blocks.kept": items.filter((item) => item.shouldTranslate).length,
+        "obt.blocks.fallback": items.filter((item) => item.fallbackReason).length,
+      })),
+      Effect.withSpan("content-analysis", { attributes: { ...modelAttributes(settings, "analysis"), "obt.blocks": blocks.length, "obt.mode": mode } }),
     );
-    end();
     const selected = analyzed.flatMap((item, index) => item.shouldTranslate ? [index] : []);
-    begin("translationMs");
     const translated = yield* Translator.use((service) => service.translate(selected.map((index) => blocks[index]!.text), "简体中文", context)).pipe(
       Effect.provide(Translator.Live.pipe(Layer.provide(translationLayerFromSettings(settings, chatgpt)))),
+      Effect.tap((result) => Effect.annotateCurrentSpan({ "obt.terms": result.terms.length })),
+      Effect.withSpan("translation", { attributes: { ...modelAttributes(settings, "translation"), "obt.blocks": selected.length } }),
     );
-    end();
     const translations: (string | null)[] = blocks.map(() => null);
     selected.forEach((index, position) => { translations[index] = translated.translations[position]!; });
     const analysisError = analyzed.find((item) => item.fallbackDetail)?.fallbackDetail;
     return {
       status: "ok", translations, terms: translated.terms, analysisFallbackCount: analyzed.filter((item) => item.fallbackReason).length,
-      timings: timings as BatchTimings,
       ...(analysisError && { analysisError }),
     } as const;
   }).pipe(
     Effect.timeout("45 seconds"),
-    Effect.catch((error) => Effect.sync((): TranslationBatchResult => {
-      end();
-      return { status: "failed", error: describeError(error), timings };
-    })),
+    Effect.catch((error) => Effect.succeed<TranslationBatchResult>({ status: "failed", error: describeError(error) })),
   );
 }

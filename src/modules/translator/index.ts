@@ -2,7 +2,8 @@ import { Context, Data, Effect, Layer, Schema } from "effect";
 import { LanguageModel, type AiError } from "effect/unstable/ai";
 import { TermPair, type PromptContext } from "../translation-context";
 
-export class TranslationOutputError extends Data.TaggedError("TranslationOutputError")<{}> {}
+/** The model's translations don't map one-to-one onto the requested blocks; `message` says how. */
+export class TranslationOutputError extends Data.TaggedError("TranslationOutputError")<{ readonly message: string }> {}
 const Output = Schema.Struct({
   translations: Schema.Array(Schema.Struct({ id: Schema.Number, text: Schema.String })),
   terms: Schema.Array(TermPair),
@@ -42,7 +43,15 @@ export class Translator extends Context.Service<Translator, {
         const translations = new Map(response.value.translations.map(({ id, text }) => [id, text]));
         if (response.value.translations.length !== texts.length || translations.size !== texts.length
           || texts.some((_, id) => !translations.get(id)?.trim())) {
-          return yield* Effect.fail(new TranslationOutputError());
+          const ids = response.value.translations.map(({ id }) => id);
+          const problems = [
+            `expected ${texts.length} translations, got ${ids.length}`,
+            `missing ids [${texts.flatMap((_, id) => translations.has(id) ? [] : [id]).join(", ")}]`,
+            `duplicate ids [${[...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))].join(", ")}]`,
+            `unknown ids [${ids.filter((id) => id < 0 || id >= texts.length).join(", ")}]`,
+            `empty ids [${texts.flatMap((_, id) => translations.has(id) && !translations.get(id)!.trim() ? [id] : []).join(", ")}]`,
+          ];
+          return yield* Effect.fail(new TranslationOutputError({ message: problems.filter((line) => !line.endsWith("[]")).join("; ") }));
         }
         return { translations: texts.map((_, id) => translations.get(id)!), terms: response.value.terms };
       }),
