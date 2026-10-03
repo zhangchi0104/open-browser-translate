@@ -42,12 +42,13 @@ const log = (level: LogLevel, event: string, detail?: string) => {
 
 /**
  * Translates a batch over a `translate-stream` port: `onPartial` receives each block's text
- * (by index in `batch`) as it grows, and the promise resolves with the validated result.
+ * (by index in `batch`) as it grows, or at once and `final` when it came from the cache; the
+ * promise resolves with the validated result.
  */
 function translateStreaming(
   batch: readonly TranslatableContent[],
   mode: TranslationPlan["mode"],
-  onPartial: (index: number, text: string) => void,
+  onPartial: (index: number, text: string, final: boolean) => void,
 ): Promise<TranslationBatchResult> {
   return new Promise((resolve) => {
     let settled = false;
@@ -65,7 +66,9 @@ function translateStreaming(
       return finish({ status: "failed" });
     }
     port.onMessage.addListener((message: { type?: string; index?: number; text?: string; result?: TranslationBatchResult }) => {
-      if (message?.type === "partial" && typeof message.index === "number" && typeof message.text === "string") onPartial(message.index, message.text);
+      if ((message?.type === "partial" || message?.type === "cached") && typeof message.index === "number" && typeof message.text === "string") {
+        onPartial(message.index, message.text, message.type === "cached");
+      }
       else if (message?.type === "result" && message.result) finish(message.result);
     });
     // The background going away (extension reloaded, worker stopped) ends the batch.
@@ -341,8 +344,8 @@ export function mountTranslationLauncher(container: HTMLElement) {
             // A skeleton holds each block's place; its translation then streams in, faded until
             // the batch is done.
             capturedContent.loading(batch);
-            const result = await translateStreaming(batch, plan.mode, (index, text) => {
-              if (active() && batch[index]) capturedContent.update(batch[index], text, true);
+            const result = await translateStreaming(batch, plan.mode, (index, text, final) => {
+              if (active() && batch[index]) capturedContent.update(batch[index], text, !final);
             });
             if (!active()) return false;
             if (result.status === "not-configured") {

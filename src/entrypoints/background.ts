@@ -3,7 +3,9 @@ import { storage } from "wxt/utils/storage";
 import { aiSettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
-import { missingConfiguration, modelAttributes, translateBatch } from "../modules/translator/translate-batch";
+import { missingConfiguration, modelAttributes, TARGET_LANGUAGE, translateBatch } from "../modules/translator/translate-batch";
+import { createTranslationCache, translateWithCache } from "../modules/translation-cache";
+import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
 import {
   chatgptCredentials, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
 } from "../modules/ai/chatgpt-session";
@@ -26,6 +28,13 @@ const PageLog = Schema.Struct({
   detail: Schema.optional(Schema.String),
 });
 const purposeNames = { analysis: "内容分析", translation: "翻译" } as const;
+const translationCache = createTranslationCache(createIndexedDbCacheStore());
+const originOf = (url: string | undefined) => {
+  try {
+    const origin = url ? new URL(url).origin : undefined;
+    return origin === "null" ? undefined : origin;
+  } catch { return undefined; }
+};
 
 // Translation requests are traced as OpenTelemetry spans kept locally (see debug-log/trace.ts).
 const traceRequest = <A>(name: string, attributes: Record<string, unknown>, body: (span: Tracer.Span, run: RunInSpan) => Promise<A>) =>
@@ -57,6 +66,8 @@ export default defineBackground(() => {
     }
     if (message?.type === "debug-log-clear") return debugLog.clear().then(() => ({ status: "ok" }));
     if (message?.type === "traces-clear") return traceStore.clear().then(() => ({ status: "ok" }));
+    if (message?.type === "cache-stats") return translationCache.count().then((count) => ({ status: "ok", count }), () => ({ status: "failed" }));
+    if (message?.type === "cache-clear") return translationCache.clear().then(() => ({ status: "ok" }), () => ({ status: "failed" }));
     if (message?.type === "chatgpt-sign-in") return startChatGPTSignIn();
     if (message?.type === "chatgpt-sign-out") return signOutChatGPT().then(() => ({ status: "ok" }));
     if (message?.type === "chatgpt-models") {
@@ -134,7 +145,8 @@ export default defineBackground(() => {
     port.onDisconnect.addListener(() => { open = false; });
     port.onMessage.addListener((message: { blocks?: unknown; mode?: unknown }) => {
       const post = (value: unknown) => { if (open) port.postMessage(value); };
-      void handleBatch({ ...message, type: "translate-content" }, port.sender!, (index, text) => post({ type: "partial", index, text }))
+      // Cached translations are final; streamed ones are still being written.
+      void handleBatch({ ...message, type: "translate-content" }, port.sender!, (index, text, final) => post({ type: final ? "cached" : "partial", index, text }))
         .then((result) => post({ type: "result", result }));
     });
   });
@@ -142,7 +154,7 @@ export default defineBackground(() => {
   function handleBatch(
     message: { type: "analyze-content" | "translate-content"; blocks?: unknown; mode?: unknown },
     sender: Parameters<typeof pageUrl>[0],
-    onPartial?: (index: number, text: string) => void,
+    onPartial?: (index: number, text: string, final?: boolean) => void,
   ) {
     const page = pageOf(pageUrl(sender));
     return traceRequest(message.type, { "obt.page": page, ...(onPartial && { "obt.streaming": true }) }, async (span, run) => {
@@ -160,8 +172,22 @@ export default defineBackground(() => {
         if (message.type === "translate-content") {
           const mode = message.mode === "main" ? "main" : "all";
           span.attribute("obt.mode", mode);
-          const result = await contexts.translate(pageUrl(sender), blocks, async (context) =>
-            run(translateBatch(blocks, mode, settings, await chatgpt, context, onPartial)));
+          // Cached blocks are served from IndexedDB; only the rest reach the model and the site
+          // context. Private windows have no page URL here, so they bypass the cache.
+          const url = pageUrl(sender);
+          const origin = originOf(url);
+          const { provider, models } = settings.translation;
+          const result = await translateWithCache({
+            cache: translationCache,
+            scope: origin
+              ? { origin, target: TARGET_LANGUAGE, provider, model: (models as Record<string, string | undefined>)[provider] ?? "", mode }
+              : undefined,
+            blocks,
+            onCached: onPartial && ((index, text) => onPartial(index, text, true)),
+            translate: (misses, indexes) => contexts.translate(url, misses, async (context) =>
+              run(translateBatch(misses, mode, settings, await chatgpt, context, onPartial && ((index, text) => onPartial(indexes[index]!, text))))),
+          });
+          span.attribute("obt.cache.hits", result.cacheHits ?? 0);
           if (result.status === "ok") {
             span.attribute("obt.translated", result.translations.filter((text) => text !== null).length);
             span.attribute("obt.terms", result.terms.length);

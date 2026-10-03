@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
-import { Bug, ExternalLink, KeyRound, Sparkles } from "lucide-react";
+import { Bug, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import {
   aiSettings, REASONING_EFFORTS, validateModel,
   type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider, type ReasoningEffort,
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { DebugLog } from "./DebugLog";
+import { CacheSettings } from "./CacheSettings";
 
 type Purpose = "analysis" | "translation";
 type Status = { text: string; error?: boolean };
@@ -56,10 +57,15 @@ const purposes = {
     help: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? "通过 Vercel AI Gateway 运行。" : "使用 OpenAI API key。",
   },
 } as const;
-type Section = "models" | "keys" | "debug";
+type Section = "models" | "keys" | "cache" | "debug";
 const sections = {
   models: { title: "模型用途", description: "分别配置内容分析和翻译使用的服务商与模型。", icon: Sparkles },
   keys: { title: "服务商连接", description: "同一服务商的连接可同时用于内容分析和翻译。", icon: KeyRound },
+  cache: {
+    title: "翻译缓存",
+    description: "译文按段缓存在本机 7 天：再次打开同一页面，或同一网站上重复出现的文字，会直接显示缓存的译文，不再请求模型。缓存按站点、模型、模式和原文区分，原文只存哈希，但会保存译文内容；无痕窗口不使用缓存。换模型或模式后会重新翻译。",
+    icon: Database,
+  },
   debug: {
     title: "调试日志",
     description: "每次翻译请求按 OpenTelemetry 格式记录为一条追踪：每一步的模型、耗时和错误。数据只保存在本机、不会上传，保留最近 100 次请求，可导出为 OTLP JSON。会记录网址路径，不记录网页正文和 API key（服务商返回的错误信息可能引用模型输出）。",
@@ -303,7 +309,8 @@ export function App() {
           <p className="mb-8 leading-relaxed text-muted-foreground">{sections[section].description}</p>
 
           {section === "debug" && <DebugLog />}
-          <form onSubmit={save} noValidate hidden={section === "debug"}>
+          {section === "cache" && <CacheSettings />}
+          <form onSubmit={save} noValidate hidden={section === "debug" || section === "cache"}>
             <fieldset disabled={busy || !draft} className="min-w-0 space-y-6">
               <Card hidden={section !== "models"}>
                 <CardContent className="space-y-8">

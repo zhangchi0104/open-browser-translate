@@ -8,6 +8,9 @@ import { AiProviders } from "../ai/providers";
 import type { AISettings } from "../settings/model";
 import type { PromptContext, TermPair } from "../translation-context";
 
+/** The language pages are translated into. */
+export const TARGET_LANGUAGE = "简体中文";
+
 export type TranslationBatchResult =
   | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number; analysisError?: string }
   | { status: "not-configured"; purpose: "analysis" | "translation" }
@@ -56,7 +59,7 @@ export function translateBatch(
     );
     const selected = analyzed.flatMap((item, index) => item.shouldTranslate ? [index] : []);
     const translated = yield* Translator.use((service) => service.translate(
-      selected.map((index) => blocks[index]!.text), "简体中文", context,
+      selected.map((index) => blocks[index]!.text), TARGET_LANGUAGE, context,
       onPartial && ((id, text) => onPartial(selected[id]!, text)),
     )).pipe(
       Effect.provide(Translator.Live.pipe(Layer.provide(translationLayerFromSettings(settings, chatgpt)))),
