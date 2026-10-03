@@ -39,11 +39,18 @@ function portPair(name: string, sender: Sender): [FakePort, FakePort] {
   return [page, background];
 }
 
+/** What `runtime.sendMessage` resolves with: the reply, or undefined when no listener answers. */
+function answer(dispatcher: ReturnType<typeof createDispatcher>, message: unknown, sender: Sender) {
+  return new Promise<unknown>((resolve) => {
+    if (!dispatcher.onMessage(message, sender, resolve)) resolve(undefined);
+  });
+}
+
 function connect(options: Parameters<typeof createDispatcher>[0], sender = PAGE) {
   const dispatcher = createDispatcher(options);
   const ports: Port[] = [];
   const client = createClient({
-    sendMessage: (message) => Promise.resolve(dispatcher.onMessage(structuredClone(message), sender)),
+    sendMessage: (message) => answer(dispatcher, structuredClone(message), sender),
     connect: ({ name }) => {
       const [page, background] = portPair(name, sender);
       ports.push(background);
@@ -105,9 +112,10 @@ test("requests over the limits, or malformed, fail without reaching a handler", 
 
 test("unknown request types and untrusted senders get no answer", async () => {
   const { dispatcher } = connect({ trusted: (sender) => sender.id === "extension", translate: noTranslate, handlers: handlers({ "cache-stats": () => ({ status: "ok", count: 1 }) }) });
-  assert.equal(dispatcher.onMessage({ type: "something-else" }, PAGE), undefined);
-  assert.equal(dispatcher.onMessage({ type: "cache-stats" }, { id: "another-extension" }), undefined);
-  assert.deepEqual(await dispatcher.onMessage({ type: "cache-stats" }, PAGE), { status: "ok", count: 1 });
+  const unanswered = () => assert.fail("no answer expected");
+  assert.equal(dispatcher.onMessage({ type: "something-else" }, PAGE, unanswered), false);
+  assert.equal(dispatcher.onMessage({ type: "cache-stats" }, { id: "another-extension" }, unanswered), false);
+  assert.deepEqual(await answer(dispatcher, { type: "cache-stats" }, PAGE), { status: "ok", count: 1 });
 });
 
 test("a streamed batch delivers cached and growing blocks in order, then resolves once with the result", async () => {

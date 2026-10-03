@@ -186,15 +186,19 @@ export function createDispatcher(options: {
     options.onInvalid?.(type, String(result.failure));
   };
   return {
-    /** For `runtime.onMessage`: a promise of the reply, or undefined for messages it doesn't answer. */
-    onMessage(message: unknown, sender: Sender): Promise<unknown> | undefined {
-      if (!options.trusted(sender)) return;
+    /**
+     * For `runtime.onMessage`. Answers through `sendResponse` and returns true when it will, the
+     * form every browser supports (Chrome doesn't deliver a promise a listener returns everywhere).
+     */
+    onMessage(message: unknown, sender: Sender, sendResponse: (response: unknown) => void): boolean {
+      if (!options.trusted(sender)) return false;
       const type = (message as { type?: unknown } | null)?.type;
-      if (typeof type !== "string" || !Object.hasOwn(Requests, type)) return;
+      if (typeof type !== "string" || !Object.hasOwn(Requests, type)) return false;
       const decoded = decode(Requests[type as RequestType], type, message);
-      if (decoded === undefined) return Promise.resolve({ status: "failed" } satisfies Failed);
       const handler = options.handlers[type as RequestType] as (request: Request, sender: Sender) => unknown;
-      return Promise.resolve().then(() => handler(decoded, sender));
+      const reply = decoded === undefined ? Promise.resolve({ status: "failed" } satisfies Failed) : Promise.resolve().then(() => handler(decoded, sender));
+      reply.then(sendResponse, (error) => sendResponse({ status: "failed", error: String(error) } satisfies Failed));
+      return true;
     },
 
     /** For `runtime.onConnect`. */

@@ -143,6 +143,6 @@ export default defineBackground(() => {
       (_span, run) => run(translatePageBatch(blocks, pageUrl(sender), { cache: translationCache, contexts }, onBlock)),
     ),
   });
-  browser.runtime.onMessage.addListener((message, sender) => dispatcher.onMessage(message, sender));
+  browser.runtime.onMessage.addListener((message, sender, sendResponse) => dispatcher.onMessage(message, sender, sendResponse));
   browser.runtime.onConnect.addListener((port) => dispatcher.onConnect(port));
 });
