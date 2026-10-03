@@ -1,12 +1,24 @@
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai";
-import { Effect, Layer, Stream } from "effect";
+import { Context, Effect, Layer, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { CHATGPT_API_URL } from "./chatgpt-auth";
+import { CHATGPT_API_URL, ChatGPTAuthError } from "./chatgpt-auth";
 import type { ReasoningEffort } from "../settings/model";
 
-export interface ChatGPTCredentials {
-  /** Resolves a current OAuth access token, refreshing it when needed. */
-  readonly accessToken: () => Promise<string>;
+/** The ChatGPT sign-in, as models on the plan need it. The background's lives in `chatgpt-session.ts`. */
+export class ChatGPTToken extends Context.Service<ChatGPTToken, {
+  readonly signedIn: Effect.Effect<boolean>;
+  /** A current OAuth access token, refreshed when needed. */
+  readonly accessToken: Effect.Effect<string, ChatGPTAuthError>;
+}>()("open-browser-translate/ChatGPTToken") {
+  static readonly signedOut = Layer.succeed(ChatGPTToken, {
+    signedIn: Effect.succeed(false),
+    accessToken: Effect.fail(new ChatGPTAuthError("expired", "ChatGPT is signed out")),
+  });
+  /** Signed in with a token that never expires, for tests. */
+  static readonly fixed = (token: string) => Layer.succeed(ChatGPTToken, {
+    signedIn: Effect.succeed(true),
+    accessToken: Effect.succeed(token),
+  });
 }
 
 const USAGE_LIMIT_CODES = new Set(["subscription_sharing_usage_limit_exceeded", "subscription_sharing_usage_unavailable"]);
@@ -99,11 +111,11 @@ function readResponseStream(response: HttpClientResponse.HttpClientResponse) {
 // ChatGPT plan usage requires `stream: true` and `store: false` on every Responses request,
 // while Effect's generateText/generateObject send non-streaming requests. This client
 // streams each request and hands the completed response back to the adapter unchanged.
-function planClient(credentials: ChatGPTCredentials) {
+function planClient(signIn: ChatGPTToken["Service"]) {
   const collect = new WeakSet<HttpClientRequest.HttpClientRequest>();
   return (client: HttpClient.HttpClient) => client.pipe(
     HttpClient.mapRequestEffect((request) => Effect.gen(function* () {
-      const token = yield* Effect.orDie(Effect.tryPromise(credentials.accessToken));
+      const token = yield* Effect.orDie(signIn.accessToken);
       const next = HttpClientRequest.bearerToken(request, token);
       const body = request.method === "POST" && request.url.endsWith("/responses") ? jsonBody(request) : undefined;
       if (!body) return next;
@@ -120,12 +132,14 @@ function planClient(credentials: ChatGPTCredentials) {
   );
 }
 
-export function chatgptLayer(options: { model: string; credentials: ChatGPTCredentials; reasoningEffort?: ReasoningEffort; fast?: boolean }) {
+/** `LanguageModel` on the signed-in ChatGPT plan. */
+export function chatgptLayer(options: { model: string; reasoningEffort?: ReasoningEffort; fast?: boolean }) {
   const reasoning = options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : undefined;
   // Fast mode, as Codex requests it on a ChatGPT plan; it uses plan limits at 2.5x the standard rate.
   const tier = options.fast ? { service_tier: "fast" as const } : undefined;
-  return OpenAiLanguageModel.layer({ model: options.model, config: { store: false, ...reasoning, ...tier } }).pipe(
-    Layer.provide(OpenAiClient.layer({ apiUrl: CHATGPT_API_URL, transformClient: planClient(options.credentials) })),
-    Layer.provide(FetchHttpClient.layer),
-  );
+  return Layer.unwrap(Effect.map(ChatGPTToken, (signIn) =>
+    OpenAiLanguageModel.layer({ model: options.model, config: { store: false, ...reasoning, ...tier } }).pipe(
+      Layer.provide(OpenAiClient.layer({ apiUrl: CHATGPT_API_URL, transformClient: planClient(signIn) })),
+      Layer.provide(FetchHttpClient.layer),
+    )));
 }

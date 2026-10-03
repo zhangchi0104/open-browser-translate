@@ -2,7 +2,7 @@ import { Effect, Layer, Redacted, Schema } from "effect";
 import { AiError, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import type * as Decision from "effect/unstable/ai/Decision";
 import { openAICompatibleLayer } from "./vercel";
-import { chatgptLayer, type ChatGPTCredentials } from "./chatgpt";
+import { chatgptLayer } from "./chatgpt";
 import { DEFAULT_DECISION_MODEL } from "./providers";
 import type { ReasoningEffort } from "../settings/model";
 
@@ -85,8 +85,8 @@ export function openAIDecisionLayer(options: { apiKey: Redacted.Redacted<string>
   })));
 }
 
-export function chatgptDecisionLayer(options: { model?: string; credentials: ChatGPTCredentials; reasoningEffort?: ReasoningEffort; fast?: boolean }) {
+export function chatgptDecisionLayer(options: { model?: string; reasoningEffort?: ReasoningEffort; fast?: boolean }) {
   return languageModelDecisionLayer.pipe(Layer.provide(chatgptLayer({
-    model: options.model || DEFAULT_DECISION_MODEL, credentials: options.credentials, reasoningEffort: options.reasoningEffort, fast: options.fast,
+    model: options.model || DEFAULT_DECISION_MODEL, reasoningEffort: options.reasoningEffort, fast: options.fast,
   })));
 }

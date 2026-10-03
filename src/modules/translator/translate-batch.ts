@@ -2,8 +2,7 @@ import { Effect, Layer } from "effect";
 import { describeError } from "../debug-log/model";
 import { Translator } from "./index";
 import { ContentAnalyzer, type ContentBlock } from "../content-analyzer";
-import { analysisLayerFromSettings, translationLayerFromSettings } from "../ai/configured";
-import type { ChatGPTCredentials } from "../ai/chatgpt";
+import { AnalysisModel, configuredSettings, modelConfig, TranslationModel, type Purpose } from "../ai/models";
 import { AiProviders } from "../ai/providers";
 import type { AISettings } from "../settings/model";
 import type { PromptContext, TermPair } from "../translation-context";
@@ -13,46 +12,37 @@ export const TARGET_LANGUAGE = "简体中文";
 
 export type TranslationBatchResult =
   | { status: "ok"; translations: (string | null)[]; terms: readonly TermPair[]; analysisFallbackCount: number; analysisError?: string }
-  | { status: "not-configured"; purpose: "analysis" | "translation" }
+  | { status: "not-configured"; purpose: Purpose }
   | { status: "failed"; error?: string };
 
 /** Provider and model of a purpose, as recorded on its span. */
 export function modelAttributes(settings: AISettings, purpose: Purpose) {
-  const { provider, models, reasoningEffort, fast } = settings[purpose];
+  const { provider, model, reasoningEffort, fast } = modelConfig(settings, purpose);
   return {
     "obt.provider": provider,
-    "gen_ai.request.model": (models as Record<string, string | undefined>)[provider] ?? "",
+    "gen_ai.request.model": model,
     ...(reasoningEffort && { "obt.reasoning_effort": reasoningEffort }),
     ...(fast && provider === AiProviders.OpenAISubscription && { "obt.fast": true }),
   };
 }
 
-type Purpose = "analysis" | "translation";
-export function missingConfiguration(settings: AISettings, chatgpt?: ChatGPTCredentials, purposes: readonly Purpose[] = ["analysis", "translation"]): Purpose | undefined {
-  for (const purpose of purposes) {
-    const selected = settings[purpose];
-    const model = (selected.models as Record<string, string | undefined>)[selected.provider];
-    const connected = selected.provider === AiProviders.OpenAISubscription ? !!chatgpt : !!settings.providers[selected.provider].apiKey.trim();
-    if (!connected || !model?.trim()) return purpose;
-  }
-}
-export function translateBatch(
-  blocks: readonly ContentBlock[],
-  mode: "all" | "main",
-  settings: AISettings,
-  chatgpt?: ChatGPTCredentials,
-  context?: PromptContext,
+export interface TranslateBatchOptions {
+  /** Site context from earlier batches, sent with the prompt. */
+  context?: PromptContext;
   /** Receives a block's translation (by its index in `blocks`) as it streams; omit to translate without streaming. */
-  onPartial?: (index: number, text: string) => void,
-  /** `analyzed`: the page already ran analysis and sends only blocks to translate. */
-  options: { analyzed?: boolean } = {},
-) {
-  const missing = missingConfiguration(settings, chatgpt);
-  if (missing) return Effect.succeed<TranslationBatchResult>({ status: "not-configured", purpose: missing });
+  onPartial?: (index: number, text: string) => void;
+  /** The page already ran analysis and sends only blocks to translate. */
+  analyzed?: boolean;
+}
+
+/** Analyzes and translates one batch on the configured models. Never fails: the outcome is in the result. */
+export function translateBatch(blocks: readonly ContentBlock[], mode: "all" | "main", options: TranslateBatchOptions = {}) {
+  const { context, onPartial } = options;
   // Each step is a span, so a trace shows how long analysis and translation took and which failed.
   return Effect.gen(function* () {
+    const settings = yield* configuredSettings();
     const analyzed = options.analyzed ? blocks.map((block) => ({ content: block, shouldTranslate: true, fallbackReason: undefined, fallbackDetail: undefined })) : yield* ContentAnalyzer.use((service) => service.analyze(blocks, { mode })).pipe(
-      Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(analysisLayerFromSettings(settings, chatgpt)))),
+      Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(AnalysisModel))),
       Effect.tap((items) => Effect.annotateCurrentSpan({
         "obt.blocks.kept": items.filter((item) => item.shouldTranslate).length,
         "obt.blocks.fallback": items.filter((item) => item.fallbackReason).length,
@@ -64,7 +54,7 @@ export function translateBatch(
       selected.map((index) => blocks[index]!.text), TARGET_LANGUAGE, context,
       onPartial && ((id, text) => onPartial(selected[id]!, text)),
     )).pipe(
-      Effect.provide(Translator.Live.pipe(Layer.provide(translationLayerFromSettings(settings, chatgpt)))),
+      Effect.provide(Translator.Live.pipe(Layer.provide(TranslationModel))),
       Effect.tap((result) => Effect.annotateCurrentSpan({ "obt.terms": result.terms.length })),
       Effect.withSpan("translation", { attributes: { ...modelAttributes(settings, "translation"), "obt.blocks": selected.length } }),
     );
@@ -77,6 +67,7 @@ export function translateBatch(
     } as const;
   }).pipe(
     Effect.timeout("45 seconds"),
+    Effect.catchTag("ModelNotConfigured", ({ purpose }) => Effect.succeed<TranslationBatchResult>({ status: "not-configured", purpose })),
     Effect.catch((error) => Effect.succeed<TranslationBatchResult>({ status: "failed", error: describeError(error) })),
   );
 }
