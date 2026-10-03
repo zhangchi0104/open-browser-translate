@@ -338,7 +338,9 @@ export function mountTranslationLauncher(container: HTMLElement) {
         run: async (batch) => {
           translating += batch.length;
           try {
-            // Each block's translation appears as it streams in, faded until the batch is done.
+            // A skeleton holds each block's place; its translation then streams in, faded until
+            // the batch is done.
+            capturedContent.loading(batch);
             const result = await translateStreaming(batch, plan.mode, (index, text) => {
               if (active() && batch[index]) capturedContent.update(batch[index], text, true);
             });

@@ -16,7 +16,10 @@ Results are reordered by ID before being mapped to original DOM groups. Text is
 rendered with `textContent` in isolated placeholders, never as HTML. Each
 placeholder copies the text styles (font, size, weight, line height, color,
 spacing, decoration) of the element holding most of the source text, so the
-translation reads like the original. Original
+translation reads like the original. A translation of text that fits on one line
+(links, headings, contents entries, buttons) follows it inline on the same
+line, inserted right after the text node so it flows with the text even inside
+flex layouts; text spanning several lines gets its translation as a block below. Original
 source nodes remain unchanged; changed or disconnected sources are skipped.
 
 Translations stream onto the page. The launcher sends each batch over a
@@ -24,7 +27,11 @@ Translations stream onto the page. The launcher sends each batch over a
 and the Translator then uses `streamText` instead of `generateObject`, since
 Effect can't stream structured output. The prompt spells out the same JSON
 shape, `partial-json.ts` reads the half-written JSON as it arrives, and each
-block's text so far is posted as `{ type: "partial", index, text }`. The page
+block's text so far is posted as `{ type: "partial", index, text }`. While a
+batch waits for its first text, each block shows a loading skeleton in its
+placeholder: shimmering bars in a faint version of the text color, one short bar
+after one-line text and up to three for paragraphs, static when reduced motion
+is preferred. The page
 shows it faded in the block's placeholder and updates it in place. When the
 stream ends the whole response must parse and pass the same checks as before;
 the final `{ type: "result" }` then makes the text normal, or a failed batch
