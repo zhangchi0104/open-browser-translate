@@ -30,6 +30,12 @@ above and 1.5 screens below the viewport are queued, nearest first
 content added later (infinite scroll, load more) joins the same queue. Content
 that is never scrolled near is never sent to the provider.
 
+Up to three batches are translated at once (`createBatchQueue`,
+`MAX_CONCURRENT_BATCHES`): when one finishes, the next nearest batch starts, so
+a page doesn't wait for batches one after another. Batches running together
+each see the site context as it was when they started; terms one of them
+learns reach later batches, not its siblings.
+
 The analysis model also classifies navigation as single, paginated, or dynamic. Following
 pagination links and translating other tabs are not wired up.
 

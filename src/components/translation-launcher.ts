@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { storage } from "wxt/utils/storage";
 import { browser } from "wxt/browser";
 import { DomParser, type TranslatableContent } from "../modules/dom-parser";
-import { pickNearViewport, type Span } from "../modules/viewport-queue";
+import { createBatchQueue, MAX_CONCURRENT_BATCHES, pickNearViewport, type Span } from "../modules/viewport-queue";
 import { createCapturedContent } from "./captured-content";
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import type { TranslationBatchResult } from "../modules/translator/translate-batch";
@@ -206,12 +206,9 @@ export function mountTranslationLauncher(container: HTMLElement) {
       if (busy) ball.setAttribute("aria-busy", "true");
       else ball.removeAttribute("aria-busy");
     };
-    let wake: (() => void) | undefined;
-    const nudge = () => {
-      const resolve = wake;
-      wake = undefined;
-      resolve?.();
-    };
+    let queue: ReturnType<typeof createBatchQueue<TranslatableContent[]>> | undefined;
+    // Scrolling, resizing, new content and stopping the session all wake the queue.
+    const nudge = () => queue?.nudge();
     let observer: MutationObserver | undefined;
     stopSession = () => {
       observer?.disconnect();
@@ -288,48 +285,68 @@ export function mountTranslationLauncher(container: HTMLElement) {
       const summary = () => `${modeLabel} · 已显示 ${kept} 段译文。`
         + (failures ? `${failures} 段翻译失败，请重试。` : "")
         + (fallbackCount || plan.fallback ? "部分内容使用本地筛选回退。" : "");
-      while (active()) {
-        pending = pending.filter(({ element }) => element.isConnected);
-        const batch = pickNearViewport(pending, spanOf, window.innerHeight, ANALYSIS_BATCH_SIZE);
-        if (batch.length === 0) {
+      // Several batches are translated at once, nearest first; each shows as soon as it's done.
+      let translating = 0;
+      let notConfigured: "analysis" | "translation" | undefined;
+      queue = createBatchQueue<TranslatableContent[]>({
+        limit: MAX_CONCURRENT_BATCHES,
+        next: () => {
+          pending = pending.filter(({ element }) => element.isConnected);
+          const batch = pickNearViewport(pending, spanOf, window.innerHeight, ANALYSIS_BATCH_SIZE);
+          if (batch.length === 0) return undefined;
+          const picked = new Set(batch);
+          pending = pending.filter((item) => !picked.has(item));
+          return batch;
+        },
+        run: async (batch) => {
+          translating += batch.length;
+          try {
+            let result: TranslationBatchResult;
+            try {
+              result = await browser.runtime.sendMessage({
+                type: "translate-content",
+                mode: plan.mode,
+                blocks: batch.map(({ text, tag }) => ({ text, tag })),
+              });
+            } catch (error) {
+              log("error", "翻译批次：发送请求失败", describeError(error));
+              result = { status: "failed" };
+            }
+            if (!active()) return false;
+            if (result.status === "not-configured") {
+              notConfigured = result.purpose;
+              return false;
+            }
+            if (result.status === "ok" && result.translations.length !== batch.length) {
+              log("error", "翻译批次：译文数量与请求不一致", `请求 ${batch.length} 段，返回 ${result.translations.length} 段`);
+            }
+            if (result.status !== "ok" || result.translations.length !== batch.length) {
+              failures += batch.length;
+              return true;
+            }
+            const selected = batch.flatMap((item, index) => result.translations[index] !== null ? [item] : []);
+            capturedContent.append(selected, result.translations.filter((text): text is string => text !== null));
+            kept += selected.length;
+            fallbackCount += result.analysisFallbackCount;
+            return true;
+          } finally {
+            translating -= batch.length;
+          }
+        },
+        onBusy: () => {
+          setBusy(true);
+          setBadge("translating");
+          status.textContent = `${modeLabel} · 正在翻译附近 ${translating} 段，已显示 ${kept} 段…`;
+        },
+        onIdle: () => {
           status.textContent = summary() + (pending.length ? "滚动页面时继续翻译附近内容。" : "");
           setBusy(false);
           setBadge(failures ? "failed" : "done");
-          await new Promise<void>((resolve) => { wake = resolve; });
-          continue;
-        }
-        setBusy(true);
-        setBadge("translating");
-        const picked = new Set(batch);
-        pending = pending.filter((item) => !picked.has(item));
-        status.textContent = `${modeLabel} · 正在翻译附近 ${batch.length} 段，已显示 ${kept} 段…`;
-        let result: TranslationBatchResult;
-        try {
-          result = await browser.runtime.sendMessage({
-            type: "translate-content",
-            mode: plan.mode,
-            blocks: batch.map(({ text, tag }) => ({ text, tag })),
-          });
-        } catch (error) {
-          log("error", "翻译批次：发送请求失败", describeError(error));
-          result = { status: "failed" };
-        }
-        if (!active()) return;
-        if (result.status === "not-configured") {
-          status.textContent = `请在设置中填写${result.purpose === "translation" ? "翻译" : "内容分析"}的 API key 和模型。`;
-          return;
-        }
-        if (result.status === "ok" && result.translations.length !== batch.length) {
-          log("error", "翻译批次：译文数量与请求不一致", `请求 ${batch.length} 段，返回 ${result.translations.length} 段`);
-        }
-        if (result.status !== "ok" || result.translations.length !== batch.length) {
-          failures += batch.length;
-          continue;
-        }
-        const selected = batch.flatMap((item, index) => result.translations[index] !== null ? [item] : []);
-        capturedContent.append(selected, result.translations.filter((text): text is string => text !== null));
-        kept += selected.length;
-        fallbackCount += result.analysisFallbackCount;
+        },
+      });
+      await queue.drain(active);
+      if (active() && notConfigured) {
+        status.textContent = `请在设置中填写${notConfigured === "translation" ? "翻译" : "内容分析"}的 API key 和模型。`;
       }
     } catch (error) {
       log("error", "翻译中断：异常", describeError(error));

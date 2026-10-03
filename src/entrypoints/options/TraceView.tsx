@@ -17,6 +17,7 @@ const spanLabels: Record<string, string> = {
   "DecisionModel.decide": "决策模型",
   "LanguageModel.generateObject": "语言模型（结构化输出）",
   "LanguageModel.generateText": "语言模型",
+  "http.response.stream": "模型生成（响应流）",
 };
 const timeFormat = new Intl.DateTimeFormat("zh-CN", {
   month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
@@ -58,7 +59,15 @@ function summaryOf(root: OtlpSpan) {
 function tokensOf(span: OtlpSpan) {
   const input = attribute(span, "gen_ai.usage.input_tokens");
   const output = attribute(span, "gen_ai.usage.output_tokens");
-  return input || output ? `${input ?? "?"} → ${output ?? "?"} tokens` : undefined;
+  const reasoning = attribute(span, "obt.usage.reasoning_tokens");
+  if (!input && !output) return undefined;
+  return `${input ?? "?"} → ${output ?? "?"} tokens` + (reasoning ? `（其中推理 ${reasoning}）` : "");
+}
+/** For a response stream: the share of the span spent before the first output text arrived. */
+function waitingShare(span: OtlpSpan) {
+  const firstOutput = Number(attribute(span, "obt.stream.first_output_ms"));
+  const duration = ms(BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano));
+  return firstOutput > 0 && duration > 0 ? Math.min(firstOutput / duration, 1) : undefined;
 }
 
 export function TraceView() {
@@ -154,6 +163,8 @@ function TraceRow({ trace }: { trace: Trace }) {
             const failed = span.status.code === 2;
             const open = selected === span.spanId;
             const tokens = tokensOf(span);
+            const waiting = waitingShare(span);
+            const firstOutput = attribute(span, "obt.stream.first_output_ms");
             return (
               <div key={span.spanId} role="listitem">
                 <button
@@ -162,17 +173,29 @@ function TraceRow({ trace }: { trace: Trace }) {
                   aria-expanded={open}
                   onClick={() => setSelected(open ? undefined : span.spanId)}
                 >
-                  <span className="flex min-w-0 items-baseline gap-2" style={{ paddingInlineStart: `${depth * 14}px` }}>
-                    <span className={cn("truncate text-[13px]", failed && "text-destructive")} title={span.name}>{spanLabel(span)}</span>
-                    <span className="shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums">
-                      {formatDuration(ms(BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano)))}
+                  <span className="flex min-w-0 flex-col" style={{ paddingInlineStart: `${depth * 14}px` }}>
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className={cn("truncate text-[13px]", failed && "text-destructive")} title={span.name}>{spanLabel(span)}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums">
+                        {formatDuration(ms(BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano)))}
+                      </span>
                     </span>
+                    {firstOutput && (
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        <span className="text-amber-700">等待 {formatDuration(Number(firstOutput))}</span>
+                        {" → 输出 "}{formatDuration(ms(BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano)) - Number(firstOutput))}
+                        {attribute(span, "obt.usage.reasoning_tokens") && ` · 推理 ${attribute(span, "obt.usage.reasoning_tokens")} tokens`}
+                      </span>
+                    )}
                   </span>
                   <span className="relative h-2.5 rounded-sm bg-muted" aria-hidden="true">
                     <span
-                      className={cn("absolute inset-y-0 rounded-sm", failed ? "bg-destructive" : "bg-primary/70")}
+                      className={cn("absolute inset-y-0 flex overflow-hidden rounded-sm", failed ? "bg-destructive" : "bg-primary/70")}
                       style={{ left: `${offset * 100}%`, width: `max(${width * 100}%, 2px)` }}
-                    />
+                    >
+                      {/* Before the first output text the model is queued or thinking. */}
+                      {waiting !== undefined && !failed && <span className="h-full bg-amber-400" style={{ width: `${waiting * 100}%` }} />}
+                    </span>
                   </span>
                 </button>
                 {open && <SpanDetail span={span} tokens={tokens} />}

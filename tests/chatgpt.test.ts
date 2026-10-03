@@ -10,6 +10,7 @@ import { analysisLayerFromSettings, translationLayerFromSettings } from "../src/
 import { AiProviders } from "../src/modules/ai/providers";
 import { listOpenAIModels } from "../src/modules/ai/openai-models";
 import { describeError } from "../src/modules/debug-log/model";
+import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/debug-log/trace";
 import { defaultSettings } from "../src/modules/settings/model";
 import { missingConfiguration } from "../src/modules/translator/translate-batch";
 
@@ -262,4 +263,41 @@ test("an OpenAI API key's catalog keeps text models, newest first", async () => 
   assert.equal(requests[0]!.url, "https://api.openai.com/v1/models");
   assert.equal(requests[0]!.headers.get("Authorization"), "Bearer test-direct");
   await assert.rejects(listOpenAIModels("bad", async () => new Response("invalid key", { status: 401 })), /401: invalid key/);
+});
+
+test("reading the plan's response stream is its own span, with time to first output and reasoning tokens", async () => {
+  const settings = structuredClone(defaultSettings);
+  settings.analysis.provider = AiProviders.OpenAIApi;
+  settings.translation.provider = AiProviders.OpenAISubscription;
+  settings.translation.models.OpenAISubscription = "gpt-test";
+  const signedIn = { accessToken: async () => "oauth-token" };
+  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Events arrive over time, as they do while the model thinks and then writes.
+  const slow: typeof fetch = async () => new Response(new ReadableStream({
+    async start(controller) {
+      const send = (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      send({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } });
+      await delay(80);
+      send({ type: "response.output_text.delta", item_id: "msg_1", output_index: 0, content_index: 0, delta: "你好" });
+      await delay(20);
+      send({ type: "response.completed", response: { ...completed, usage: { input_tokens: 30, output_tokens: 50, total_tokens: 80, output_tokens_details: { reasoning_tokens: 40 } } } });
+      controller.close();
+    },
+  }), { headers: { "Content-Type": "text/event-stream" } });
+  const spans: OtlpSpan[] = [];
+  const result = await Effect.runPromise(traced(LanguageModel.generateText({ prompt: "Hello" }).pipe(
+    Effect.provide(translationLayerFromSettings(settings, signedIn)),
+  ), createLocalTracer((span) => spans.push(span))).pipe(Effect.provideService(FetchHttpClient.Fetch, slow)));
+  assert.equal(result.text, "你好");
+  const stream = spans.find((span) => span.name === "http.response.stream")!;
+  const model = spans.find((span) => span.name === "LanguageModel.generateText")!;
+  assert.equal(stream.parentSpanId, model.spanId, "the stream is read inside the model call");
+  const number = (key: string) => Number(stream.attributes.find((a) => a.key === key)?.value.intValue);
+  assert.ok(number("obt.stream.first_event_ms") < 60, "the first event arrives right away");
+  assert.ok(number("obt.stream.first_output_ms") >= 70, "output starts once the model stops thinking");
+  assert.equal(number("gen_ai.usage.output_tokens"), 50);
+  assert.equal(number("obt.usage.reasoning_tokens"), 40);
+  assert.equal(number("obt.stream.events"), 3);
+  const http = spans.find((span) => span.name === "http.client POST")!;
+  assert.ok(BigInt(http.endTimeUnixNano) <= BigInt(stream.startTimeUnixNano) + 5_000_000n, "the HTTP span ends at the headers; the stream span covers the rest");
 });

@@ -107,6 +107,10 @@ https://developers.openai.com/siwc/token-sharing-open-source
 - `chatgpt.ts` provides `LanguageModel` through `@effect/ai-openai`'s Responses
   adapter. Plan usage requires `stream: true` and `store: false`, so the HTTP
   client streams every request and returns the `response.completed` payload to
-  the adapter.
+  the adapter. Reading the stream is its own `http.response.stream` span: the
+  HTTP span ends when the headers arrive, while the model thinks and writes
+  during the stream. The span records when the first event and the first
+  output text arrived (`obt.stream.first_event_ms`, `obt.stream.first_output_ms`)
+  and the token usage, including reasoning tokens.
 
 Analysis can use the same sign-in (see above).
