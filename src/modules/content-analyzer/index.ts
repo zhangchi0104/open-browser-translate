@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import { Decision } from "effect/unstable/ai";
 import { AI } from "../ai";
-import { ANALYSIS_BATCH_SIZE } from "./protocol";
+import { MAX_BATCH_BLOCKS } from "../protocol";
 import { describeError } from "../debug-log/model";
 
 
@@ -74,8 +74,8 @@ export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
     return {
       analyze: <T extends ContentBlock>(content: readonly T[], options: AnalyzeOptions = {}) => Effect.gen(function* () {
         const results: AnalyzedContent<T>[] = [];
-        for (let offset = 0; offset < content.length; offset += ANALYSIS_BATCH_SIZE) {
-          const batch = content.slice(offset, offset + ANALYSIS_BATCH_SIZE);
+        for (let offset = 0; offset < content.length; offset += MAX_BATCH_BLOCKS) {
+          const batch = content.slice(offset, offset + MAX_BATCH_BLOCKS);
           const blocks = batch.flatMap((item, index) => item.text.length > MAX_BLOCK_LENGTH
             ? []
             : [{ id: String(index), text: item.text, tag: item.tag }]);

@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
+import { background } from "@/lib/background";
+import type { Request } from "@/modules/protocol";
 import { Bug, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import {
   aiSettings, REASONING_EFFORTS, validateModel,
@@ -102,7 +104,7 @@ interface LoadedCatalog { catalog: Catalog; reload: () => void }
 const gatewayDecisionCatalog: LoadedCatalog = { catalog: { status: "ok", models: GATEWAY_DECISION_MODELS }, reload: () => {} };
 
 /** Asks the background for a model catalog with `request`, waiting `delay` ms so typing a key doesn't fire a request per keystroke. */
-function useCatalog(request: { type: string; apiKey?: string } | undefined, delay = 0): LoadedCatalog {
+function useCatalog(request: Request<"chatgpt-models" | "openai-models" | "gateway-models"> | undefined, delay = 0): LoadedCatalog {
   const [catalog, setCatalog] = useState<Catalog>({ status: "unavailable" });
   const [attempt, setAttempt] = useState(0);
   const key = request && JSON.stringify(request);
@@ -110,10 +112,10 @@ function useCatalog(request: { type: string; apiKey?: string } | undefined, dela
     if (!key) return setCatalog({ status: "unavailable" });
     let current = true;
     setCatalog({ status: "loading" });
-    const timer = setTimeout(() => browser.runtime.sendMessage(JSON.parse(key)).then(
-      (response: { status: string; models?: ChatGPTModel[] }) => {
+    const timer = setTimeout(() => background.request(JSON.parse(key) as NonNullable<typeof request>).then(
+      (response) => {
         if (!current) return;
-        setCatalog(response?.status === "ok" ? { status: "ok", models: response.models ?? [] }
+        setCatalog(response?.status === "ok" ? { status: "ok", models: response.models }
           : response?.status === "no-key" ? { status: "unavailable" } : { status: "failed" });
       },
       () => { if (current) setCatalog({ status: "failed" }); },
@@ -230,7 +232,8 @@ export function App() {
     setBusy(true);
     setStatus({ text: "请在新打开的页面中登录 ChatGPT…" });
     try {
-      const started: { status: "started"; state: string } = await browser.runtime.sendMessage({ type: "chatgpt-sign-in" });
+      const started = await background.request({ type: "chatgpt-sign-in" });
+      if (started.status !== "started") throw new Error(started.error ?? "后台无法开始登录");
       const result = await signInOutcome(started.state);
       setStatus(result.status === "ok"
         ? { text: `已登录 ${result.email}` + (dirty ? "；其他更改尚未保存" : "") }
@@ -244,7 +247,7 @@ export function App() {
   async function signOut() {
     setBusy(true);
     try {
-      await browser.runtime.sendMessage({ type: "chatgpt-sign-out" });
+      await background.request({ type: "chatgpt-sign-out" });
       setStatus({ text: "已退出 ChatGPT" + (dirty ? "；其他更改尚未保存" : "") });
     } catch {
       setStatus({ text: "退出失败，请重试。", error: true });

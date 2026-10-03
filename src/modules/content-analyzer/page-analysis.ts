@@ -4,7 +4,7 @@ import { AnalysisModel } from "../ai/models";
 import { describeError } from "../debug-log/model";
 
 export type PageAnalysisResult =
-  | { status: "ok"; keep: boolean[]; priority: number[]; fallbackCount: number }
+  | { status: "ok"; blocks: { keep: boolean; priority: number }[]; fallbackCount: number }
   | { status: "not-configured" }
   | { status: "failed"; error?: string };
 
@@ -14,8 +14,7 @@ export function analyzePageContent(blocks: readonly ContentBlock[], mode: "all" 
     Effect.timeout("15 seconds"),
     Effect.map((items): PageAnalysisResult => ({
       status: "ok",
-      keep: items.map((item) => item.shouldTranslate),
-      priority: items.map((item) => item.priority),
+      blocks: items.map((item) => ({ keep: item.shouldTranslate, priority: item.priority })),
       fallbackCount: items.filter((item) => item.fallbackReason !== undefined).length,
     })),
     Effect.catchTag("ModelNotConfigured", () => Effect.succeed<PageAnalysisResult>({ status: "not-configured" })),

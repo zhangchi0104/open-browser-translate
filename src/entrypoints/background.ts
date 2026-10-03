@@ -1,35 +1,29 @@
-import { Effect, Layer, ManagedRuntime, Schema, type Tracer } from "effect";
+import { Effect, Layer, ManagedRuntime, type Tracer } from "effect";
 import { storage } from "wxt/utils/storage";
 import { aiSettings, Settings, SettingsLive, type AISettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
-import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
-import { configuredSettings, modelAttributes, ModelsLive } from "../modules/ai/models";
-import { translatePageBatch } from "../modules/batch-translation";
+import { decideTranslationPlan } from "../modules/content-analyzer/page-plan";
+import { configuredSettings, modelAttributes, ModelsLive, type Purpose } from "../modules/ai/models";
 import { ChatGPTToken } from "../modules/ai/chatgpt";
-import { createTranslationCache } from "../modules/translation-cache";
-import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
+import type { ChatGPTModel } from "../modules/ai/chatgpt-auth";
 import {
   ChatGPTTokenLive, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
 } from "../modules/ai/chatgpt-session";
-
-import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
+import { listOpenAIModels } from "../modules/ai/openai-models";
+import { listGatewayModels } from "../modules/ai/gateway-models";
+import { AiProviders } from "../modules/ai/providers";
+import { translatePageBatch } from "../modules/batch-translation";
+import { createTranslationCache } from "../modules/translation-cache";
+import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
 import { createContextCarryover } from "../modules/translation-context/carryover";
 import { siteOf, type TranslationContext } from "../modules/translation-context";
 import {
   debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestOn, traceStore, tracingLayer, type RunInSpan,
 } from "../modules/debug-log";
-import { listOpenAIModels } from "../modules/ai/openai-models";
-import { listGatewayModels } from "../modules/ai/gateway-models";
-import { AiProviders } from "../modules/ai/providers";
+import { createDispatcher, type Block, type Failed, type ModelList, type Sender } from "../modules/protocol";
 
 const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
-const Blocks = Schema.Array(Schema.Struct({ text: Schema.String, tag: Schema.String }));
-const PageLog = Schema.Struct({
-  level: Schema.Literals(["info", "warn", "error"]),
-  event: Schema.String.check(Schema.isMaxLength(200)),
-  detail: Schema.optional(Schema.String),
-});
-const purposeNames = { analysis: "内容分析", translation: "翻译" } as const;
+const purposeNames: Record<Purpose, string> = { analysis: "内容分析", translation: "翻译" };
 const translationCache = createTranslationCache(createIndexedDbCacheStore());
 
 // Every request runs on one runtime, so built model layers (and their HTTP clients) are shared
@@ -40,101 +34,92 @@ const BackgroundLive = Layer.mergeAll(ModelsLive, tracingLayer(localTracer)).pip
 const runtime = ManagedRuntime.make(BackgroundLive);
 type Run = RunInSpan<ManagedRuntime.ManagedRuntime.Services<typeof runtime>>;
 
-// Translation requests are traced as OpenTelemetry spans kept locally (see debug-log/trace.ts).
-// A request reads the settings and sign-in once, so its steps (model choice, cache scope, span
-// attributes) all see the same ones even if the options page saves mid-request.
-const traceRequest = <A>(
+/**
+ * Runs a translation request as a root span, traced locally (see debug-log/trace.ts). The request
+ * reads the settings and sign-in once, so its steps (model choice, cache key, span attributes) all
+ * see the same ones even if the options page saves mid-request. A not-configured or failed result,
+ * or a throw, marks the span failed; `failure` describes the latter.
+ */
+const traceRequest = <A extends { status: string; purpose?: Purpose; error?: string }>(
   name: string,
   attributes: Record<string, unknown>,
+  failure: string,
   body: (span: Tracer.Span, run: Run, settings: AISettings) => Promise<A>,
-) => traceRequestOn(runtime.runPromise, name, attributes, async (span, run) => {
-  const [settings, token] = await run(Effect.all([
-    Settings.use((settings) => settings.get),
-    ChatGPTToken.use((token) => Effect.map(token.signedIn, (signedIn) => ({ ...token, signedIn: Effect.succeed(signedIn) }))),
-  ], { concurrency: 2 }));
-  const snapshot: Run = (effect) => run(effect.pipe(
-    Effect.provideService(Settings, { get: Effect.succeed(settings) }),
-    Effect.provideService(ChatGPTToken, token),
-  ));
-  return body(span, snapshot, settings);
+) => traceRequestOn(runtime.runPromise, name, attributes, async (span, run): Promise<A | Failed> => {
+  try {
+    const [settings, token] = await run(Effect.all([
+      Settings.use((settings) => settings.get),
+      ChatGPTToken.use((token) => Effect.map(token.signedIn, (signedIn) => ({ ...token, signedIn: Effect.succeed(signedIn) }))),
+    ], { concurrency: 2 }));
+    const snapshot: Run = (effect) => run(effect.pipe(
+      Effect.provideService(Settings, { get: Effect.succeed(settings) }),
+      Effect.provideService(ChatGPTToken, token),
+    ));
+    const result = await body(span, snapshot, settings);
+    if (result.status === "not-configured") markFailed(span, `${purposeNames[result.purpose ?? "analysis"]}未配置`);
+    else if (result.status === "failed") markFailed(span, failure, result.error);
+    return result;
+  } catch (error) {
+    markFailed(span, "处理请求时出现异常", error);
+    return { status: "failed" };
+  }
 });
+
+// The sender's URL, not anything in the message, decides which page and site a request is for.
+// Private windows report none, so nothing about them is cached, logged or kept as site context.
+const pageUrl = (sender: Sender) => sender.tab?.incognito ? undefined : sender.tab?.url ?? sender.url;
+const batchAttributes = (blocks: readonly Block[]) => ({
+  "obt.blocks": blocks.length,
+  "obt.chars": blocks.reduce((sum, block) => sum + block.text.length, 0),
+});
+const recordModel = (span: Tracer.Span, settings: AISettings, purpose: Purpose) => {
+  for (const [key, value] of Object.entries(modelAttributes(settings, purpose))) span.attribute(key, value);
+};
+
+/** A model catalog for the options page; an empty one is logged, since it usually means a wrong key or plan. */
+const catalog = (provider: string, list: () => Promise<ChatGPTModel[]>, emptyDetail?: string): Promise<ModelList> =>
+  list().then((models) => {
+    if (!models.length) void debugLog.warn(`${provider} 模型列表为空`, emptyDetail ? { detail: emptyDetail } : undefined);
+    return { status: "ok", models };
+  }, (error) => {
+    void debugLog.error(`读取 ${provider} 模型列表失败`, { detail: describeError(error) });
+    return { status: "failed" };
+  });
 
 export default defineBackground(() => {
   const contexts = createContextCarryover({
     get: () => translationContexts.getValue(),
     set: (value) => translationContexts.setValue(value),
   });
-  // The sender's URL, not anything in the message, decides which site's context is used.
-  // Private windows keep no context, so nothing about them is written to disk.
-  const pageUrl = (sender: { url?: string; tab?: { url?: string; incognito?: boolean } }) =>
-    sender.tab?.incognito ? undefined : sender.tab?.url ?? sender.url;
   browser.tabs.onUpdated.addListener((tabId, change) => { void handleChatGPTNavigation(tabId, change.url); });
   browser.tabs.onRemoved.addListener((tabId) => { void handleChatGPTTabClosed(tabId); });
-  browser.runtime.onMessage.addListener((message, sender) => {
-    if (sender.id !== browser.runtime.id) return;
-    const page = pageOf(pageUrl(sender));
-    if (message?.type === "open-settings") {
-      return browser.runtime.openOptionsPage().then(() => ({ opened: true }));
-    }
-    if (message?.type === "debug-log") {
-      try {
-        const entry = Schema.decodeUnknownSync(PageLog)(message.entry);
-        void debugLog.write(entry.level, entry.event, { detail: entry.detail, page, source: "page" });
-      } catch {}
-      return;
-    }
-    if (message?.type === "debug-log-clear") return debugLog.clear().then(() => ({ status: "ok" }));
-    if (message?.type === "traces-clear") return traceStore.clear().then(() => ({ status: "ok" }));
-    if (message?.type === "cache-stats") return translationCache.count().then((count) => ({ status: "ok", count }), () => ({ status: "failed" }));
-    if (message?.type === "cache-clear") return translationCache.clear().then(() => ({ status: "ok" }), () => ({ status: "failed" }));
-    if (message?.type === "chatgpt-sign-in") return startChatGPTSignIn();
-    if (message?.type === "chatgpt-sign-out") return signOutChatGPT().then(() => ({ status: "ok" }));
-    if (message?.type === "chatgpt-models") {
-      return listChatGPTModels().then((models) => {
-        if (!models.length) void debugLog.warn("ChatGPT 模型列表为空", { detail: "接口没有返回 visibility 为 list 的模型" });
-        return { status: "ok", models };
-      }, (error) => {
-        void debugLog.error("读取 ChatGPT 模型列表失败", { detail: describeError(error) });
-        return { status: "failed" };
-      });
-    }
-    if (message?.type === "openai-models") {
+
+  const dispatcher = createDispatcher({
+    trusted: (sender) => sender.id === browser.runtime.id,
+    onInvalid: (type, error) => { void debugLog.warn(`收到无效请求：${type}`, { detail: error }); },
+    handlers: {
+      "open-settings": () => browser.runtime.openOptionsPage().then(() => ({ opened: true as const })),
+      "debug-log": ({ entry }, sender) => {
+        void debugLog.write(entry.level, entry.event, { detail: entry.detail, page: pageOf(pageUrl(sender)), source: "page" });
+      },
+      "debug-log-clear": () => debugLog.clear().then(() => ({ status: "ok" as const })),
+      "traces-clear": () => traceStore.clear().then(() => ({ status: "ok" as const })),
+      "cache-stats": () => translationCache.count().then((count) => ({ status: "ok" as const, count }), () => ({ status: "failed" as const })),
+      "cache-clear": () => translationCache.clear().then(() => ({ status: "ok" as const }), () => ({ status: "failed" as const })),
+      "chatgpt-sign-in": () => startChatGPTSignIn(),
+      "chatgpt-sign-out": () => signOutChatGPT().then(() => ({ status: "ok" as const })),
+      "chatgpt-models": () => catalog("ChatGPT", listChatGPTModels, "接口没有返回 visibility 为 list 的模型"),
       // The options page sends the key being edited, so the list follows it before it's saved.
-      return (async () => {
-        try {
-          const apiKey = typeof message.apiKey === "string" && message.apiKey.trim()
-            ? message.apiKey.trim()
-            : (await aiSettings.getValue()).providers[AiProviders.OpenAIApi].apiKey.trim();
-          if (!apiKey) return { status: "no-key" };
-          const models = await listOpenAIModels(apiKey);
-          if (!models.length) void debugLog.warn("OpenAI 模型列表为空", { detail: "接口没有返回可生成文本的模型" });
-          return { status: "ok", models };
-        } catch (error) {
-          void debugLog.error("读取 OpenAI 模型列表失败", { detail: describeError(error) });
-          return { status: "failed" };
-        }
-      })();
-    }
-    if (message?.type === "gateway-models") {
-      return listGatewayModels().then((models) => {
-        if (!models.length) void debugLog.warn("Vercel AI Gateway 模型列表为空");
-        return { status: "ok", models };
-      }, (error) => {
-        void debugLog.error("读取 Vercel AI Gateway 模型列表失败", { detail: describeError(error) });
-        return { status: "failed" };
-      });
-    }
-    if (message?.type === "prepare-translation") {
-      return traceRequest("prepare-translation", { "obt.page": page }, async (span, run, settings) => {
-        try {
-          const context = Schema.decodeUnknownSync(PageContext)(message.context);
-          span.attribute("obt.sample.chars", context.sample.length);
-          if (context.sample.length > 12000 || context.title.length > 1000 || context.pagination.length > 20) {
-            markFailed(span, `页面信息超出长度限制：sample ${context.sample.length}，title ${context.title.length}，pagination ${context.pagination.length}`);
-            return { status: "failed" };
-          }
-          return await run(Effect.gen(function* () {
-            for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
+      "openai-models": async ({ apiKey: edited }) => {
+        const apiKey = edited?.trim() || (await aiSettings.getValue()).providers[AiProviders.OpenAIApi].apiKey.trim();
+        return apiKey ? catalog("OpenAI", () => listOpenAIModels(apiKey), "接口没有返回可生成文本的模型") : { status: "no-key" as const };
+      },
+      "gateway-models": () => catalog("Vercel AI Gateway", listGatewayModels),
+      "prepare-translation": ({ context }, sender) => traceRequest(
+        "prepare-translation", { "obt.page": pageOf(pageUrl(sender)), "obt.sample.chars": context.sample.length }, "准备翻译失败",
+        (span, run, settings) => {
+          recordModel(span, settings, "analysis");
+          return run(Effect.gen(function* () {
             yield* configuredSettings();
             void contexts.notePage(siteOf(pageUrl(sender)), context.title);
             const plan = yield* decideTranslationPlan(context);
@@ -142,68 +127,22 @@ export default defineBackground(() => {
             span.attribute("obt.plan.navigation", plan.navigation);
             span.attribute("obt.plan.fallback", plan.fallback);
             return { status: "ok", plan } as const;
-          }).pipe(Effect.catchTag("ModelNotConfigured", ({ purpose }) => {
-            markFailed(span, `${purposeNames[purpose]}未配置`);
-            return Effect.succeed({ status: "not-configured", purpose } as const);
-          })));
-        } catch (error) {
-          markFailed(span, "准备翻译时出现异常", error);
-          return { status: "failed" };
-        }
-      });
-    }
-    if (message?.type === "analyze-content") return handleBatch(message, sender);
+          }).pipe(Effect.catchTag("ModelNotConfigured", ({ purpose }) => Effect.succeed({ status: "not-configured", purpose } as const))));
+        },
+      ),
+      "analyze-content": ({ mode, blocks }, sender) => traceRequest(
+        "analyze-content", { "obt.page": pageOf(pageUrl(sender)), "obt.mode": mode, ...batchAttributes(blocks) }, "内容分析失败",
+        (span, run, settings) => {
+          recordModel(span, settings, "analysis");
+          return run(analyzePageContent(blocks, mode));
+        },
+      ),
+    },
+    translate: (blocks, sender, onBlock) => traceRequest(
+      "translate-content", { "obt.page": pageOf(pageUrl(sender)), "obt.streaming": true, ...batchAttributes(blocks) }, "翻译批次失败",
+      (_span, run) => run(translatePageBatch(blocks, pageUrl(sender), { cache: translationCache, contexts }, onBlock)),
+    ),
   });
-
-  // Streaming translation: the page opens a port, sends one batch, and receives each
-  // block's translation as it grows ({ type: "partial" }) before the final result.
-  browser.runtime.onConnect.addListener((port) => {
-    if (port.name !== "translate-stream" || port.sender?.id !== browser.runtime.id) return;
-    let open = true;
-    port.onDisconnect.addListener(() => { open = false; });
-    port.onMessage.addListener((message: { blocks?: unknown; mode?: unknown }) => {
-      const post = (value: unknown) => { if (open) port.postMessage(value); };
-      // Cached translations are final; streamed ones are still being written.
-      void handleBatch({ ...message, type: "translate-content" }, port.sender!, (index, text, final) => post({ type: final ? "cached" : "partial", index, text }))
-        .then((result) => post({ type: "result", result }));
-    });
-  });
-
-  function handleBatch(
-    message: { type: "analyze-content" | "translate-content"; blocks?: unknown; mode?: unknown; analyzed?: unknown },
-    sender: Parameters<typeof pageUrl>[0],
-    onPartial?: (index: number, text: string, final: boolean) => void,
-  ) {
-    const page = pageOf(pageUrl(sender));
-    return traceRequest(message.type, { "obt.page": page, ...(onPartial && { "obt.streaming": true }) }, async (span, run, settings) => {
-      try {
-        const blocks = Schema.decodeUnknownSync(Blocks)(message.blocks);
-        const length = blocks.reduce((sum, block) => sum + block.text.length, 0);
-        span.attribute("obt.blocks", blocks.length);
-        span.attribute("obt.chars", length);
-        if (blocks.length > ANALYSIS_BATCH_SIZE || length > 200_000) {
-          markFailed(span, `请求超出限制：${blocks.length} 段，${length} 字符`);
-          return { status: "failed" };
-        }
-        if (message.type === "translate-content") {
-          const result = await run(translatePageBatch(blocks, pageUrl(sender), { cache: translationCache, contexts }, onPartial));
-          if (result.status === "not-configured") {
-            markFailed(span, `${purposeNames[result.purpose]}未配置`);
-          } else if (result.status === "failed") {
-            markFailed(span, "翻译批次失败", result.error);
-          }
-          return result;
-        }
-        const mode = message.mode === "main" ? "main" : "all";
-        span.attribute("obt.mode", mode);
-        for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
-        const result = await run(analyzePageContent(blocks, mode));
-        if (result.status === "failed") markFailed(span, "内容分析失败", result.error);
-        return result;
-      } catch (error) {
-        markFailed(span, "处理请求时出现异常", error);
-        return { status: "failed" };
-      }
-    });
-  }
+  browser.runtime.onMessage.addListener((message, sender) => dispatcher.onMessage(message, sender));
+  browser.runtime.onConnect.addListener((port) => dispatcher.onConnect(port));
 });

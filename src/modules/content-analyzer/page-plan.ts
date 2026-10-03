@@ -2,14 +2,8 @@ import { Effect, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/unstable/ai";
 import { AnalysisModel } from "../ai/models";
 import { describeError } from "../debug-log/model";
+import { PageContext } from "../protocol";
 
-export const PageContext = Schema.Struct({
-  title: Schema.String,
-  sample: Schema.String,
-  hasArticle: Schema.Boolean,
-  pagination: Schema.Array(Schema.String),
-});
-export type PageContext = typeof PageContext.Type;
 export interface TranslationPlan {
   mode: "all" | "main";
   navigation: "single" | "paginated" | "dynamic";

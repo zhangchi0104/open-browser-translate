@@ -32,12 +32,14 @@ line, inserted right after the text node so it flows with the text even inside
 flex layouts; text spanning several lines gets its translation as a block below. Original
 source nodes remain unchanged; changed or disconnected sources are skipped.
 
-Translations stream onto the page. The launcher sends each batch over a
-`translate-stream` port; the background runs `translateBatch` with `onPartial`,
+Translations stream onto the page. The launcher sends each batch over the
+`translate-stream` port (`../protocol`); the background runs it through
+`translatePageBatch` (`../batch-translation`), which calls `translateBatch` with `onPartial`,
 and the Translator then uses `streamText` instead of `generateObject`, since
 Effect can't stream structured output. The prompt spells out the same JSON
 shape, `partial-json.ts` reads the half-written JSON as it arrives, and each
-block's text so far is posted as `{ type: "partial", index, text }`. While a
+block's text so far is posted as `{ type: "block", index, text, final: false }`
+(cached blocks arrive at once with `final: true`). While a
 batch waits for its first text, each block shows a loading skeleton in its
 placeholder: shimmering bars in a faint version of the text color, one short bar
 after one-line text and up to three for paragraphs, static when reduced motion
@@ -48,7 +50,7 @@ the final `{ type: "result" }` then makes the text normal, or a failed batch
 removes its partial text. Content analysis still waits for its full response.
 
 A failed translation batch leaves its source untouched and increments the
-failure count; other batches continue.
+failure count; blocks it served from the cache stay, and other batches continue.
 The batch has a 45-second total timeout and no automatic retries. Missing
 analysis or translation configuration stops before provider calls.
 

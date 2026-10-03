@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { background } from "@/lib/background";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -8,8 +9,8 @@ export function CacheSettings() {
   const [count, setCount] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
-  const refresh = () => browser.runtime.sendMessage({ type: "cache-stats" }).then(
-    (response: { status: string; count?: number }) => response?.status === "ok" ? setCount(response.count) : setStatus({ text: "无法读取缓存。", error: true }),
+  const refresh = () => background.request({ type: "cache-stats" }).then(
+    (response) => response?.status === "ok" ? setCount(response.count) : setStatus({ text: "无法读取缓存。", error: true }),
     () => setStatus({ text: "无法读取缓存。", error: true }),
   );
   useEffect(() => { void refresh(); }, []);
@@ -17,7 +18,7 @@ export function CacheSettings() {
   async function clear() {
     setBusy(true);
     try {
-      const response: { status: string } = await browser.runtime.sendMessage({ type: "cache-clear" });
+      const response = await background.request({ type: "cache-clear" });
       if (response?.status !== "ok") throw new Error(response?.status);
       setStatus({ text: "缓存已清空" });
       await refresh();

@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { background } from "@/lib/background";
 import { storage } from "wxt/utils/storage";
 import { browser } from "wxt/browser";
 import { DomParser, type TranslatableContent } from "../modules/dom-parser";
@@ -6,9 +7,7 @@ import { createBatchQueue, MAX_CONCURRENT_BATCHES, pickByPriority, pickNearViewp
 import { TRANSLATION_PRIORITY } from "../modules/content-analyzer";
 import type { PageAnalysisResult } from "../modules/content-analyzer/page-analysis";
 import { createCapturedContent } from "./captured-content";
-import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
-import type { TranslationBatchResult } from "../modules/translator/translate-batch";
-import type { TranslationPlan } from "../modules/content-analyzer/page-plan";
+import { MAX_BATCH_BLOCKS, PAGE_CONTEXT_LIMITS } from "../modules/protocol";
 import { describeError, type LogLevel } from "../modules/debug-log/model";
 
 const BALL_SIZE = 52;
@@ -39,47 +38,8 @@ const ballPosition = storage.defineItem<BallPosition>("local:ballPosition");
 
 /** Sends an entry to the background's debug log; the background adds the page URL. */
 const log = (level: LogLevel, event: string, detail?: string) => {
-  browser.runtime.sendMessage({ type: "debug-log", entry: { level, event, detail } }).catch(() => {});
+  background.request({ type: "debug-log", entry: { level, event, detail } }).catch(() => {});
 };
-
-/**
- * Translates a batch over a `translate-stream` port: `onPartial` receives each block's text
- * (by index in `batch`) as it grows, or at once and `final` when it came from the cache; the
- * promise resolves with the validated result.
- */
-function translateStreaming(
-  batch: readonly TranslatableContent[],
-  onPartial: (index: number, text: string, final: boolean) => void,
-): Promise<TranslationBatchResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let port: ReturnType<typeof browser.runtime.connect>;
-    const finish = (result: TranslationBatchResult) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-      try { port.disconnect(); } catch {}
-    };
-    try {
-      port = browser.runtime.connect({ name: "translate-stream" });
-    } catch (error) {
-      log("error", "翻译批次：无法连接后台", describeError(error));
-      return finish({ status: "failed" });
-    }
-    port.onMessage.addListener((message: { type?: string; index?: number; text?: string; result?: TranslationBatchResult }) => {
-      if ((message?.type === "partial" || message?.type === "cached") && typeof message.index === "number" && typeof message.text === "string") {
-        onPartial(message.index, message.text, message.type === "cached");
-      }
-      else if (message?.type === "result" && message.result) finish(message.result);
-    });
-    // The background going away (extension reloaded, worker stopped) ends the batch.
-    port.onDisconnect.addListener(() => {
-      if (!settled) log("error", "翻译批次：与后台的连接中断", browser.runtime.lastError?.message);
-      finish({ status: "failed" });
-    });
-    port.postMessage({ blocks: batch.map(({ text, tag }) => ({ text, tag })) });
-  });
-}
 
 export function mountTranslationLauncher(container: HTMLElement) {
   const root = document.createElement("div");
@@ -133,7 +93,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
   settings.addEventListener("click", async () => {
     settings.disabled = true;
     try {
-      await browser.runtime.sendMessage({ type: "open-settings" });
+      await background.request({ type: "open-settings" });
       settings.title = "翻译设置";
     } catch {
       settings.title = "无法打开设置，请刷新页面后重试";
@@ -272,14 +232,14 @@ export function mountTranslationLauncher(container: HTMLElement) {
         return;
       }
       status.textContent = "正在判断页面翻译模式…";
-      const prepared = await browser.runtime.sendMessage({
+      const prepared = await background.request({
         type: "prepare-translation",
         context: {
-          title: document.title.slice(0, 1000),
-          sample: content.slice(0, 30).map(({ text }) => text).join("\n").slice(0, 12000),
+          title: document.title.slice(0, PAGE_CONTEXT_LIMITS.title),
+          sample: content.slice(0, 30).map(({ text }) => text).join("\n").slice(0, PAGE_CONTEXT_LIMITS.sample),
           hasArticle: document.querySelector('article, [role="article"]') !== null,
           pagination: Array.from(document.querySelectorAll('a[rel="next"], nav[aria-label*="page" i] a, [aria-label*="pagination" i] a'))
-            .slice(0, 20).map((element) => (element.textContent ?? "").trim().slice(0, 100)),
+            .slice(0, PAGE_CONTEXT_LIMITS.pagination).map((element) => (element.textContent ?? "").trim().slice(0, PAGE_CONTEXT_LIMITS.paginationLabel)),
         },
       });
       if (!active()) return;
@@ -291,7 +251,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
         status.textContent = "无法准备翻译，请检查设置后重试。";
         return;
       }
-      const plan: TranslationPlan = prepared.plan;
+      const plan = prepared.plan;
       const modeLabel = plan.mode === "main" ? "仅正文" : "普通网页";
 
       // Only content near the viewport is translated; scrolling and newly added
@@ -356,7 +316,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
         next: () => {
           pending = pending.filter(({ element }) => element.isConnected);
           const unanalyzed = pending.filter((item) => !analysis.has(item) && !analyzing.has(item));
-          const batch = pickNearViewport(unanalyzed, spanOf, window.innerHeight, ANALYSIS_BATCH_SIZE);
+          const batch = pickNearViewport(unanalyzed, spanOf, window.innerHeight, MAX_BATCH_BLOCKS);
           if (batch.length === 0) return undefined;
           for (const item of batch) analyzing.add(item);
           return batch;
@@ -366,7 +326,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
           try {
             let result: PageAnalysisResult;
             try {
-              result = await browser.runtime.sendMessage({
+              result = await background.request({
                 type: "analyze-content",
                 mode: plan.mode,
                 blocks: batch.map(({ text, tag }) => ({ text, tag })),
@@ -381,12 +341,9 @@ export function mountTranslationLauncher(container: HTMLElement) {
               return false;
             }
             // Without an answer every block is kept, at the priority of an unsure block.
-            const answer = result.status === "ok" && result.keep.length === batch.length ? result : undefined;
+            const answer = result.status === "ok" && result.blocks.length === batch.length ? result : undefined;
             if (answer) fallbackCount += answer.fallbackCount;
-            batch.forEach((item, index) => analysis.set(item, {
-              keep: answer ? answer.keep[index]! : true,
-              priority: answer ? answer.priority[index]! : TRANSLATION_PRIORITY.unknown,
-            }));
+            batch.forEach((item, index) => analysis.set(item, answer?.blocks[index] ?? { keep: true, priority: TRANSLATION_PRIORITY.unknown }));
             const skipped = new Set(batch.filter((item) => !analysis.get(item)!.keep));
             if (skipped.size) pending = pending.filter((item) => !skipped.has(item));
             translationQueue.nudge();
@@ -411,7 +368,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
           };
           if (pending.some((item) => !analysis.has(item) && onScreen(item))) return undefined;
           const ready = pending.filter((item) => analysis.get(item)?.keep);
-          const batch = pickByPriority(ready, spanOf, (item) => analysis.get(item)!.priority, window.innerHeight, ANALYSIS_BATCH_SIZE);
+          const batch = pickByPriority(ready, spanOf, (item) => analysis.get(item)!.priority, window.innerHeight, MAX_BATCH_BLOCKS);
           if (batch.length === 0) return undefined;
           const picked = new Set(batch);
           pending = pending.filter((item) => !picked.has(item));
@@ -425,7 +382,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
             capturedContent.loading(batch);
             // Cached blocks arrive final and stay even if the rest of the batch fails.
             const final = new Set<TranslatableContent>();
-            const result = await translateStreaming(batch, (index, text, isFinal) => {
+            const result = await background.translate(batch, (index, text, isFinal) => {
               const item = batch[index];
               if (!active() || !item) return;
               capturedContent.update(item, text, !isFinal);
@@ -439,6 +396,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
               stopAll(result.purpose);
               return false;
             }
+            if (result.status === "failed" && result.error) log("error", "翻译批次失败", result.error);
             if (result.status === "ok" && result.translations.length !== batch.length) {
               log("error", "翻译批次：译文数量与请求不一致", `请求 ${batch.length} 段，返回 ${result.translations.length} 段`);
             }
