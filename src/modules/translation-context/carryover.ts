@@ -2,7 +2,6 @@ import { Schema } from "effect";
 import type { ContentBlock } from "../content-analyzer";
 import type { TranslationBatchResult } from "../translator/translate-batch";
 import {
-  contextKey,
   emptyContext,
   isFresh,
   notePage,
@@ -54,10 +53,9 @@ export function createContextCarryover(store: ContextStore, now: () => number = 
   };
 
   return {
-    /** Remembers the page title when translation starts on a page. */
-    notePage: async (url: string | undefined, title: string) => {
-      const key = contextKey(url);
-      if (key) await update(key, (context) => notePage(context, title, now()));
+    /** Remembers the page title when translation starts on a page of `site` (see `siteOf`). */
+    notePage: async (site: string | undefined, title: string) => {
+      if (site) await update(site, (context) => notePage(context, title, now()));
     },
 
     /**
@@ -65,20 +63,16 @@ export function createContextCarryover(store: ContextStore, now: () => number = 
      * the next batch or page on the site sees it.
      */
     translate: async (
-      url: string | undefined,
+      site: string | undefined,
       blocks: readonly ContentBlock[],
       run: (context: PromptContext | undefined) => Promise<TranslationBatchResult>,
     ): Promise<TranslationBatchResult> => {
-      const key = contextKey(url);
-      const context = key ? await fresh(key) : undefined;
+      const context = site ? await fresh(site) : undefined;
       const result = await run(context && promptContext(context, blocks.map(({ text }) => text)));
-      if (!key || result.status !== "ok") return result;
-      const segments = blocks.flatMap(({ text }, index) => {
-        const target = result.translations[index];
-        return target == null ? [] : [{ source: text, target }];
-      });
+      if (!site || result.status !== "ok") return result;
+      const segments = blocks.map(({ text }, index) => ({ source: text, target: result.translations[index]! }));
       // Not awaited: the reader shouldn't wait on storage to see the translation.
-      if (segments.length) void update(key, (current) => recordBatch(current, segments, result.terms, now()));
+      if (segments.length) void update(site, (current) => recordBatch(current, segments, result.terms, now()));
       return result;
     },
 
@@ -86,3 +80,4 @@ export function createContextCarryover(store: ContextStore, now: () => number = 
     flush: () => writes,
   };
 }
+export type ContextCarryover = ReturnType<typeof createContextCarryover>;

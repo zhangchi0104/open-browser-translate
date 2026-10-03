@@ -3,10 +3,10 @@ import { storage } from "wxt/utils/storage";
 import { aiSettings, Settings, SettingsLive, type AISettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
-import { TARGET_LANGUAGE, translateBatch } from "../modules/translator/translate-batch";
-import { configuredSettings, modelAttributes, modelConfig, ModelsLive } from "../modules/ai/models";
+import { configuredSettings, modelAttributes, ModelsLive } from "../modules/ai/models";
+import { translatePageBatch } from "../modules/batch-translation";
 import { ChatGPTToken } from "../modules/ai/chatgpt";
-import { createTranslationCache, translateWithCache } from "../modules/translation-cache";
+import { createTranslationCache } from "../modules/translation-cache";
 import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
 import {
   ChatGPTTokenLive, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
@@ -14,7 +14,7 @@ import {
 
 import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import { createContextCarryover } from "../modules/translation-context/carryover";
-import type { TranslationContext } from "../modules/translation-context";
+import { siteOf, type TranslationContext } from "../modules/translation-context";
 import {
   debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestOn, traceStore, tracingLayer, type RunInSpan,
 } from "../modules/debug-log";
@@ -31,12 +31,6 @@ const PageLog = Schema.Struct({
 });
 const purposeNames = { analysis: "内容分析", translation: "翻译" } as const;
 const translationCache = createTranslationCache(createIndexedDbCacheStore());
-const originOf = (url: string | undefined) => {
-  try {
-    const origin = url ? new URL(url).origin : undefined;
-    return origin === "null" ? undefined : origin;
-  } catch { return undefined; }
-};
 
 // Every request runs on one runtime, so built model layers (and their HTTP clients) are shared
 // across requests. Settings and the ChatGPT sign-in are read when a request starts.
@@ -142,7 +136,7 @@ export default defineBackground(() => {
           return await run(Effect.gen(function* () {
             for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
             yield* configuredSettings();
-            void contexts.notePage(pageUrl(sender), context.title);
+            void contexts.notePage(siteOf(pageUrl(sender)), context.title);
             const plan = yield* decideTranslationPlan(context);
             span.attribute("obt.plan.mode", plan.mode);
             span.attribute("obt.plan.navigation", plan.navigation);
@@ -178,7 +172,7 @@ export default defineBackground(() => {
   function handleBatch(
     message: { type: "analyze-content" | "translate-content"; blocks?: unknown; mode?: unknown; analyzed?: unknown },
     sender: Parameters<typeof pageUrl>[0],
-    onPartial?: (index: number, text: string, final?: boolean) => void,
+    onPartial?: (index: number, text: string, final: boolean) => void,
   ) {
     const page = pageOf(pageUrl(sender));
     return traceRequest(message.type, { "obt.page": page, ...(onPartial && { "obt.streaming": true }) }, async (span, run, settings) => {
@@ -192,27 +186,10 @@ export default defineBackground(() => {
           return { status: "failed" };
         }
         if (message.type === "translate-content") {
-          // The page sends only blocks its analysis chose to translate. Cached blocks are served from IndexedDB; only the rest reach the model and the site
-          // context. Private windows have no page URL here, so they bypass the cache.
-          const url = pageUrl(sender);
-          const origin = originOf(url);
-          const { provider, model } = modelConfig(settings, "translation");
-          const result = await translateWithCache({
-            cache: translationCache,
-            scope: origin
-              ? { origin, target: TARGET_LANGUAGE, provider, model }
-              : undefined,
-            blocks,
-            onCached: onPartial && ((index, text) => onPartial(index, text, true)),
-            translate: (misses, indexes) => contexts.translate(url, misses, async (context) =>
-              run(translateBatch(misses, { context, onPartial: onPartial && ((index, text) => onPartial(indexes[index]!, text)) }))),
-          });
-          span.attribute("obt.cache.hits", result.cacheHits ?? 0);
-          if (result.status === "ok") {
-            span.attribute("obt.terms", result.terms.length);
-          } else if (result.status === "not-configured") {
+          const result = await run(translatePageBatch(blocks, pageUrl(sender), { cache: translationCache, contexts }, onPartial));
+          if (result.status === "not-configured") {
             markFailed(span, `${purposeNames[result.purpose]}未配置`);
-          } else {
+          } else if (result.status === "failed") {
             markFailed(span, "翻译批次失败", result.error);
           }
           return result;

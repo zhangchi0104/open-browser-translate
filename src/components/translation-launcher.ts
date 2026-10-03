@@ -423,12 +423,19 @@ export function mountTranslationLauncher(container: HTMLElement) {
             // A skeleton holds each block's place; its translation then streams in, faded until
             // the batch is done.
             capturedContent.loading(batch);
-            const result = await translateStreaming(batch, (index, text, final) => {
-              if (active() && batch[index]) capturedContent.update(batch[index], text, !final);
+            // Cached blocks arrive final and stay even if the rest of the batch fails.
+            const final = new Set<TranslatableContent>();
+            const result = await translateStreaming(batch, (index, text, isFinal) => {
+              const item = batch[index];
+              if (!active() || !item) return;
+              capturedContent.update(item, text, !isFinal);
+              if (isFinal) final.add(item);
             });
+            const unfinished = batch.filter((item) => !final.has(item));
             if (!active()) return false;
             if (result.status === "not-configured") {
-              capturedContent.discard(batch);
+              capturedContent.discard(unfinished);
+              kept += final.size;
               stopAll(result.purpose);
               return false;
             }
@@ -437,8 +444,9 @@ export function mountTranslationLauncher(container: HTMLElement) {
             }
             if (result.status !== "ok" || result.translations.length !== batch.length) {
               // The streamed text didn't pass validation, so none of it is kept.
-              capturedContent.discard(batch);
-              failures += batch.length;
+              capturedContent.discard(unfinished);
+              kept += final.size;
+              failures += unfinished.length;
               return true;
             }
             batch.forEach((item, index) => capturedContent.update(item, result.translations[index]!, false));
