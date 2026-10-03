@@ -79,5 +79,5 @@ are kept only if their source text appears in the batch they came from.
 Contexts expire after seven days, at most 50 sites are kept, and private
 windows keep none.
 
-Validation: `bun test tests/translation.test.ts tests/viewport-queue.test.ts tests/translation-context.test.ts`. Tests use mocked HTTP responses;
+Scheduling lives in `../translation-session`. Validation: `bun test tests/translation.test.ts tests/translation-session.test.ts tests/viewport-queue.test.ts tests/translation-context.test.ts`. Tests use mocked HTTP responses;
 they verify decision/translation routing and output alignment, not live quality.
