@@ -9,7 +9,7 @@ import { defaultSettings } from "../src/modules/settings/model";
 import { createMemoryCacheStore, createTranslationCache } from "../src/modules/translation-cache";
 import type { TranslationContext } from "../src/modules/translation-context";
 import { createContextCarryover } from "../src/modules/translation-context/carryover";
-import { chatCompletion, chatCompletionStream } from "./decision-mock";
+import { chatCompletion, chatCompletionStream, chatRequest, translationInput } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
 settings.providers.VercelAIGateway.apiKey = "test-gateway";
@@ -22,13 +22,13 @@ function translationModel() {
   const requests: { texts: string[]; context?: unknown }[] = [];
   let failing = false;
   const fetch: typeof globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body));
-    const input = JSON.parse(body.messages.at(-1).content);
-    requests.push({ texts: input.blocks.map((block: { text: string }) => block.text), context: input.context });
+    const body = chatRequest(init);
+    const input = translationInput(body);
+    requests.push({ texts: input.blocks.map(({ text }) => text), context: input.context });
     if (failing) return Response.json({ error: { message: "model down" } }, { status: 500 });
     const output = JSON.stringify({
-      translations: input.blocks.map(({ id, text }: { id: number; text: string }) => ({ id, text: `译：${text}` })),
-      terms: input.blocks.some(({ text }: { text: string }) => text.includes("Fiber")) ? [{ source: "Fiber", target: "纤程" }] : [],
+      translations: input.blocks.map(({ id, text }) => ({ id, text: `译：${text}` })),
+      terms: input.blocks.some(({ text }) => text.includes("Fiber")) ? [{ source: "Fiber", target: "纤程" }] : [],
     });
     return body.stream ? chatCompletionStream(body.model, output) : chatCompletion(body.model, output);
   };
@@ -80,9 +80,11 @@ test("the site's context from earlier batches rides along with later ones on any
   await translate(model, stores, ["A Fiber is a virtual thread"]);
   await stores.contexts.flush();
   await translate(model, stores, ["Forking a Fiber"], "https://docs.example.com/other");
-  const sent = model.requests[1]!.context as { glossary: unknown[]; recent: unknown[] };
-  assert.deepEqual(sent.glossary, [{ source: "Fiber", target: "纤程" }]);
-  assert.deepEqual(sent.recent, [{ source: "A Fiber is a virtual thread", target: "译：A Fiber is a virtual thread" }]);
+  assert.deepEqual(model.requests[1]!.context, {
+    pages: [],
+    glossary: [{ source: "Fiber", target: "纤程" }],
+    recent: [{ source: "A Fiber is a virtual thread", target: "译：A Fiber is a virtual thread" }],
+  });
 });
 
 test("a page without a site (private windows, browser pages) keeps no cache entries and no context", async () => {

@@ -1,9 +1,6 @@
 import { TRANSLATION_PRIORITY } from "../content-analyzer";
-import type { PageAnalysisResult } from "../content-analyzer/page-analysis";
-import type { Purpose } from "../ai/models";
 import { describeError, type LogLevel } from "../debug-log/model";
-import { MAX_BATCH_BLOCKS, type Block, type Mode } from "../protocol";
-import type { TranslationBatchResult } from "../translator/translate-batch";
+import { MAX_BATCH_BLOCKS, type Block, type Mode, type PageAnalysisResult, type Purpose, type TranslationBatchResult } from "../protocol";
 import { createBatchQueue, MAX_CONCURRENT_BATCHES, pickByPriority, pickNearViewport, viewportDistance, type Span } from "../viewport-queue";
 
 /** What a session needs from the page it runs on. */

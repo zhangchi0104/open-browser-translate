@@ -2,9 +2,8 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import {
   createClient, createDispatcher, MAX_BATCH_BLOCKS, MAX_BATCH_CHARS, PAGE_CONTEXT_LIMITS, STREAM_PORT,
-  type Block, type Handlers, type Port, type Sender,
+  type Block, type Handlers, type Port, type Sender, type TranslationBatchResult,
 } from "../src/modules/protocol";
-import type { TranslationBatchResult } from "../src/modules/translator/translate-batch";
 
 const PAGE: Sender = { id: "extension", tab: { url: "https://example.com/a" } };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -63,9 +62,14 @@ function connect(options: Parameters<typeof createDispatcher>[0], sender = PAGE)
 
 /** Handlers that fail the test if called, with `overrides` for the ones it uses. */
 function handlers(overrides: Partial<Handlers>): Handlers {
-  return new Proxy(overrides as Handlers, {
-    get: (target, type: string) => target[type as keyof Handlers] ?? (() => assert.fail(`unexpected ${type} request`)),
-  });
+  const unexpected = ({ type }: { type: string }) => assert.fail(`unexpected ${type} request`);
+  return {
+    "open-settings": unexpected, "debug-log": unexpected, "debug-log-clear": unexpected, "traces-clear": unexpected,
+    "cache-stats": unexpected, "cache-clear": unexpected, "chatgpt-sign-in": unexpected, "chatgpt-sign-out": unexpected,
+    "chatgpt-models": unexpected, "openai-models": unexpected, "gateway-models": unexpected,
+    "prepare-translation": unexpected, "analyze-content": unexpected,
+    ...overrides,
+  };
 }
 
 const noTranslate = async (): Promise<TranslationBatchResult> => assert.fail("unexpected translation");
@@ -89,7 +93,7 @@ test("a request reaches its handler decoded, and the reply comes back typed", as
 
 test("requests over the limits, or malformed, fail without reaching a handler", async () => {
   const invalid: string[] = [];
-  const { client } = connect({
+  const { dispatcher } = connect({
     trusted: () => true,
     translate: noTranslate,
     handlers: handlers({}),
@@ -105,9 +109,23 @@ test("requests over the limits, or malformed, fail without reaching a handler", 
     { type: "prepare-translation", context: { ...context, pagination: Array.from({ length: PAGE_CONTEXT_LIMITS.pagination + 1 }, () => "1") } },
     { type: "debug-log", entry: { level: "fatal", event: "x" } },
   ]) {
-    assert.deepEqual(await client.request(message as never), { status: "failed" }, JSON.stringify(message).slice(0, 80));
+    assert.deepEqual(await answer(dispatcher, message, PAGE), { status: "failed" }, JSON.stringify(message).slice(0, 80));
   }
   assert.deepEqual(invalid, ["analyze-content", "analyze-content", "analyze-content", "prepare-translation", "prepare-translation", "debug-log"]);
+});
+
+test("a reply or stream event the page can't decode counts as a failure", async () => {
+  const [page, background] = portPair(STREAM_PORT, PAGE);
+  const client = createClient({
+    sendMessage: async () => ({ status: "ok", count: "many" }),
+    connect: () => page,
+  });
+  const stats = await client.request({ type: "cache-stats" });
+  assert.equal(stats.status, "failed");
+  const pending = client.translate([{ text: "Hello", tag: "p" }], () => assert.fail("no blocks"));
+  background.postMessage({ type: "block", index: "0", text: "你好" });
+  const result = await pending;
+  assert.equal(result.status, "failed");
 });
 
 test("unknown request types and untrusted senders get no answer", async () => {

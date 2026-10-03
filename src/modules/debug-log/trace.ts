@@ -145,7 +145,7 @@ export const MAX_TRACES = 100;
 /** Keeps the spans of the newest traces. */
 export function createTraceStore(store: TraceStore, maxTraces = MAX_TRACES) {
   const spans = createStoredValue(store, {
-    parse: (stored) => Array.isArray(stored) ? stored as OtlpSpan[] : [],
+    parse: (stored) => stored ?? [],
     onError: (error) => console.error("Trace write failed:", error),
   });
   // Spans ending together (a request and its steps) are trimmed once, in the write that saves them.

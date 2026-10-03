@@ -13,8 +13,8 @@ import { createStoredValue, type ValueStore } from "../stored-value";
 
 type Contexts = Record<string, TranslationContext>;
 
-/** Where contexts live; extension storage in the background, a variable in tests. */
-export type ContextStore = ValueStore<Contexts>;
+/** Where contexts live; extension storage in the background, a variable in tests. Read as `unknown`: it's validated. */
+export type ContextStore = ValueStore<Contexts, unknown>;
 
 // Keeps storage bounded: the most recently translated sites survive.
 export const MAX_SITES = 50;

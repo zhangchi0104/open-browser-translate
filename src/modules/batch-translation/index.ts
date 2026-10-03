@@ -1,12 +1,12 @@
 import { Effect } from "effect";
 import { modelConfig } from "../ai/models";
 import { describeError } from "../debug-log/model";
-import type { Block, OnBlock } from "../protocol";
+import type { Block, OnBlock, TranslationBatchResult } from "../protocol";
 import { Settings } from "../settings/service";
 import { siteOf } from "../translation-context";
 import type { ContextCarryover } from "../translation-context/carryover";
 import type { TranslationCache } from "../translation-cache";
-import { TARGET_LANGUAGE, translateBatch, type TranslationBatchResult } from "../translator/translate-batch";
+import { TARGET_LANGUAGE, translateBatch } from "../translator/translate-batch";
 
 /** Where a page's batches find earlier work: cached translations and the site's context. */
 export interface BatchStores {
@@ -37,7 +37,7 @@ export function translatePageBatch(blocks: readonly Block[], pageUrl: string | u
     const misses = cached.flatMap((translation, index) => translation === undefined ? [index] : []);
     const cacheHits = blocks.length - misses.length;
     yield* Effect.annotateCurrentSpan({ "obt.cache.hits": cacheHits });
-    if (!misses.length) return { status: "ok", translations: cached as string[], terms: [], cacheHits } satisfies TranslationBatchResult;
+    if (!misses.length) return { status: "ok", translations: cached.filter((text) => text !== undefined), terms: [], cacheHits } satisfies TranslationBatchResult;
 
     const missed = misses.map((index) => blocks[index]!);
     const result = yield* translateBatch(missed, {
@@ -50,9 +50,10 @@ export function translatePageBatch(blocks: readonly Block[], pageUrl: string | u
     if (scope) yield* Effect.tryPromise(() => stores.cache.put(scope, segments.map(({ source, target }) => ({ text: source, translation: target }))));
     // Not awaited: the reader shouldn't wait on storage to see the translation.
     void stores.contexts.record(site, segments, result.terms);
-    const translations = cached.slice();
-    misses.forEach((index, position) => { translations[index] = result.translations[position]; });
-    return { ...result, translations: translations as string[], cacheHits };
+    // Misses are in page order, so each uncached block takes the next fresh translation.
+    let next = 0;
+    const translations = cached.map((text) => text ?? result.translations[next++]!);
+    return { ...result, translations, cacheHits };
   }).pipe(
     Effect.catch((error) => Effect.succeed<TranslationBatchResult>({ status: "failed", error: describeError(error) })),
   );

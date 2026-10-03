@@ -1,18 +1,21 @@
-/** Where a value lives: extension storage in the background, a variable in tests. */
-export interface ValueStore<T> {
-  get(): Promise<unknown>;
+/**
+ * Where a value lives: extension storage in the background, a variable in tests. `Stored` is what
+ * reading it can give; `unknown` when what's there may predate the current shape.
+ */
+export interface ValueStore<T, Stored = T | null | undefined> {
+  get(): Promise<Stored>;
   set(value: T): Promise<void>;
 }
 
 /**
  * A stored value that only this object writes, changed through ordered read-modify-write updates.
- * It's read from the store once (`parse` turns what's there, or nothing, into a value) and kept in
- * memory after that. Updates made while a write is in flight share the next write, applied in the
+ * It's read from the store once (`parse` turns what's there, or nothing when it can't be read,
+ * into a value) and kept in memory after that. Updates made while a write is in flight share the next write, applied in the
  * order they were made, so concurrent requests never overwrite each other. A failed write goes to
  * `onError` and leaves the value as it was; later updates still go through.
  */
-export function createStoredValue<T>(store: ValueStore<T>, options: {
-  parse: (stored: unknown) => T;
+export function createStoredValue<T, Stored = T | null | undefined>(store: ValueStore<T, Stored>, options: {
+  parse: (stored: NoInfer<Stored> | undefined) => T;
   onError: (error: unknown) => void;
 }) {
   let current: Promise<T> | undefined;

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { background } from "@/lib/background";
-import { PURPOSE_NAMES, type Request } from "@/modules/protocol";
+import { PURPOSE_NAMES, type Purpose, type Request } from "@/modules/protocol";
 import { Bug, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import {
   aiSettings, REASONING_EFFORTS, validateModel,
@@ -22,7 +22,6 @@ import {
 import { cn } from "@/lib/utils";
 import { DebugLog } from "./DebugLog";
 import { CacheSettings } from "./CacheSettings";
-import type { Purpose } from "@/modules/ai/models";
 
 type Status = { text: string; error?: boolean };
 
@@ -96,7 +95,7 @@ function signInOutcome(state: string): Promise<SignInResult> {
 }
 
 /** A provider's model catalog; `unavailable` until there is an account or key to ask with. */
-type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: ChatGPTModel[] };
+type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: readonly ChatGPTModel[] };
 type CatalogProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
 interface LoadedCatalog { catalog: Catalog; reload: () => void }
 
@@ -106,16 +105,17 @@ const gatewayDecisionCatalog: LoadedCatalog = { catalog: { status: "ok", models:
 function useCatalog(request: Request<"chatgpt-models" | "openai-models" | "gateway-models"> | undefined, delay = 0): LoadedCatalog {
   const [catalog, setCatalog] = useState<Catalog>({ status: "unavailable" });
   const [attempt, setAttempt] = useState(0);
+  // The request is a new object each render; its JSON says when it actually changed.
   const key = request && JSON.stringify(request);
   useEffect(() => {
-    if (!key) return setCatalog({ status: "unavailable" });
+    if (!request) return setCatalog({ status: "unavailable" });
     let current = true;
     setCatalog({ status: "loading" });
-    const timer = setTimeout(() => background.request(JSON.parse(key) as NonNullable<typeof request>).then(
+    const timer = setTimeout(() => background.request(request).then(
       (response) => {
         if (!current) return;
-        setCatalog(response?.status === "ok" ? { status: "ok", models: response.models }
-          : response?.status === "no-key" ? { status: "unavailable" } : { status: "failed" });
+        setCatalog(response.status === "ok" ? { status: "ok", models: response.models }
+          : response.status === "no-key" ? { status: "unavailable" } : { status: "failed" });
       },
       () => { if (current) setCatalog({ status: "failed" }); },
     ), delay);

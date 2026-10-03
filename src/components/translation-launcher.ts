@@ -4,10 +4,9 @@ import { storage } from "wxt/utils/storage";
 import { browser } from "wxt/browser";
 import { DomParser, type TranslatableContent } from "../modules/dom-parser";
 import type { Span } from "../modules/viewport-queue";
-import type { Purpose } from "../modules/ai/models";
 import { createTranslationSession, type SessionProgress, type TranslationSession } from "../modules/translation-session";
 import { createCapturedContent } from "./captured-content";
-import { PAGE_CONTEXT_LIMITS, PURPOSE_NAMES } from "../modules/protocol";
+import { PAGE_CONTEXT_LIMITS, PURPOSE_NAMES, type Purpose } from "../modules/protocol";
 import { describeError, type LogLevel } from "../modules/debug-log/model";
 
 const BALL_SIZE = 52;
@@ -246,11 +245,11 @@ export function mountTranslationLauncher(container: HTMLElement) {
         },
       });
       if (!active()) return;
-      if (prepared?.status === "not-configured") {
+      if (prepared.status === "not-configured") {
         status.textContent = notConfiguredText(prepared.purpose);
         return;
       }
-      if (prepared?.status !== "ok") {
+      if (prepared.status !== "ok") {
         status.textContent = "无法准备翻译，请检查设置后重试。";
         return;
       }

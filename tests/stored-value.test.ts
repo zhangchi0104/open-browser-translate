@@ -1,8 +1,9 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
+import { Schema } from "effect";
 import { createStoredValue } from "../src/modules/stored-value";
 
-function memoryStore(initial: unknown = undefined) {
+function memoryStore(initial?: number[]) {
   let saved = initial;
   const calls = { get: 0, set: 0 };
   let failNext = false;
@@ -19,7 +20,7 @@ function memoryStore(initial: unknown = undefined) {
   };
 }
 const unexpected = (error: unknown) => assert.fail(`unexpected write error: ${String(error)}`);
-const numbers = (stored: unknown) => Array.isArray(stored) ? stored as number[] : [];
+const numbers = (stored: number[] | null | undefined) => stored ?? [];
 
 test("concurrent updates land in order, share writes, and read the store only once", async () => {
   const store = memoryStore([0]);
@@ -48,6 +49,8 @@ test("a failed write is reported and leaves the value as it was; later updates s
 test("missing or unreadable stored data starts from what parse makes of nothing", async () => {
   const broken = { get: async () => { throw new Error("storage unavailable"); }, set: async () => {} };
   assert.deepEqual(await createStoredValue(broken, { parse: numbers, onError: unexpected }).get(), []);
-  const strict = (stored: unknown) => { if (stored !== undefined && !Array.isArray(stored)) throw new Error("corrupt"); return (stored ?? []) as number[]; };
-  assert.deepEqual(await createStoredValue(memoryStore("garbage"), { parse: strict, onError: unexpected }).get(), []);
+  // Data from an older version is read as unknown and validated; a parse that throws starts empty.
+  const garbage = { get: async (): Promise<unknown> => "garbage", set: async (_: number[]) => {} };
+  const strict = (stored: unknown) => Schema.decodeUnknownSync(Schema.Array(Schema.Number))(stored ?? []);
+  assert.deepEqual(await createStoredValue(garbage, { parse: strict, onError: unexpected }).get(), []);
 });

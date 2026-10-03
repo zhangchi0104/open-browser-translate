@@ -7,23 +7,23 @@ import { defaultSettings } from "../src/modules/settings/model";
 import { AiProviders } from "../src/modules/ai/providers";
 import { decideTranslationPlan } from "../src/modules/content-analyzer/page-plan";
 import { translateBatch } from "../src/modules/translator/translate-batch";
-import { chatCompletion, chatCompletionStream, decisionResponse, isDecisionRequest } from "./decision-mock";
+import { blocksIn, chatCompletion, chatCompletionStream, chatRequest, decisionResponse, isDecisionRequest, translationInput, type ChatRequest } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
 settings.analysis.provider = AiProviders.OpenAIApi;
 settings.providers.VercelAIGateway.apiKey = "test-placeholder";
 settings.providers.OpenAIApi.apiKey = "test-openai";
 settings.translation.models.VercelAIGateway = "test/translator";
-function mockFetch(output: unknown, requests: string[], bodies: any[] = []): typeof globalThis.fetch {
+function mockFetch(output: unknown, requests: string[], bodies: ChatRequest[] = []): typeof globalThis.fetch {
   return async (input, init) => {
     requests.push(String(input));
-    const body = JSON.parse(String(init?.body));
+    const body = chatRequest(init);
     bodies.push(body);
     if (isDecisionRequest(body)) {
       assert.equal(String(input), "https://api.openai.com/v1/chat/completions");
       assert.equal(body.model, "gpt-6-luna");
       return decisionResponse(body, (key, state) => key === "mode" ? "main" : key === "navigation" ? "paginated"
-        : state.blocks.find((block: { id: string }) => block.id === key).text === "Home" ? "navigation" : "content");
+        : blocksIn(state).find((block) => block.id === key)?.text === "Home" ? "navigation" : "content");
     }
     assert.equal(body.model, "test/translator");
     assert.ok(body.response_format);
@@ -56,13 +56,13 @@ test("missing translation configuration makes no provider request", async () => 
 });
 
 test("site context rides along in the translation prompt and terms come back", async () => {
-  const bodies: any[] = [];
+  const bodies: ChatRequest[] = [];
   const fetch = mockFetch({ translations: [{ id: 0, text: "Effect 运行时" }], terms: [{ source: "Effect", target: "Effect" }] }, [], bodies);
   const context = { pages: ["Effect docs"], glossary: [{ source: "runtime", target: "运行时" }], recent: [{ source: "Fibers", target: "纤程" }] };
   const result = await Effect.runPromise(translateBatch([{ text: "Effect runtime", tag: "p" }], { context }).pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch)));
   assert.deepEqual(result, { status: "ok", translations: ["Effect 运行时"], terms: [{ source: "Effect", target: "Effect" }] });
-  const chat = bodies.find((body) => Array.isArray(body.messages) && !isDecisionRequest(body));
-  assert.deepEqual(JSON.parse(chat.messages.at(-1).content), { context, blocks: [{ id: 0, text: "Effect runtime" }] });
+  const chat = bodies.find((body) => !isDecisionRequest(body))!;
+  assert.deepEqual(translationInput(chat), { context, blocks: [{ id: 0, text: "Effect runtime" }] });
 });
 
 test("a batch traces translation as its own step, down to the model calls", async () => {
@@ -84,9 +84,9 @@ test("a batch traces translation as its own step, down to the model calls", asyn
 });
 
 /** A streamed Chat Completions response that writes `content` a few characters at a time. */
-function streamingFetch(content: string, bodies: any[] = []): typeof globalThis.fetch {
+function streamingFetch(content: string, bodies: ChatRequest[] = []): typeof globalThis.fetch {
   return async (input, init) => {
-    const body = JSON.parse(String(init?.body));
+    const body = chatRequest(init);
     bodies.push(body);
     if (isDecisionRequest(body)) return decisionResponse(body, () => "content");
     assert.equal(body.stream, true, "translation streams when the caller wants partial results");

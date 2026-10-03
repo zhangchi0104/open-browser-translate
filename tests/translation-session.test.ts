@@ -1,7 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import type { PageAnalysisResult } from "../src/modules/content-analyzer/page-analysis";
-import type { TranslationBatchResult } from "../src/modules/translator/translate-batch";
+import type { PageAnalysisResult, TranslationBatchResult } from "../src/modules/protocol";
 import { createTranslationSession, type SessionPage, type SessionProgress } from "../src/modules/translation-session";
 
 interface Item { text: string; tag: string; top: number }

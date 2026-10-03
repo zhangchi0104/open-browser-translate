@@ -3,6 +3,7 @@ import type { DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { Settings } from "../settings/service";
 import type { AISettings, ReasoningEffort, SettingsProvider } from "../settings/model";
 import { AiProviders } from "./providers";
+import type { Purpose } from "../protocol";
 import { openAICompatibleLayer, vercelLayer } from "./vercel";
 import { OPENAI_API_URL } from "./openai-models";
 import { ChatGPTToken, chatgptLayer } from "./chatgpt";
@@ -13,7 +14,6 @@ import { vercelDecisionLayer } from "./gateway-decisions";
 // Built model layers are cached by everything that picks the model (`ModelConfig`, compared by
 // value), so requests share HTTP clients and a settings change applies to the next request.
 
-export type Purpose = "analysis" | "translation";
 
 /** The purpose's provider isn't connected or has no model; no request was sent. */
 export class ModelNotConfigured extends Data.TaggedError("ModelNotConfigured")<{ readonly purpose: Purpose }> {}

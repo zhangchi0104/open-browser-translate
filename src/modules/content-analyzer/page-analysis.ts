@@ -1,13 +1,8 @@
 import { Effect, Layer } from "effect";
 import { ContentAnalyzer } from "./index";
-import type { Block, Mode } from "../protocol";
-import { AnalysisModel, type Purpose } from "../ai/models";
+import type { Block, Mode, PageAnalysisResult } from "../protocol";
+import { AnalysisModel } from "../ai/models";
 import { describeError } from "../debug-log/model";
-
-export type PageAnalysisResult =
-  | { status: "ok"; blocks: { keep: boolean; priority: number }[]; fallbackCount: number }
-  | { status: "not-configured"; purpose: Purpose }
-  | { status: "failed"; error?: string };
 
 export function analyzePageContent(blocks: readonly Block[], mode: Mode = "main") {
   return ContentAnalyzer.use((analyzer) => analyzer.analyze(blocks, { mode })).pipe(

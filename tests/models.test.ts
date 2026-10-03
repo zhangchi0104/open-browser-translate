@@ -8,6 +8,7 @@ import { AiProviders } from "../src/modules/ai/providers";
 import { defaultSettings, type AISettings } from "../src/modules/settings/model";
 import { Settings } from "../src/modules/settings/service";
 import { translateBatch } from "../src/modules/translator/translate-batch";
+import { chatCompletion, chatRequest } from "./decision-mock";
 
 test("one runtime translates on whatever model the settings select when each request starts", async () => {
   let current: AISettings = structuredClone(defaultSettings);
@@ -19,10 +20,9 @@ test("one runtime translates on whatever model the settings select when each req
   ))));
   const models: string[] = [];
   const fetchMock: typeof globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body));
-    models.push(body.model);
-    const content = JSON.stringify({ translations: [{ id: 0, text: "你好" }], terms: [] });
-    return Response.json({ id: "test", object: "chat.completion", created: 1, model: body.model, choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }] });
+    const { model } = chatRequest(init);
+    models.push(model);
+    return chatCompletion(model, JSON.stringify({ translations: [{ id: 0, text: "你好" }], terms: [] }));
   };
   const translate = () => runtime.runPromise(translateBatch([{ text: "Hello", tag: "p" }])
     .pipe(Effect.provideService(FetchHttpClient.Fetch, fetchMock)));

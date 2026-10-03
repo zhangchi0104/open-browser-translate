@@ -1,18 +1,12 @@
 import { Effect, Layer } from "effect";
 import { describeError } from "../debug-log/model";
 import { Translator } from "./index";
-import type { Block } from "../protocol";
-import { configuredSettings, modelAttributes, TranslationModel, type Purpose } from "../ai/models";
-import type { PromptContext, TermPair } from "../translation-context";
+import type { Block, TranslationBatchResult } from "../protocol";
+import { configuredSettings, modelAttributes, TranslationModel } from "../ai/models";
+import type { PromptContext } from "../translation-context";
 
 /** The language pages are translated into. */
 export const TARGET_LANGUAGE = "简体中文";
-
-export type TranslationBatchResult =
-  /** `cacheHits`: how many blocks the page's batch found in the cache. */
-  | { status: "ok"; translations: string[]; terms: readonly TermPair[]; cacheHits?: number }
-  | { status: "not-configured"; purpose: Purpose }
-  | { status: "failed"; error?: string };
 
 export interface TranslateBatchOptions {
   /** Site context from earlier batches, sent with the prompt. */

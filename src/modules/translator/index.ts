@@ -85,7 +85,7 @@ export class Translator extends Context.Service<Translator, {
         // The whole response must still be the promised JSON; partial parsing is only for display.
         const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
         const parsed = yield* Effect.try({
-          try: () => JSON.parse(json) as unknown,
+          try: (): unknown => JSON.parse(json),
           catch: (error) => new TranslationOutputError({ message: `response is not complete JSON: ${String(error)}; got ${text.slice(0, 200)}` }),
         });
         const value = yield* Schema.decodeUnknownEffect(Output)(parsed).pipe(

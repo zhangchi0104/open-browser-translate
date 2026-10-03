@@ -63,7 +63,7 @@ export function formatEntries(entries: readonly LogEntry[]): string {
 /** Appends entries to a bounded log; entries from concurrent requests land in order. */
 export function createDebugLog(store: LogStore, now: () => number = Date.now) {
   const entries = createStoredValue(store, {
-    parse: (stored) => Array.isArray(stored) ? stored as LogEntry[] : [],
+    parse: (stored) => stored ?? [],
     onError: (error) => console.error("Debug log write failed:", error),
   });
   const write = (level: LogLevel, event: string, options: { detail?: string; page?: string; source?: LogSource } = {}) => {

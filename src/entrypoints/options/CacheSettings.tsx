@@ -10,7 +10,7 @@ export function CacheSettings() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "" });
   const refresh = () => background.request({ type: "cache-stats" }).then(
-    (response) => response?.status === "ok" ? setCount(response.count) : setStatus({ text: "无法读取缓存。", error: true }),
+    (response) => response.status === "ok" ? setCount(response.count) : setStatus({ text: "无法读取缓存。", error: true }),
     () => setStatus({ text: "无法读取缓存。", error: true }),
   );
   useEffect(() => { void refresh(); }, []);
@@ -19,7 +19,7 @@ export function CacheSettings() {
     setBusy(true);
     try {
       const response = await background.request({ type: "cache-clear" });
-      if (response?.status !== "ok") throw new Error(response?.status);
+      if (response.status !== "ok") throw new Error(response?.status);
       setStatus({ text: "缓存已清空" });
       await refresh();
     } catch {

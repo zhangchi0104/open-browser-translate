@@ -1,15 +1,11 @@
 import { Result, Schema } from "effect";
-import type { ChatGPTModel } from "../ai/chatgpt-auth";
-import type { Purpose } from "../ai/models";
-import type { PageAnalysisResult } from "../content-analyzer/page-analysis";
-import type { TranslationPlan } from "../content-analyzer/page-plan";
-import type { TranslationBatchResult } from "../translator/translate-batch";
+import { TermPair } from "../translation-context";
 
-// Everything the page, the options page and the background say to each other. Requests are
-// decoded against these schemas, limits included, before a handler sees them; replies are
-// typed per request. Pages talk through `createClient`, the background answers through
-// `createDispatcher`, and both take the browser's runtime as an adapter so tests can connect
-// them directly.
+// Everything the page, the options page and the background say to each other. Requests and
+// replies are schemas: the background decodes each request, limits included, before a handler
+// sees it, and pages decode each reply. Pages talk through `createClient`, the background answers
+// through `createDispatcher`, and both take the browser's runtime as an adapter so tests can
+// connect them directly.
 
 /** Blocks per batch: one analysis request, and one translation request at most. */
 export const MAX_BATCH_BLOCKS = 8;
@@ -36,6 +32,10 @@ const Batch = Schema.Array(Block).check(
   }),
 );
 
+/** What a model is for: deciding what to translate, or translating it. */
+export const Purpose = Schema.Literals(["analysis", "translation"]);
+export type Purpose = typeof Purpose.Type;
+
 /** How each purpose is named to the reader. */
 export const PURPOSE_NAMES: Record<Purpose, string> = { analysis: "内容分析", translation: "翻译" };
 
@@ -55,52 +55,91 @@ const PageLog = Schema.Struct({
   detail: Schema.optional(Schema.String),
 });
 
-const request = <const T extends string, const F extends Schema.Struct.Fields = {}>(type: T, fields?: F) =>
-  Schema.Struct({ type: Schema.Literal(type), ...(fields ?? {}) as F });
+const request = <const T extends string, const F extends Schema.Struct.Fields>(type: T, fields: F) =>
+  Schema.Struct({ type: Schema.Literal(type), ...fields });
 
 /** Every request a page can send with `runtime.sendMessage`, by `type`. */
 export const Requests = {
-  "open-settings": request("open-settings"),
+  "open-settings": request("open-settings", {}),
   "debug-log": request("debug-log", { entry: PageLog }),
-  "debug-log-clear": request("debug-log-clear"),
-  "traces-clear": request("traces-clear"),
-  "cache-stats": request("cache-stats"),
-  "cache-clear": request("cache-clear"),
-  "chatgpt-sign-in": request("chatgpt-sign-in"),
-  "chatgpt-sign-out": request("chatgpt-sign-out"),
-  "chatgpt-models": request("chatgpt-models"),
+  "debug-log-clear": request("debug-log-clear", {}),
+  "traces-clear": request("traces-clear", {}),
+  "cache-stats": request("cache-stats", {}),
+  "cache-clear": request("cache-clear", {}),
+  "chatgpt-sign-in": request("chatgpt-sign-in", {}),
+  "chatgpt-sign-out": request("chatgpt-sign-out", {}),
+  "chatgpt-models": request("chatgpt-models", {}),
   /** `apiKey` is the key being edited on the options page; the saved one otherwise. */
   "openai-models": request("openai-models", { apiKey: Schema.optional(Schema.String) }),
-  "gateway-models": request("gateway-models"),
+  "gateway-models": request("gateway-models", {}),
   "prepare-translation": request("prepare-translation", { context: PageContext }),
   "analyze-content": request("analyze-content", { mode: Mode, blocks: Batch }),
 };
 type RequestType = keyof typeof Requests;
 export type Request<K extends RequestType = RequestType> = { [T in K]: typeof Requests[T]["Type"] }[K];
+const isRequestType = (type: string): type is RequestType => Object.hasOwn(Requests, type);
 
-type Ok = { status: "ok" };
+const status = <const S extends string, const F extends Schema.Struct.Fields>(value: S, fields: F) =>
+  Schema.Struct({ status: Schema.Literal(value), ...fields });
+const Ok = status("ok", {});
 /** Also the reply to any request that doesn't decode. */
-export type Failed = { status: "failed"; error?: string };
-export type ModelList = { status: "ok"; models: ChatGPTModel[] } | Failed;
-type PrepareResult = { status: "ok"; plan: TranslationPlan } | { status: "not-configured"; purpose: Purpose } | Failed;
+const Failed = status("failed", { error: Schema.optional(Schema.String) });
+export type Failed = typeof Failed.Type;
+const NotConfigured = status("not-configured", { purpose: Purpose });
+const ModelList = Schema.Union([status("ok", { models: Schema.Array(Schema.Struct({ slug: Schema.String, displayName: Schema.String })) }), Failed]);
+export type ModelList = typeof ModelList.Type;
+
+/** How the analysis model decided to translate a page. */
+export const TranslationPlan = Schema.Struct({
+  mode: Mode,
+  navigation: Schema.Literals(["single", "paginated", "dynamic"]),
+  fallback: Schema.Boolean,
+  /** Why planning failed, when it did. */
+  error: Schema.optional(Schema.String),
+});
+export type TranslationPlan = typeof TranslationPlan.Type;
+
+/** Analysis of a batch: whether to translate each block, and when relative to the others. */
+export const PageAnalysisResult = Schema.Union([
+  status("ok", { blocks: Schema.Array(Schema.Struct({ keep: Schema.Boolean, priority: Schema.Number })), fallbackCount: Schema.Number }),
+  NotConfigured,
+  Failed,
+]);
+export type PageAnalysisResult = typeof PageAnalysisResult.Type;
+
+/** A translated batch: one translation per block, in order, when it's ok. */
+export const TranslationBatchResult = Schema.Union([
+  status("ok", {
+    translations: Schema.Array(Schema.String),
+    terms: Schema.Array(TermPair),
+    /** How many blocks the page's batch found in the cache. */
+    cacheHits: Schema.optional(Schema.Number),
+  }),
+  NotConfigured,
+  Failed,
+]);
+export type TranslationBatchResult = typeof TranslationBatchResult.Type;
 
 /** The reply to each request. */
-interface Responses {
-  "open-settings": { opened: true };
-  "debug-log": void;
-  "debug-log-clear": Ok;
-  "traces-clear": Ok;
-  "cache-stats": { status: "ok"; count: number } | Failed;
-  "cache-clear": Ok | Failed;
-  "chatgpt-sign-in": { status: "started"; state: string };
-  "chatgpt-sign-out": Ok;
-  "chatgpt-models": ModelList;
-  "openai-models": ModelList | { status: "no-key" };
-  "gateway-models": ModelList;
-  "prepare-translation": PrepareResult;
-  "analyze-content": PageAnalysisResult;
-}
-export type Response<K extends RequestType> = Responses[K] | Failed;
+const Replies = {
+  "open-settings": Schema.Struct({ opened: Schema.Literal(true) }),
+  "debug-log": Schema.Undefined,
+  "debug-log-clear": Ok,
+  "traces-clear": Ok,
+  "cache-stats": Schema.Union([status("ok", { count: Schema.Number }), Failed]),
+  "cache-clear": Schema.Union([Ok, Failed]),
+  "chatgpt-sign-in": status("started", { state: Schema.String }),
+  "chatgpt-sign-out": Ok,
+  "chatgpt-models": ModelList,
+  "openai-models": Schema.Union([ModelList, status("no-key", {})]),
+  "gateway-models": ModelList,
+  "prepare-translation": Schema.Union([status("ok", { plan: TranslationPlan }), NotConfigured, Failed]),
+  "analyze-content": PageAnalysisResult,
+};
+type Reply<K extends RequestType> = typeof Replies[K]["Type"];
+export type Response<K extends RequestType> = Reply<K> | Failed;
+const decodeReply = <K extends RequestType>(type: K, reply: unknown): Result.Result<Response<K>, Schema.SchemaError> =>
+  Schema.decodeUnknownResult(Schema.Union([Replies[type], Failed]))(reply);
 
 // Streaming translation: the page opens a port, sends one batch, and receives each block's
 // text as it's written (or at once and final when it was cached), then the result.
@@ -108,9 +147,11 @@ export const STREAM_PORT = "translate-stream";
 const StreamRequest = Schema.Struct({ blocks: Batch });
 /** Receives a block's text by index in its batch; `final` once it won't change (cached, or validated). */
 export type OnBlock = (index: number, text: string, final: boolean) => void;
-type StreamEvent =
-  | { type: "block"; index: number; text: string; final: boolean }
-  | { type: "result"; result: TranslationBatchResult };
+const StreamEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("block"), index: Schema.Number, text: Schema.String, final: Schema.Boolean }),
+  Schema.Struct({ type: Schema.Literal("result"), result: TranslationBatchResult }),
+]);
+type StreamEvent = typeof StreamEvent.Type;
 
 /** The slice of a browser runtime `Port` both sides use. */
 export interface Port {
@@ -118,7 +159,7 @@ export interface Port {
   readonly sender?: Sender;
   postMessage(message: unknown): void;
   disconnect(): void;
-  readonly onMessage: { addListener(listener: (message: any) => void): void };
+  readonly onMessage: { addListener(listener: (message: unknown) => void): void };
   readonly onDisconnect: { addListener(listener: () => void): void };
 }
 export interface Sender {
@@ -129,14 +170,15 @@ export interface Sender {
 
 /** The page side, over `browser.runtime` (or a fake in tests). */
 export function createClient(runtime: {
-  sendMessage(message: unknown): Promise<any>;
+  sendMessage(message: unknown): Promise<unknown>;
   connect(info: { name: string }): Port;
   readonly lastError?: { message?: string } | null;
 }) {
   return {
-    /** Sends a request; rejects only when the message can't be delivered. */
-    request<M extends Request>(message: M): Promise<Response<M["type"]>> {
-      return runtime.sendMessage(message);
+    /** Sends a request; rejects only when the message can't be delivered. A reply that doesn't decode is a failure. */
+    async request<M extends Request>(message: M): Promise<Response<M["type"]>> {
+      const reply = decodeReply(message.type, await runtime.sendMessage(message));
+      return Result.isSuccess(reply) ? reply.success : { status: "failed", error: String(reply.failure) };
     },
 
     /**
@@ -160,10 +202,11 @@ export function createClient(runtime: {
         } catch (error) {
           return finish({ status: "failed", error: `无法连接后台：${error instanceof Error ? error.message : String(error)}` });
         }
-        port.onMessage.addListener((event: StreamEvent) => {
-          if (event?.type === "block" && typeof event.index === "number" && typeof event.text === "string") {
-            onBlock(event.index, event.text, event.final === true);
-          } else if (event?.type === "result" && event.result) finish(event.result);
+        port.onMessage.addListener((message) => {
+          const event = Schema.decodeUnknownResult(StreamEvent)(message);
+          if (Result.isFailure(event)) return finish({ status: "failed", error: `后台发来无法识别的消息：${String(event.failure)}` });
+          if (event.success.type === "block") onBlock(event.success.index, event.success.text, event.success.final);
+          else finish(event.success.result);
         });
         port.onDisconnect.addListener(() => finish({ status: "failed", error: `与后台的连接中断：${runtime.lastError?.message ?? "未知原因"}` }));
         port.postMessage({ blocks: blocks.map(({ text, tag }) => ({ text, tag })) });
@@ -174,7 +217,7 @@ export function createClient(runtime: {
 
 /** Answers one request type; the request has already been decoded. */
 export type Handlers = {
-  [K in RequestType]: (request: Request<K>, sender: Sender) => Promise<Responses[K]> | Responses[K];
+  [K in RequestType]: (request: Request<K>, sender: Sender) => Promise<Reply<K>> | Reply<K>;
 };
 
 /**
@@ -193,19 +236,21 @@ export function createDispatcher(options: {
     if (Result.isSuccess(result)) return result.success;
     options.onInvalid?.(type, String(result.failure));
   };
+  const answer = async <K extends RequestType>(type: K, message: unknown, sender: Sender): Promise<Response<K>> => {
+    const request: Schema.Codec<Request<K>> = Requests[type];
+    const decoded = decode(request, type, message);
+    return decoded === undefined ? { status: "failed" } : options.handlers[type](decoded, sender);
+  };
   return {
     /**
      * For `runtime.onMessage`. Answers through `sendResponse` and returns true when it will, the
      * form every browser supports (Chrome doesn't deliver a promise a listener returns everywhere).
      */
     onMessage(message: unknown, sender: Sender, sendResponse: (response: unknown) => void): boolean {
-      if (!options.trusted(sender)) return false;
-      const type = (message as { type?: unknown } | null)?.type;
-      if (typeof type !== "string" || !Object.hasOwn(Requests, type)) return false;
-      const decoded = decode(Requests[type as RequestType], type, message);
-      const handler = options.handlers[type as RequestType] as (request: Request, sender: Sender) => unknown;
-      const reply = decoded === undefined ? Promise.resolve({ status: "failed" } satisfies Failed) : Promise.resolve().then(() => handler(decoded, sender));
-      reply.then(sendResponse, (error) => sendResponse({ status: "failed", error: String(error) } satisfies Failed));
+      if (!options.trusted(sender) || typeof message !== "object" || message === null || !("type" in message)) return false;
+      const { type } = message;
+      if (typeof type !== "string" || !isRequestType(type)) return false;
+      answer(type, message, sender).then(sendResponse, (error) => sendResponse({ status: "failed", error: String(error) } satisfies Failed));
       return true;
     },
 

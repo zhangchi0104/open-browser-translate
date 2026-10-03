@@ -2,15 +2,8 @@ import { Effect, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/unstable/ai";
 import { AnalysisModel } from "../ai/models";
 import { describeError } from "../debug-log/model";
-import { PageContext, type Mode } from "../protocol";
+import { PageContext, type TranslationPlan } from "../protocol";
 
-export interface TranslationPlan {
-  mode: Mode;
-  navigation: "single" | "paginated" | "dynamic";
-  fallback: boolean;
-  /** Why planning failed, when it did. */
-  error?: string;
-}
 const definition = Decision.make({
   input: PageContext,
   decisions: {
