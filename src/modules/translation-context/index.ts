@@ -34,8 +34,12 @@ export const CONTEXT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const emptyContext = (now: number): TranslationContext => ({ pages: [], glossary: [], recent: [], updatedAt: now });
 
-/** Context is shared per site (origin), so it follows the reader across pages. */
-export function contextKey(url: string | undefined): string | undefined {
+/**
+ * The site a page belongs to: its origin, for http and https pages only. Site context and cached
+ * translations are kept per site, so they follow the reader across a site's pages. Pages without
+ * a site (private windows pass no URL, browser and extension pages have none) keep nothing.
+ */
+export function siteOf(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     const { protocol, origin } = new URL(url);

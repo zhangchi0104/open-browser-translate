@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import {
   CONTEXT_TTL_MS,
-  contextKey,
+  siteOf,
   emptyContext,
   MAX_GLOSSARY,
   MAX_RECENT,
@@ -13,23 +13,34 @@ import {
   type TranslationContext,
 } from "../src/modules/translation-context";
 import { createContextCarryover, MAX_SITES } from "../src/modules/translation-context/carryover";
-import type { TranslationBatchResult } from "../src/modules/translator/translate-batch";
+import type { TranslationBatchResult } from "../src/modules/protocol";
 
-const ok = (translations: (string | null)[], terms: { source: string; target: string }[] = []): TranslationBatchResult =>
-  ({ status: "ok", translations, terms, analysisFallbackCount: 0 });
+const ok = (translations: string[], terms: { source: string; target: string }[] = []): TranslationBatchResult =>
+  ({ status: "ok", translations, terms });
 
+/** A store holding `initial` (anything an older version left) until the first write. */
 function memoryStore(initial: unknown = undefined) {
-  let value = initial;
-  return { get: async () => value, set: async (next: Record<string, TranslationContext>) => { value = next; }, peek: () => value as Record<string, TranslationContext> };
+  let written: Record<string, TranslationContext> | undefined;
+  return {
+    get: async () => written ?? initial,
+    set: async (next: Record<string, TranslationContext>) => { written = next; },
+    /** Whether anything was written. */
+    written: () => written !== undefined,
+    /** What was written last; fails the test when nothing was. */
+    saved: () => {
+      assert.ok(written, "nothing was written");
+      return written;
+    },
+  };
 }
 
 test("context is keyed by site, so it follows navigation within an origin only", () => {
-  assert.equal(contextKey("https://docs.example.com/a?x=1"), "https://docs.example.com");
-  assert.equal(contextKey("https://docs.example.com/b#c"), "https://docs.example.com");
-  assert.notEqual(contextKey("https://other.example.com/a"), contextKey("https://docs.example.com/a"));
-  assert.equal(contextKey("chrome://extensions"), undefined);
-  assert.equal(contextKey("not a url"), undefined);
-  assert.equal(contextKey(undefined), undefined);
+  assert.equal(siteOf("https://docs.example.com/a?x=1"), "https://docs.example.com");
+  assert.equal(siteOf("https://docs.example.com/b#c"), "https://docs.example.com");
+  assert.notEqual(siteOf("https://other.example.com/a"), siteOf("https://docs.example.com/a"));
+  assert.equal(siteOf("chrome://extensions"), undefined);
+  assert.equal(siteOf("not a url"), undefined);
+  assert.equal(siteOf(undefined), undefined);
 });
 
 test("terms are accepted only when they occur in the batch, and the newest rendering wins", () => {
@@ -62,10 +73,14 @@ test("only glossary terms that appear in the batch are sent", () => {
   assert.equal(promptContext(emptyContext(0), ["anything"]), undefined);
 });
 
-// Runs a batch through the carryover and returns the context the batch was sent with.
-async function batch(carryover: ReturnType<typeof createContextCarryover>, url: string, blocks: { text: string; tag: string }[], result: TranslationBatchResult = ok(blocks.map(() => null))) {
-  let sent: PromptContext | undefined;
-  await carryover.translate(url, blocks, async (context) => { sent = context; return result; });
+// Runs a batch through the carryover, as a page's batch does, and returns the context it was
+// sent with. By default the batch fails, so it leaves nothing behind.
+async function batch(carryover: ReturnType<typeof createContextCarryover>, url: string, blocks: { text: string; tag: string }[], result: TranslationBatchResult = { status: "failed" }) {
+  const site = siteOf(url);
+  const sent = await carryover.contextFor(site, blocks.map(({ text }) => text));
+  if (result.status === "ok") {
+    await carryover.record(site, blocks.map(({ text }, index) => ({ source: text, target: result.translations[index]! })), result.terms);
+  }
   await carryover.flush();
   return sent;
 }
@@ -73,9 +88,9 @@ async function batch(carryover: ReturnType<typeof createContextCarryover>, url: 
 test("context carries from one viewport batch to the next and across pages on the site", async () => {
   const store = memoryStore();
   const carryover = createContextCarryover(store, () => 1000);
-  await carryover.notePage("https://docs.example.com/intro", "Intro to Fibers");
-  assert.deepEqual(await batch(carryover, "https://docs.example.com/intro", [{ text: "A Fiber is a virtual thread", tag: "p" }, { text: "Menu", tag: "a" }],
-    ok(["纤程是一种虚拟线程", null], [{ source: "Fiber", target: "纤程" }])),
+  await carryover.notePage(siteOf("https://docs.example.com/intro"), "Intro to Fibers");
+  assert.deepEqual(await batch(carryover, "https://docs.example.com/intro", [{ text: "A Fiber is a virtual thread", tag: "p" }],
+    ok(["纤程是一种虚拟线程"], [{ source: "Fiber", target: "纤程" }])),
   { pages: ["Intro to Fibers"], glossary: [], recent: [] });
 
   // The first viewport batch taught the glossary; the next batch on the page sees it...
@@ -84,7 +99,7 @@ test("context carries from one viewport batch to the next and across pages on th
   assert.deepEqual(next!.recent, [{ source: "A Fiber is a virtual thread", target: "纤程是一种虚拟线程" }]);
 
   // ...and so does a later page on the same site, but not another site.
-  await carryover.notePage("https://docs.example.com/scheduling", "Scheduling");
+  await carryover.notePage(siteOf("https://docs.example.com/scheduling"), "Scheduling");
   const later = await batch(carryover, "https://docs.example.com/scheduling", [{ text: "Fiber scheduling", tag: "p" }]);
   assert.deepEqual(later!.pages, ["Intro to Fibers", "Scheduling"]);
   assert.deepEqual(later!.glossary, [{ source: "Fiber", target: "纤程" }]);
@@ -99,9 +114,9 @@ test("failed batches record nothing and concurrent updates are not lost", async 
   const store = memoryStore();
   const carryover = createContextCarryover(store, () => 1000);
   await batch(carryover, "https://a.example/", [{ text: "Hello", tag: "p" }], { status: "failed" });
-  assert.equal(store.peek(), undefined);
-  await Promise.all(Array.from({ length: 5 }, (_, index) => carryover.notePage("https://a.example/", `Page ${index}`)));
-  assert.equal(store.peek()["https://a.example"]!.pages.length, 5);
+  assert.equal(store.written(), false);
+  await Promise.all(Array.from({ length: 5 }, (_, index) => carryover.notePage(siteOf("https://a.example/"), `Page ${index}`)));
+  assert.equal(store.saved()["https://a.example"]!.pages.length, 5);
 });
 
 test("stale, corrupt and excess site contexts are dropped", async () => {
@@ -116,7 +131,7 @@ test("stale, corrupt and excess site contexts are dropped", async () => {
   const store = memoryStore();
   let clock = 0;
   const carryover = createContextCarryover(store, () => ++clock);
-  for (let index = 0; index <= MAX_SITES; index++) await carryover.notePage(`https://site${index}.example/`, "Home");
-  assert.equal(Object.keys(store.peek()).length, MAX_SITES);
-  assert.equal(store.peek()["https://site0.example"], undefined);
+  for (let index = 0; index <= MAX_SITES; index++) await carryover.notePage(siteOf(`https://site${index}.example/`), "Home");
+  assert.equal(Object.keys(store.saved()).length, MAX_SITES);
+  assert.equal(store.saved()["https://site0.example"], undefined);
 });

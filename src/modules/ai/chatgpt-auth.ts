@@ -2,6 +2,8 @@
 // https://developers.openai.com/siwc/token-sharing-open-source/sign-in
 // Pure protocol helpers; browser wiring lives in chatgpt-session.ts.
 
+import type { ChatGPTModel } from "../protocol";
+
 export const CHATGPT_ISSUER = "https://auth.openai.com";
 export const CHATGPT_API_URL = "https://api.openai.com/v1";
 const AUTHORIZE_URL = `${CHATGPT_ISSUER}/api/accounts/authorize`;
@@ -186,7 +188,6 @@ export async function refreshAccount(auth: ChatGPTAuth, fetcher: typeof fetch = 
   return { ...auth, account: toAccount(tokens, claims, account) };
 }
 
-export interface ChatGPTModel { slug: string; displayName: string }
 export async function listModels(accessToken: string, fetcher: typeof fetch = fetch): Promise<ChatGPTModel[]> {
   const response = await fetcher(`${CHATGPT_API_URL}/models`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!response.ok) throw new Error(`models request failed with ${response.status}: ${(await response.text().catch(() => "")).slice(0, 500)}`);

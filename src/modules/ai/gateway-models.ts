@@ -1,4 +1,4 @@
-import type { ChatGPTModel } from "./chatgpt-auth";
+import type { ChatGPTModel } from "../protocol";
 
 export const GATEWAY_API_URL = "https://ai-gateway.vercel.sh/v1";
 

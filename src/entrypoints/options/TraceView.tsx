@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { background } from "@/lib/background";
 import { groupTraces, toOtlpExport, traceSpans, type OtlpSpan, type OtlpValue, type TraceView as Trace } from "@/modules/debug-log";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -94,7 +95,7 @@ export function TraceView() {
   }
   async function clear() {
     try {
-      await browser.runtime.sendMessage({ type: "traces-clear" });
+      await background.request({ type: "traces-clear" });
       setStatus({ text: "追踪数据已清空" });
     } catch {
       setStatus({ text: "清空失败，请重试。", error: true });

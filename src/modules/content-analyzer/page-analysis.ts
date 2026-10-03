@@ -1,31 +1,19 @@
 import { Effect, Layer } from "effect";
-import { ContentAnalyzer, type ContentBlock } from "./index";
-import { analysisLayerFromSettings } from "../ai/configured";
+import { ContentAnalyzer } from "./index";
+import type { Block, Mode, PageAnalysisResult } from "../protocol";
+import { AnalysisModel } from "../ai/models";
 import { describeError } from "../debug-log/model";
-import type { ChatGPTCredentials } from "../ai/chatgpt";
-import { missingConfiguration } from "../translator/translate-batch";
-import type { AISettings } from "../settings/model";
 
-export type PageAnalysisResult =
-  | { status: "ok"; keep: boolean[]; priority: number[]; fallbackCount: number }
-  | { status: "not-configured" }
-  | { status: "failed"; error?: string };
-
-export function analyzePageContent(blocks: readonly ContentBlock[], settings: AISettings, chatgpt?: ChatGPTCredentials, mode: "all" | "main" = "main") {
-  if (missingConfiguration(settings, chatgpt, ["analysis"])) {
-    return Effect.succeed<PageAnalysisResult>({ status: "not-configured" });
-  }
+export function analyzePageContent(blocks: readonly Block[], mode: Mode = "main") {
   return ContentAnalyzer.use((analyzer) => analyzer.analyze(blocks, { mode })).pipe(
-    Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(analysisLayerFromSettings(settings, chatgpt)))),
+    Effect.provide(ContentAnalyzer.Live.pipe(Layer.provide(AnalysisModel))),
     Effect.timeout("15 seconds"),
-    Effect.match({
-      onFailure: (error): PageAnalysisResult => ({ status: "failed", error: describeError(error) }),
-      onSuccess: (items): PageAnalysisResult => ({
-        status: "ok",
-        keep: items.map((item) => item.shouldTranslate),
-        priority: items.map((item) => item.priority),
-        fallbackCount: items.filter((item) => item.fallbackReason !== undefined).length,
-      }),
-    }),
+    Effect.map((items): PageAnalysisResult => ({
+      status: "ok",
+      blocks: items.map((item) => ({ keep: item.shouldTranslate, priority: item.priority })),
+      fallbackCount: items.filter((item) => item.fallbackReason !== undefined).length,
+    })),
+    Effect.catchTag("ModelNotConfigured", ({ purpose }) => Effect.succeed<PageAnalysisResult>({ status: "not-configured", purpose })),
+    Effect.catch((error) => Effect.succeed<PageAnalysisResult>({ status: "failed", error: describeError(error) })),
   );
 }

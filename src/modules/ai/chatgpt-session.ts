@@ -4,7 +4,8 @@ import {
   ChatGPTAuthError, completeSignIn, createSignIn, isCallbackUrl, listModels, newHostId, refreshAccount,
   type ChatGPTAuth, type SignInAttempt,
 } from "./chatgpt-auth";
-import type { ChatGPTCredentials } from "./chatgpt";
+import { Effect, Layer } from "effect";
+import { ChatGPTToken } from "./chatgpt";
 import { debugLog } from "../debug-log";
 
 // Tokens live apart from AISettings so saving the settings form never overwrites them.
@@ -93,9 +94,14 @@ async function accessToken(): Promise<string> {
   return refreshing;
 }
 
-export async function chatgptCredentials(): Promise<ChatGPTCredentials | undefined> {
-  return (await chatgptAuth.getValue())?.account ? { accessToken } : undefined;
-}
+/** `ChatGPTToken` backed by the stored sign-in. */
+export const ChatGPTTokenLive = Layer.succeed(ChatGPTToken, {
+  signedIn: Effect.promise(async () => !!(await chatgptAuth.getValue())?.account),
+  accessToken: Effect.tryPromise({
+    try: accessToken,
+    catch: (error) => error instanceof ChatGPTAuthError ? error : new ChatGPTAuthError("invalid", error instanceof Error ? error.message : String(error)),
+  }),
+});
 
 export async function listChatGPTModels() {
   return listModels(await accessToken());

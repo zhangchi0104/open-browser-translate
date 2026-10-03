@@ -5,7 +5,7 @@ import { AiError, Decision, DecisionModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import { AI, openAIDecisionLayer } from "../src/modules/ai";
 import { toProviderAnswer } from "../src/modules/ai/openai-decisions";
-import { decisionResponse, isDecisionRequest } from "./decision-mock";
+import { blocksIn, chatRequest, decisionResponse, isDecisionRequest } from "./decision-mock";
 import { ContentAnalyzer, TRANSLATION_PRIORITY, type ContentRole } from "../src/modules/content-analyzer";
 import type { TranslatableContent } from "../src/modules/dom-parser";
 
@@ -73,12 +73,12 @@ test("OpenAI decision adapter sends one structured-output request and decodes an
     calls++;
     assert.equal(String(input), "https://api.openai.com/v1/chat/completions");
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-placeholder");
-    const request = JSON.parse(String(init?.body));
+    const request = chatRequest(init);
     assert.equal(request.model, "gpt-6-luna");
     assert.ok(isDecisionRequest(request));
     return decisionResponse(request, (key, input, options) => {
       assert.equal(key, "0");
-      assert.equal(input.blocks[0].text, "Article body");
+      assert.equal(blocksIn(input)[0]!.text, "Article body");
       assert.deepEqual(options, labels);
       return "content";
     });

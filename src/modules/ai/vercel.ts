@@ -6,6 +6,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 export function vercelLayer(options: {
   apiKey: Redacted.Redacted<string>;
   model: string;
+  reasoningEffort?: ReasoningEffort;
 }) {
   return openAICompatibleLayer({ ...options, apiUrl: "https://ai-gateway.vercel.sh/v1" });
 }

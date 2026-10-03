@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
+import { background } from "@/lib/background";
+import { PURPOSE_NAMES, type ChatGPTModel, type Purpose, type Request } from "@/modules/protocol";
 import { Bug, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import {
   aiSettings, REASONING_EFFORTS, validateModel,
@@ -7,7 +9,6 @@ import {
 import { AiProviders, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL, GATEWAY_DECISION_MODELS } from "@/modules/ai/providers";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/ai/chatgpt-session";
-import type { ChatGPTModel } from "@/modules/ai/chatgpt-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,7 +22,6 @@ import { cn } from "@/lib/utils";
 import { DebugLog } from "./DebugLog";
 import { CacheSettings } from "./CacheSettings";
 
-type Purpose = "analysis" | "translation";
 type Status = { text: string; error?: boolean };
 
 const providerLabels: Record<SettingsProvider, string> = {
@@ -72,7 +72,6 @@ const sections = {
     icon: Bug,
   },
 } as const;
-const purposeNames: Record<Purpose, string> = { analysis: "内容分析", translation: "翻译" };
 const signInErrors: Record<Exclude<SignInResult, { status: "ok" }>["reason"], string> = {
   cancelled: "登录已取消。",
   denied: "你拒绝了授权，未登录。",
@@ -95,26 +94,27 @@ function signInOutcome(state: string): Promise<SignInResult> {
 }
 
 /** A provider's model catalog; `unavailable` until there is an account or key to ask with. */
-type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: ChatGPTModel[] };
+type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: readonly ChatGPTModel[] };
 type CatalogProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
 interface LoadedCatalog { catalog: Catalog; reload: () => void }
 
 const gatewayDecisionCatalog: LoadedCatalog = { catalog: { status: "ok", models: GATEWAY_DECISION_MODELS }, reload: () => {} };
 
 /** Asks the background for a model catalog with `request`, waiting `delay` ms so typing a key doesn't fire a request per keystroke. */
-function useCatalog(request: { type: string; apiKey?: string } | undefined, delay = 0): LoadedCatalog {
+function useCatalog(request: Request<"chatgpt-models" | "openai-models" | "gateway-models"> | undefined, delay = 0): LoadedCatalog {
   const [catalog, setCatalog] = useState<Catalog>({ status: "unavailable" });
   const [attempt, setAttempt] = useState(0);
+  // The request is a new object each render; its JSON says when it actually changed.
   const key = request && JSON.stringify(request);
   useEffect(() => {
-    if (!key) return setCatalog({ status: "unavailable" });
+    if (!request) return setCatalog({ status: "unavailable" });
     let current = true;
     setCatalog({ status: "loading" });
-    const timer = setTimeout(() => browser.runtime.sendMessage(JSON.parse(key)).then(
-      (response: { status: string; models?: ChatGPTModel[] }) => {
+    const timer = setTimeout(() => background.request(request).then(
+      (response) => {
         if (!current) return;
-        setCatalog(response?.status === "ok" ? { status: "ok", models: response.models ?? [] }
-          : response?.status === "no-key" ? { status: "unavailable" } : { status: "failed" });
+        setCatalog(response.status === "ok" ? { status: "ok", models: response.models }
+          : response.status === "no-key" ? { status: "unavailable" } : { status: "failed" });
       },
       () => { if (current) setCatalog({ status: "failed" }); },
     ), delay);
@@ -205,7 +205,7 @@ export function App() {
       const error = validateModel(provider, model);
       if (error) {
         setErrors({ [purpose]: error });
-        setStatus({ text: `${purposeNames[purpose]}：${error}`, error: true });
+        setStatus({ text: `${PURPOSE_NAMES[purpose]}：${error}`, error: true });
         setSection("models");
         // The models card may be hidden until this render commits.
         requestAnimationFrame(() => modelInputs[purpose].current?.focus());
@@ -230,7 +230,8 @@ export function App() {
     setBusy(true);
     setStatus({ text: "请在新打开的页面中登录 ChatGPT…" });
     try {
-      const started: { status: "started"; state: string } = await browser.runtime.sendMessage({ type: "chatgpt-sign-in" });
+      const started = await background.request({ type: "chatgpt-sign-in" });
+      if (started.status !== "started") throw new Error(started.error ?? "后台无法开始登录");
       const result = await signInOutcome(started.state);
       setStatus(result.status === "ok"
         ? { text: `已登录 ${result.email}` + (dirty ? "；其他更改尚未保存" : "") }
@@ -244,7 +245,7 @@ export function App() {
   async function signOut() {
     setBusy(true);
     try {
-      await browser.runtime.sendMessage({ type: "chatgpt-sign-out" });
+      await background.request({ type: "chatgpt-sign-out" });
       setStatus({ text: "已退出 ChatGPT" + (dirty ? "；其他更改尚未保存" : "") });
     } catch {
       setStatus({ text: "退出失败，请重试。", error: true });
@@ -274,7 +275,7 @@ export function App() {
   }
 
   const uses = draft
-    ? (["analysis", "translation"] as const).filter((p) => draft[p].provider === active).map((p) => purposeNames[p])
+    ? (["analysis", "translation"] as const).filter((p) => draft[p].provider === active).map((p) => PURPOSE_NAMES[p])
     : [];
 
   return (

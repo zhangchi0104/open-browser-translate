@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import { Decision } from "effect/unstable/ai";
 import { AI } from "../ai";
-import { ANALYSIS_BATCH_SIZE } from "./protocol";
+import { MAX_BATCH_BLOCKS, type Block, type Mode } from "../protocol";
 import { describeError } from "../debug-log/model";
 
 
@@ -25,9 +25,8 @@ export const TRANSLATION_PRIORITY: Record<ContentRole, number> = {
   auxiliary: 3,
   advertisement: 3,
 };
-export interface ContentBlock { text: string; tag: string; }
 
-export interface AnalyzedContent<T extends ContentBlock = ContentBlock> {
+export interface AnalyzedContent<T extends Block = Block> {
   content: T;
   role: ContentRole;
   shouldTranslate: boolean;
@@ -40,7 +39,7 @@ export interface AnalyzedContent<T extends ContentBlock = ContentBlock> {
 }
 
 export interface AnalyzeOptions {
-  mode?: "all" | "main";
+  mode?: Mode;
 }
 
 const Input = Schema.Struct({
@@ -54,7 +53,7 @@ const Input = Schema.Struct({
 const MAX_BLOCK_LENGTH = 2000;
 const MIN_CONFIDENCE = 0.8;
 
-const fallback = <T extends ContentBlock>(
+const fallback = <T extends Block>(
   content: T,
   fallbackReason: AnalyzedContent["fallbackReason"],
   fallbackDetail?: string,
@@ -63,7 +62,7 @@ const fallback = <T extends ContentBlock>(
 });
 
 export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
-  readonly analyze: <T extends ContentBlock>(
+  readonly analyze: <T extends Block>(
     content: readonly T[],
     options?: AnalyzeOptions,
   ) => Effect.Effect<AnalyzedContent<T>[]>;
@@ -72,10 +71,10 @@ export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
     const ai = yield* AI;
 
     return {
-      analyze: <T extends ContentBlock>(content: readonly T[], options: AnalyzeOptions = {}) => Effect.gen(function* () {
+      analyze: <T extends Block>(content: readonly T[], options: AnalyzeOptions = {}) => Effect.gen(function* () {
         const results: AnalyzedContent<T>[] = [];
-        for (let offset = 0; offset < content.length; offset += ANALYSIS_BATCH_SIZE) {
-          const batch = content.slice(offset, offset + ANALYSIS_BATCH_SIZE);
+        for (let offset = 0; offset < content.length; offset += MAX_BATCH_BLOCKS) {
+          const batch = content.slice(offset, offset + MAX_BATCH_BLOCKS);
           const blocks = batch.flatMap((item, index) => item.text.length > MAX_BLOCK_LENGTH
             ? []
             : [{ id: String(index), text: item.text, tag: item.tag }]);

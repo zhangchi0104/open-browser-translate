@@ -1,6 +1,7 @@
-import { Cause, Effect, Exit, Option, Tracer } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Tracer } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { describeError, truncate } from "./model";
+import { createStoredValue, type ValueStore } from "../stored-value";
 
 // Spans in the OTLP JSON shape (https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding),
 // so an export opens in any OpenTelemetry viewer. Nothing is sent anywhere: spans are
@@ -107,33 +108,21 @@ export function createLocalTracer(onEnd: (span: OtlpSpan) => void): Tracer.Trace
   return Tracer.make({ span: (options) => new RecordingSpan(options, onEnd) });
 }
 
-/** Runs `effect` under `tracer`, without trace headers on outgoing requests or headers in spans. */
-export function traced<A, E, R>(effect: Effect.Effect<A, E, R>, tracer: Tracer.Tracer): Effect.Effect<A, E, R> {
-  return effect.pipe(
-    Effect.withTracer(tracer),
-    Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-    Effect.provideService(HttpClient.TracerHeaderFilter, () => false),
+/**
+ * Effects run with this layer record spans with `tracer`. They send no trace headers, which would
+ * tell providers about local spans, and keep no headers in spans, since headers can carry keys.
+ */
+export function tracingLayer(tracer: Tracer.Tracer) {
+  return Layer.mergeAll(
+    Layer.succeed(Tracer.Tracer, tracer),
+    Layer.succeed(HttpClient.TracerPropagationEnabled, false),
+    Layer.succeed(HttpClient.TracerHeaderFilter, () => false),
   );
 }
 
-/** Runs effects under a request's span from plain async code. */
-export type RunInSpan = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
-
-/**
- * Runs an async request handler as a root span. Effects it starts through `run` are
- * children of that span; `Effect.useSpan` alone wouldn't parent them, and each
- * `runPromise` starts a fresh fiber.
- */
-export function traceRequest<A>(
-  tracer: Tracer.Tracer,
-  name: string,
-  attributes: Record<string, unknown>,
-  body: (span: Tracer.Span, run: RunInSpan) => Promise<A>,
-): Promise<A> {
-  return Effect.runPromise(traced(Effect.useSpan(name, { attributes, kind: "server" }, (span) => {
-    const run: RunInSpan = (effect) => Effect.runPromise(traced(effect.pipe(Effect.withParentSpan(span)), tracer));
-    return Effect.promise(() => body(span, run));
-  }), tracer));
+/** Runs `effect` under `tracer`, as `tracingLayer` does. */
+export function traced<A, E, R>(effect: Effect.Effect<A, E, R>, tracer: Tracer.Tracer): Effect.Effect<A, E, R> {
+  return effect.pipe(Effect.provide(tracingLayer(tracer)));
 }
 
 /** Marks a span as failed when the handler turned the failure into a result instead of failing. */
@@ -149,41 +138,39 @@ export function markFailed(span: Tracer.Span, description: string, error?: unkno
 }
 
 /** Where spans live; extension storage in the background, an array in tests. */
-export interface TraceStore {
-  get(): Promise<OtlpSpan[] | null>;
-  set(value: OtlpSpan[]): Promise<void>;
-}
+export type TraceStore = ValueStore<OtlpSpan[]>;
 
 export const MAX_TRACES = 100;
 
-/** Keeps the spans of the newest traces. Writes go through one queue, like the debug log. */
+/** Keeps the spans of the newest traces. */
 export function createTraceStore(store: TraceStore, maxTraces = MAX_TRACES) {
-  let pending: OtlpSpan[] = [];
-  let writes: Promise<void> = Promise.resolve();
-  const enqueue = (change: (spans: OtlpSpan[]) => OtlpSpan[]) => {
-    writes = writes.then(async () => { await store.set(change((await store.get()) ?? [])); })
-      .catch((error) => console.error("Trace write failed:", error));
-    return writes;
+  const spans = createStoredValue(store, {
+    parse: (stored) => stored ?? [],
+    onError: (error) => console.error("Trace write failed:", error),
+  });
+  // Spans ending together (a request and its steps) are trimmed once, in the write that saves them.
+  let ended: OtlpSpan[] = [];
+  const trim = (current: OtlpSpan[]) => {
+    if (!ended.length) return current;
+    const all = current.concat(ended);
+    ended = [];
+    // A trace's recency is where its latest span landed.
+    const order: string[] = [];
+    for (const { traceId } of all) {
+      const index = order.indexOf(traceId);
+      if (index >= 0) order.splice(index, 1);
+      order.push(traceId);
+    }
+    const kept = new Set(order.slice(-maxTraces));
+    return all.filter(({ traceId }) => kept.has(traceId));
   };
   return {
-    record(span: OtlpSpan) {
-      if (pending.push(span) > 1) return writes;
-      return enqueue((spans) => {
-        const all = spans.concat(pending);
-        pending = [];
-        // A trace's recency is where its latest span landed.
-        const order: string[] = [];
-        for (const { traceId } of all) {
-          const index = order.indexOf(traceId);
-          if (index >= 0) order.splice(index, 1);
-          order.push(traceId);
-        }
-        const kept = new Set(order.slice(-maxTraces));
-        return all.filter(({ traceId }) => kept.has(traceId));
-      });
+    record: (span: OtlpSpan) => {
+      ended.push(span);
+      return spans.update(trim);
     },
-    clear: () => enqueue(() => []),
-    flush: () => writes,
+    clear: () => spans.update(() => []),
+    flush: spans.flush,
   };
 }
 

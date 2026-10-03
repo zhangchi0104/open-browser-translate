@@ -1,8 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { Effect } from "effect";
+import { Effect, ManagedRuntime } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { createLocalTracer, createTraceStore, groupTraces, markFailed, toOtlpExport, traced, traceRequest, type OtlpSpan } from "../src/modules/debug-log/trace";
+import { createLocalTracer, createTraceStore, groupTraces, markFailed, toOtlpExport, traced, tracingLayer, type OtlpSpan } from "../src/modules/debug-log/trace";
 
 const value = (span: OtlpSpan, key: string) => span.attributes.find((attribute) => attribute.key === key)?.value;
 
@@ -88,15 +88,17 @@ test("the store keeps the newest traces, groups them and exports OTLP JSON", asy
   assert.deepEqual(saved, []);
 });
 
-test("effects a request runs, even in their own runPromise, are children of the request's span", async () => {
+test("a request run on a runtime with the tracing layer records its steps as children, and a handled failure", async () => {
   const spans: OtlpSpan[] = [];
   const tracer = createLocalTracer((span) => spans.push(span));
-  const result = await traceRequest(tracer, "translate-content", { "obt.blocks": 2 }, async (span, run) => {
-    await run(Effect.succeed(1).pipe(Effect.withSpan("content-analysis")));
-    await run(Effect.fail(new Error("bad ids")).pipe(Effect.withSpan("translation"), Effect.orElseSucceed(() => 0)));
+  const runtime = ManagedRuntime.make(tracingLayer(tracer));
+  const result = await runtime.runPromise(Effect.gen(function* () {
+    const span = yield* Effect.orDie(Effect.currentSpan);
+    yield* Effect.succeed(1).pipe(Effect.withSpan("content-analysis"));
+    yield* Effect.fail(new Error("bad ids")).pipe(Effect.withSpan("translation"), Effect.orElseSucceed(() => 0));
     markFailed(span, "翻译批次失败", new Error("bad ids"));
     return "done";
-  });
+  }).pipe(Effect.withSpan("translate-content", { kind: "server", attributes: { "obt.blocks": 2 } })));
   assert.equal(result, "done");
   const root = spans.find((span) => span.name === "translate-content")!;
   for (const name of ["content-analysis", "translation"]) {

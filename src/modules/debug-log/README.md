@@ -8,8 +8,8 @@ extension storage; nothing is uploaded.
 
 Translation requests (`prepare-translation`, `translate-content`,
 `analyze-content`) are recorded as OpenTelemetry traces (`trace.ts`). The
-background runs each request as a root span with `traceRequest`; effects it
-starts through the `run` it hands out become child spans. `translateBatch` adds
+background runs each request as a root span on its `ManagedRuntime`, whose
+`tracingLayer` records spans locally; the request's steps are child spans. `translateBatch` adds
 `content-analysis` and `translation` spans, and Effect's own AI and HTTP modules
 add `DecisionModel.decide`, `LanguageModel.*` (with `gen_ai.*` model and token
 attributes) and `http.client` spans below them.
@@ -30,8 +30,9 @@ bounded log (`model.ts`) in `local:debugLog`, newest 500 entries, each detail cu
 at 4000 characters. Content scripts send `{ type: "debug-log", entry }` and the
 background attaches the sender's page.
 
-The background is the only writer of both stores; writes go through one queue
-each, so concurrent requests land in order. The options page clears them with
+The background is the only writer of both stores. Each is a stored value
+(`../stored-value`): read once, kept in memory, and written through ordered,
+batched updates, so concurrent requests land in order. The options page clears them with
 `debug-log-clear` and `traces-clear`.
 
 Neither store records page text or API keys, though a provider's error message

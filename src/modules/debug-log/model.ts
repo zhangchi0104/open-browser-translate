@@ -1,4 +1,5 @@
 import { Cause } from "effect";
+import { createStoredValue, type ValueStore } from "../stored-value";
 
 export type LogLevel = "info" | "warn" | "error";
 export type LogSource = "background" | "page";
@@ -13,10 +14,7 @@ export interface LogEntry {
 }
 
 /** Where entries live; extension storage in the background, an array in tests. */
-export interface LogStore {
-  get(): Promise<LogEntry[] | null>;
-  set(value: LogEntry[]): Promise<void>;
-}
+export type LogStore = ValueStore<LogEntry[]>;
 
 // Keeps storage bounded: the newest entries survive.
 export const MAX_ENTRIES = 500;
@@ -62,40 +60,27 @@ export function formatEntries(entries: readonly LogEntry[]): string {
   ].filter(Boolean).join("\n")).join("\n");
 }
 
-/**
- * Appends entries to a bounded log. Writes go through one queue so entries from
- * concurrent requests land in order and none overwrite each other.
- */
+/** Appends entries to a bounded log; entries from concurrent requests land in order. */
 export function createDebugLog(store: LogStore, now: () => number = Date.now) {
-  let pending: LogEntry[] = [];
-  let writes: Promise<void> = Promise.resolve();
-  const enqueue = (change: (entries: LogEntry[]) => LogEntry[]) => {
-    writes = writes.then(async () => {
-      await store.set(change((await store.get()) ?? []));
-    }).catch((error) => console.error("Debug log write failed:", error));
-    return writes;
-  };
+  const entries = createStoredValue(store, {
+    parse: (stored) => stored ?? [],
+    onError: (error) => console.error("Debug log write failed:", error),
+  });
   const write = (level: LogLevel, event: string, options: { detail?: string; page?: string; source?: LogSource } = {}) => {
     const entry: LogEntry = { at: now(), level, source: options.source ?? "background", event };
     if (options.detail) entry.detail = truncate(options.detail);
     if (options.page) entry.page = options.page;
     console[level === "info" ? "info" : level](`[debug-log] ${event}`, options.detail ?? "");
-    // Entries logged while a write is in flight share the next write.
-    if (pending.push(entry) > 1) return writes;
-    return enqueue((entries) => {
-      const added = pending;
-      pending = [];
-      return entries.concat(added).slice(-MAX_ENTRIES);
-    });
+    return entries.update((current) => current.concat(entry).slice(-MAX_ENTRIES));
   };
   return {
     info: (event: string, options?: Parameters<typeof write>[2]) => write("info", event, options),
     warn: (event: string, options?: Parameters<typeof write>[2]) => write("warn", event, options),
     error: (event: string, options?: Parameters<typeof write>[2]) => write("error", event, options),
     write,
-    clear: () => enqueue(() => []),
+    clear: () => entries.update(() => []),
     /** Resolves once every pending write has reached the store. */
-    flush: () => writes,
+    flush: entries.flush,
   };
 }
 export type DebugLog = ReturnType<typeof createDebugLog>;

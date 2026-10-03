@@ -6,8 +6,8 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { Schema } from "effect";
 import { defaultSettings, migrateSettings, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, validateModel } from "../src/modules/settings/model";
 import { AiProviders } from "../src/modules/ai/providers";
-import { analysisLayerFromSettings, translationLayerFromSettings } from "../src/modules/ai/configured";
-import { decisionResponse, isDecisionRequest } from "./decision-mock";
+import { analysisModelFor, modelsFor, translationModelFor } from "../src/modules/ai/models";
+import { blocksIn, chatCompletion, chatRequest, decisionResponse, isDecisionRequest, requestedModel, type ChatRequest } from "./decision-mock";
 
 test("models can be configured independently, while nonempty IDs remain validated", () => {
   assert.equal(validateModel(AiProviders.VercelAIGateway, ""), undefined);
@@ -54,7 +54,7 @@ test("analysis and translation route independently through configured providers"
   const fetchMock: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
     requests.push(url);
-    const body = JSON.parse(String(init?.body));
+    const body = chatRequest(init);
     if (isDecisionRequest(body)) {
       assert.equal(url, "https://api.openai.com/v1/chat/completions");
       assert.equal(body.model, "gpt-6-luna");
@@ -64,12 +64,12 @@ test("analysis and translation route independently through configured providers"
     assert.equal(url, "https://ai-gateway.vercel.sh/v1/chat/completions");
     assert.equal(body.model, "vendor/translator");
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-gateway");
-    return Response.json({ id: "test", object: "chat.completion", created: 1, model: body.model, choices: [{ index: 0, message: { role: "assistant", content: "你好" }, finish_reason: "stop" }] });
+    return chatCompletion(body.model, "你好");
   };
   const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is this relevant?", criteria: { true: "Relevant", false: "Irrelevant" } }) } });
-  const analysis = await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
+  const analysis = await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(Effect.provide(analysisModelFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
   assert.equal(analysis.answers.relevant.probability, 1);
-  const translation = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(Effect.provide(translationLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
+  const translation = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(Effect.provide(translationModelFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
   assert.equal(translation.text, "你好");
   assert.equal(requests.length, 2);
 });
@@ -79,21 +79,20 @@ test("page analysis requires configuration and returns only serializable decisio
   const settings = structuredClone(defaultSettings);
   settings.analysis.provider = AiProviders.OpenAIApi;
   const blocks = [{ text: "Article text", tag: "p" }, { text: "Home", tag: "a" }];
-  assert.deepEqual(await Effect.runPromise(analyzePageContent(blocks, settings)), { status: "not-configured" });
+  assert.deepEqual(await Effect.runPromise(analyzePageContent(blocks).pipe(Effect.provide(modelsFor(settings)))), { status: "not-configured", purpose: "analysis" });
   settings.providers.OpenAIApi.apiKey = "test-direct";
   const fetchMock: typeof globalThis.fetch = async (input, init) => {
     assert.equal(String(input), "https://api.openai.com/v1/chat/completions");
-    const request = JSON.parse(String(init?.body));
-    return decisionResponse(request, (key, state) => {
-      assert.deepEqual(state.blocks.map(({ text, tag }: {text: string; tag: string}) => ({ text, tag })), blocks);
+    return decisionResponse(chatRequest(init), (key, state) => {
+      assert.deepEqual(blocksIn(state).map(({ text, tag }) => ({ text, tag })), blocks);
       return key === "0" ? "content" : "navigation";
     });
   };
-  const result = await Effect.runPromise(analyzePageContent(blocks, settings).pipe(Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
-  assert.deepEqual(result, { status: "ok", keep: [true, false], priority: [0, 2], fallbackCount: 0 });
+  const result = await Effect.runPromise(analyzePageContent(blocks).pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
+  assert.deepEqual(result, { status: "ok", blocks: [{ keep: true, priority: 0 }, { keep: false, priority: 2 }], fallbackCount: 0 });
   const failedFetch: typeof globalThis.fetch = async () => Response.json({ message: "Unauthorized", error_type: "authentication_error" }, { status: 401 });
-  const fallback = await Effect.runPromise(analyzePageContent(blocks, settings).pipe(Effect.provideService(FetchHttpClient.Fetch, failedFetch)));
-  assert.deepEqual(fallback, { status: "ok", keep: [true, true], priority: [1, 1], fallbackCount: 2 });
+  const fallback = await Effect.runPromise(analyzePageContent(blocks).pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, failedFetch)));
+  assert.deepEqual(fallback, { status: "ok", blocks: [{ keep: true, priority: 1 }, { keep: true, priority: 1 }], fallbackCount: 2 });
 });
 
 test("version 4 moves analysis without an OpenAI key to the gateway and keeps configured choices", () => {
@@ -116,54 +115,50 @@ test("gateway analysis asks an evaluation model through the gateway's System One
   const settings = structuredClone(defaultSettings);
   settings.providers.VercelAIGateway.apiKey = "test-gateway";
   const fetchMock: typeof globalThis.fetch = async (input, init) => {
-    const body = JSON.parse(String(init?.body));
+    const model = requestedModel(init);
     assert.equal(String(input), "https://ai-gateway.vercel.sh/typesafe/v1/systemone");
-    assert.equal(body.model, "typesafe-ai/jev");
+    assert.equal(model, "typesafe-ai/jev");
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-gateway");
-    return Response.json({ model: body.model, answers: { relevant: { type: "noul", noul: 0.9 } } });
+    return Response.json({ model, answers: { relevant: { type: "noul", noul: 0.9 } } });
   };
   const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is this relevant?", criteria: { true: "Relevant", false: "Irrelevant" } }) } });
-  const analysis = await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
+  const analysis = await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(Effect.provide(analysisModelFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
   assert.equal(analysis.answers.relevant.probability, 0.9);
 });
 
 test("reasoning effort reaches each provider in its own field, and is omitted by default", async () => {
-  const bodies: any[] = [];
+  const bodies: ChatRequest[] = [];
   const chat: typeof globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body));
+    const body = chatRequest(init);
     bodies.push(body);
-    return isDecisionRequest(body)
-      ? decisionResponse(body, () => "true")
-      : Response.json({ id: "test", object: "chat.completion", created: 1, model: body.model, choices: [{ index: 0, message: { role: "assistant", content: "你好" }, finish_reason: "stop" }] });
+    return isDecisionRequest(body) ? decisionResponse(body, () => "true") : chatCompletion(body.model, "你好");
   };
   const settings = structuredClone(defaultSettings);
   settings.providers.VercelAIGateway.apiKey = "test-gateway";
   settings.providers.OpenAIApi.apiKey = "test-direct";
   settings.translation.models.VercelAIGateway = "vendor/translator";
   const translate = () => Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
+    Effect.provide(translationModelFor(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
   await translate();
-  assert.equal("reasoning_effort" in bodies.at(-1), false);
+  assert.equal(bodies.at(-1)!.reasoning_effort, undefined);
   settings.translation.reasoningEffort = "low";
   await translate();
-  assert.equal(bodies.at(-1).reasoning_effort, "low");
+  assert.equal(bodies.at(-1)!.reasoning_effort, "low");
 
   settings.analysis.provider = AiProviders.OpenAIApi;
   settings.analysis.reasoningEffort = "minimal";
   const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is this relevant?", criteria: { true: "Relevant", false: "Irrelevant" } }) } });
   await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(
-    Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
-  assert.equal(bodies.at(-1).reasoning_effort, "minimal");
+    Effect.provide(analysisModelFor(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
+  assert.equal(bodies.at(-1)!.reasoning_effort, "minimal");
 });
 
 test("fast mode is a ChatGPT plan option; key-based providers never send a service tier", async () => {
-  const bodies: any[] = [];
+  const bodies: ChatRequest[] = [];
   const chat: typeof globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body));
+    const body = chatRequest(init);
     bodies.push(body);
-    return isDecisionRequest(body)
-      ? decisionResponse(body, () => "true")
-      : Response.json({ id: "test", object: "chat.completion", created: 1, model: body.model, choices: [{ index: 0, message: { role: "assistant", content: "你好" }, finish_reason: "stop" }] });
+    return isDecisionRequest(body) ? decisionResponse(body, () => "true") : chatCompletion(body.model, "你好");
   };
   const settings = structuredClone(defaultSettings);
   settings.providers.VercelAIGateway.apiKey = "test-gateway";
@@ -173,13 +168,13 @@ test("fast mode is a ChatGPT plan option; key-based providers never send a servi
   settings.analysis.provider = AiProviders.OpenAIApi;
   settings.analysis.fast = true;
   await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
+    Effect.provide(translationModelFor(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
   const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is this relevant?", criteria: { true: "Relevant", false: "Irrelevant" } }) } });
   await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(
-    Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
+    Effect.provide(analysisModelFor(settings)), Effect.provideService(FetchHttpClient.Fetch, chat)));
   for (const body of bodies) {
-    assert.equal("service_tier" in body, false);
-    assert.equal("providerOptions" in body, false);
+    assert.equal(body.service_tier, undefined);
+    assert.equal(body.providerOptions, undefined);
   }
 });
 
@@ -187,14 +182,13 @@ test("Jev's rounded probabilities are renormalized; a distribution far from 1 st
   const settings = structuredClone(defaultSettings);
   settings.providers.VercelAIGateway.apiKey = "test-gateway";
   const respond = (probabilities: Record<string, number>): typeof globalThis.fetch => async (_input, init) => {
-    const body = JSON.parse(String(init?.body));
-    return Response.json({ model: body.model, answers: { kind: { type: "choice", choice: "content", confidence: 0.9, probabilities } } });
+    return Response.json({ model: requestedModel(init), answers: { kind: { type: "choice", choice: "content", confidence: 0.9, probabilities } } });
   };
   const definition = Decision.make({ input: Schema.String, decisions: {
     kind: Decision.classify({ instructions: "What is this?", criteria: { content: "Content", navigation: "Navigation", advertisement: "Ad" } }),
   } });
   const decide = (fetch: typeof globalThis.fetch) => Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(
-    Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.result));
+    Effect.provide(analysisModelFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.result));
 
   const rounded = await decide(respond({ content: 0.8333, navigation: 0.1333, advertisement: 0.0332 }));
   assert.ok(rounded._tag === "Success", "a sum of 0.9998 is rounding, not a wrong answer");

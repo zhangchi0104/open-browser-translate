@@ -66,8 +66,8 @@ export function createBatchQueue<T>(options: {
   limit: number;
   next: () => T | undefined;
   run: (batch: T) => Promise<boolean>;
-  onBusy: (inFlight: number) => void;
-  onIdle: () => void;
+  /** After each look for work, with how many batches are in flight (0 when idle). */
+  onChange: (inFlight: number) => void;
 }) {
   let wake: (() => void) | undefined;
   let stopped = false;
@@ -82,8 +82,8 @@ export function createBatchQueue<T>(options: {
       stopped = true;
       nudge();
     },
-    /** Resolves once `active` turns false or a batch stops the queue; batches still in flight are left to finish. */
-    async drain(active: () => boolean) {
+    /** Resolves once `stop` is called or a batch stops the queue; batches still in flight are left to finish. */
+    async drain() {
       const inFlight = new Set<Promise<void>>();
       const fill = () => {
         while (inFlight.size < options.limit) {
@@ -98,10 +98,9 @@ export function createBatchQueue<T>(options: {
           inFlight.add(task);
         }
       };
-      while (active() && !stopped) {
+      while (!stopped) {
         fill();
-        if (inFlight.size) options.onBusy(inFlight.size);
-        else options.onIdle();
+        options.onChange(inFlight.size);
         await new Promise<void>((resolve) => { wake = resolve; });
       }
     },

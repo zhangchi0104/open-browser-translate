@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { background } from "@/lib/background";
 import { debugLogEntries, formatEntries, type LogEntry, type LogLevel } from "@/modules/debug-log";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -70,7 +71,7 @@ function LogView() {
   }
   async function clear() {
     try {
-      await browser.runtime.sendMessage({ type: "debug-log-clear" });
+      await background.request({ type: "debug-log-clear" });
       setStatus({ text: "日志已清空" });
     } catch {
       setStatus({ text: "清空失败，请重试。", error: true });
