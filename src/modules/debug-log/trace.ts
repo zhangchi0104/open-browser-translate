@@ -107,18 +107,10 @@ export function createLocalTracer(onEnd: (span: OtlpSpan) => void): Tracer.Trace
   return Tracer.make({ span: (options) => new RecordingSpan(options, onEnd) });
 }
 
-// Trace headers would tell the provider about local spans, and headers can carry keys.
-const localOnly = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(
-  Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-  Effect.provideService(HttpClient.TracerHeaderFilter, () => false),
-);
-
-/** Runs `effect` under `tracer`, without trace headers on outgoing requests or headers in spans. */
-export function traced<A, E, R>(effect: Effect.Effect<A, E, R>, tracer: Tracer.Tracer): Effect.Effect<A, E, R> {
-  return localOnly(effect.pipe(Effect.withTracer(tracer)));
-}
-
-/** `traced` as a layer: effects run on a runtime built from it record their spans with `tracer`. */
+/**
+ * Effects run with this layer record spans with `tracer`. They send no trace headers, which would
+ * tell providers about local spans, and keep no headers in spans, since headers can carry keys.
+ */
 export function tracingLayer(tracer: Tracer.Tracer) {
   return Layer.mergeAll(
     Layer.succeed(Tracer.Tracer, tracer),
@@ -127,11 +119,13 @@ export function tracingLayer(tracer: Tracer.Tracer) {
   );
 }
 
-/** Runs effects needing `R` to completion; `ManagedRuntime#runPromise` in the background. */
-export type RunPromise<R> = <A, E>(effect: Effect.Effect<A, E, R>) => Promise<A>;
+/** Runs `effect` under `tracer`, as `tracingLayer` does. */
+export function traced<A, E, R>(effect: Effect.Effect<A, E, R>, tracer: Tracer.Tracer): Effect.Effect<A, E, R> {
+  return effect.pipe(Effect.provide(tracingLayer(tracer)));
+}
 
-/** Runs effects under a request's span from plain async code. */
-export type RunInSpan<R = never> = RunPromise<R>;
+/** Runs effects needing `R` to completion from plain async code; `ManagedRuntime#runPromise` in the background. */
+export type RunInSpan<R = never> = <A, E>(effect: Effect.Effect<A, E, R>) => Promise<A>;
 
 /**
  * Runs an async request handler as a root span on `runPromise`, whose tracer records it.
@@ -139,7 +133,7 @@ export type RunInSpan<R = never> = RunPromise<R>;
  * alone wouldn't parent them, and each `runPromise` starts a fresh fiber.
  */
 export function traceRequest<A, R>(
-  runPromise: RunPromise<R>,
+  runPromise: RunInSpan<R>,
   name: string,
   attributes: Record<string, unknown>,
   body: (span: Tracer.Span, run: RunInSpan<R>) => Promise<A>,

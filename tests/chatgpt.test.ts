@@ -6,16 +6,12 @@ import { FetchHttpClient } from "effect/unstable/http";
 import {
   CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, listModels, parseCallback, refreshAccount, type ChatGPTAuth,
 } from "../src/modules/ai/chatgpt-auth";
-import { AnalysisModel, missingConfiguration, modelsFor, TranslationModel } from "../src/modules/ai/models";
+import { analysisModelFor, missingConfiguration, translationModelFor } from "../src/modules/ai/models";
 import { AiProviders } from "../src/modules/ai/providers";
 import { listOpenAIModels } from "../src/modules/ai/openai-models";
 import { describeError } from "../src/modules/debug-log/model";
 import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/debug-log/trace";
-import { defaultSettings, type AISettings } from "../src/modules/settings/model";
-
-// Models chosen by `settings`, signed in to ChatGPT.
-const translationModel = (settings: AISettings) => TranslationModel.pipe(Layer.provide(modelsFor(settings, "oauth-token")));
-const analysisModel = (settings: AISettings) => AnalysisModel.pipe(Layer.provide(modelsFor(settings, "oauth-token")));
+import { defaultSettings } from "../src/modules/settings/model";
 
 const b64url = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
 const keys = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
@@ -139,14 +135,14 @@ test("subscription translation streams Responses requests with the OAuth token",
     return sse({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } }, { type: "response.completed", response: completed });
   };
   const result = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationModel(settings)),
+    Effect.provide(translationModelFor(settings, "oauth-token")),
     Effect.provideService(FetchHttpClient.Fetch, fetchMock),
   ));
   assert.equal(result.text, "你好");
 
   const limited: typeof fetch = async () => sse({ type: "response.failed", response: { ...completed, status: "failed", output: [], error: { code: "subscription_sharing_usage_limit_exceeded", message: "limit" } } });
   const limit = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationModel(settings)),
+    Effect.provide(translationModelFor(settings, "oauth-token")),
     Effect.provideService(FetchHttpClient.Fetch, limited),
     Effect.flip,
   ));
@@ -154,7 +150,7 @@ test("subscription translation streams Responses requests with the OAuth token",
 
   const streamFailed: typeof fetch = async () => sse({ type: "response.failed", response: { ...completed, status: "failed", output: [], error: { code: "server_error", message: "boom from the stream" } } });
   const failed = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationModel(settings)),
+    Effect.provide(translationModelFor(settings, "oauth-token")),
     Effect.provideService(FetchHttpClient.Fetch, streamFailed),
     Effect.flip,
   ));
@@ -169,7 +165,7 @@ test("subscription translation streams Responses requests with the OAuth token",
     { type: "response.completed", response: { ...completed, output: [] } },
   );
   const fromItems = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationModel(settings)),
+    Effect.provide(translationModelFor(settings, "oauth-token")),
     Effect.provideService(FetchHttpClient.Fetch, itemsOnly),
   ));
   assert.equal(fromItems.text, "你好");
@@ -179,7 +175,7 @@ test("subscription translation streams Responses requests with the OAuth token",
     { type: "response.completed", response: { ...completed, output: [] } },
   );
   const fromDeltas = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationModel(settings)),
+    Effect.provide(translationModelFor(settings, "oauth-token")),
     Effect.provideService(FetchHttpClient.Fetch, deltasOnly),
   ));
   assert.equal(fromDeltas.text, "你好");
@@ -187,7 +183,7 @@ test("subscription translation streams Responses requests with the OAuth token",
   // An HTTP error arrives as plain JSON, not a stream; its own message must survive.
   const rejected: typeof fetch = async () => Response.json({ error: { message: "The 'gpt-test' model is not supported when using Codex with a ChatGPT account.", type: "invalid_request_error" } }, { status: 400 });
   const failure = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationModel(settings)),
+    Effect.provide(translationModelFor(settings, "oauth-token")),
     Effect.provideService(FetchHttpClient.Fetch, rejected),
     Effect.flip,
   ));
@@ -206,7 +202,7 @@ test("the translator's structured output works over the subscription", async () 
     return sse({ type: "response.completed", response: { ...completed, output: [{ ...completed.output[0], content: [{ type: "output_text", text, annotations: [] }] }] } });
   };
   const result = await Effect.runPromise(Translator.use((service) => service.translate(["Hello"], "简体中文")).pipe(
-    Effect.provide(Translator.Live.pipe(Layer.provide(translationModel(settings)))),
+    Effect.provide(Translator.Live.pipe(Layer.provide(translationModelFor(settings, "oauth-token")))),
     Effect.provideService(FetchHttpClient.Fetch, fetchMock),
   ));
   assert.deepEqual(result, { translations: ["你好"], terms: [] });
@@ -231,7 +227,7 @@ test("subscription analysis answers decisions through the same streamed Response
   };
   const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is this relevant?", criteria: { false: "No", true: "Yes" } }) } });
   const result = await Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(
-    Effect.provide(analysisModel(settings)),
+    Effect.provide(analysisModelFor(settings, "oauth-token")),
     Effect.provideService(FetchHttpClient.Fetch, fetchMock),
   ));
   assert.equal(result.answers.relevant.probability, 0.9);
@@ -290,7 +286,7 @@ test("reading the plan's response stream is its own span, with time to first out
   }), { headers: { "Content-Type": "text/event-stream" } });
   const spans: OtlpSpan[] = [];
   const result = await Effect.runPromise(traced(LanguageModel.generateText({ prompt: "Hello" }).pipe(
-    Effect.provide(translationModel(settings)),
+    Effect.provide(translationModelFor(settings, "oauth-token")),
   ), createLocalTracer((span) => spans.push(span))).pipe(Effect.provideService(FetchHttpClient.Fetch, slow)));
   assert.equal(result.text, "你好");
   const stream = spans.find((span) => span.name === "http.response.stream")!;
@@ -329,7 +325,7 @@ test("streaming translation over the plan passes the event stream through and re
   };
   const partials: string[] = [];
   const result = await Effect.runPromise(Translator.use((service) => service.translate(["Hello, world"], "简体中文", undefined, (_, text) => partials.push(text))).pipe(
-    Effect.provide(Translator.Live.pipe(Layer.provide(translationModel(settings)))),
+    Effect.provide(Translator.Live.pipe(Layer.provide(translationModelFor(settings, "oauth-token")))),
     Effect.provideService(FetchHttpClient.Fetch, streamed),
   ));
   assert.deepEqual(result.translations, ["你好，世界"]);

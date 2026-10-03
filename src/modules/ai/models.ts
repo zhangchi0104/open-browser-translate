@@ -3,14 +3,15 @@ import type { DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { Settings } from "../settings/service";
 import type { AISettings, ReasoningEffort, SettingsProvider } from "../settings/model";
 import { AiProviders } from "./providers";
-import { openAICompatibleLayer } from "./vercel";
+import { openAICompatibleLayer, vercelLayer } from "./vercel";
+import { OPENAI_API_URL } from "./openai-models";
 import { ChatGPTToken, chatgptLayer } from "./chatgpt";
 import { chatgptDecisionLayer, openAIDecisionLayer } from "./openai-decisions";
 import { vercelDecisionLayer } from "./gateway-decisions";
 
 // Analysis and translation each run on the model the settings select when a request starts.
-// Built model layers are cached by everything that picks the model, so requests share HTTP
-// clients and a settings change takes effect on the next request without a restart.
+// Built model layers are cached by everything that picks the model (`ModelConfig`, compared by
+// value), so requests share HTTP clients and a settings change applies to the next request.
 
 export type Purpose = "analysis" | "translation";
 
@@ -22,7 +23,7 @@ export interface ModelConfig {
   readonly provider: SettingsProvider;
   readonly model: string;
   /** Empty on the ChatGPT plan, which signs in instead. */
-  readonly apiKey: string;
+  readonly apiKey: Redacted.Redacted<string>;
   readonly reasoningEffort?: ReasoningEffort;
   readonly fast?: boolean;
 }
@@ -32,7 +33,7 @@ export function modelConfig(settings: AISettings, purpose: Purpose): ModelConfig
   return {
     provider,
     model: (models as Record<string, string | undefined>)[provider] ?? "",
-    apiKey: provider === AiProviders.OpenAISubscription ? "" : settings.providers[provider].apiKey,
+    apiKey: Redacted.make(provider === AiProviders.OpenAISubscription ? "" : settings.providers[provider].apiKey),
     ...(reasoningEffort && { reasoningEffort }),
     ...(fast && { fast }),
   };
@@ -42,37 +43,32 @@ export function modelConfig(settings: AISettings, purpose: Purpose): ModelConfig
 export function missingConfiguration(settings: AISettings, signedIn: boolean, purposes: readonly Purpose[] = ["analysis", "translation"]): Purpose | undefined {
   for (const purpose of purposes) {
     const { provider, model, apiKey } = modelConfig(settings, purpose);
-    const connected = provider === AiProviders.OpenAISubscription ? signedIn : !!apiKey.trim();
+    const connected = provider === AiProviders.OpenAISubscription ? signedIn : !!Redacted.value(apiKey).trim();
     if (!connected || !model.trim()) return purpose;
   }
 }
 
 function analysisLayer({ provider, model, apiKey, reasoningEffort, fast }: ModelConfig): Layer.Layer<DecisionModel.DecisionModel, never, ChatGPTToken> {
   if (provider === AiProviders.OpenAISubscription) return chatgptDecisionLayer({ model, reasoningEffort, fast });
-  if (provider === AiProviders.VercelAIGateway) return vercelDecisionLayer({ model, apiKey: Redacted.make(apiKey) });
-  return openAIDecisionLayer({ model, apiKey: Redacted.make(apiKey), reasoningEffort });
+  if (provider === AiProviders.VercelAIGateway) return vercelDecisionLayer({ model, apiKey });
+  return openAIDecisionLayer({ model, apiKey, reasoningEffort });
 }
 
 function translationLayer({ provider, model, apiKey, reasoningEffort, fast }: ModelConfig): Layer.Layer<LanguageModel.LanguageModel, never, ChatGPTToken> {
   if (provider === AiProviders.OpenAISubscription) return chatgptLayer({ model, reasoningEffort, fast });
-  return openAICompatibleLayer({
-    model,
-    apiKey: Redacted.make(apiKey),
-    apiUrl: provider === AiProviders.VercelAIGateway ? "https://ai-gateway.vercel.sh/v1" : "https://api.openai.com/v1",
-    reasoningEffort,
-  });
+  if (provider === AiProviders.VercelAIGateway) return vercelLayer({ model, apiKey, reasoningEffort });
+  return openAICompatibleLayer({ model, apiKey, apiUrl: OPENAI_API_URL, reasoningEffort });
 }
 
-// Keys are the JSON of a `ModelConfig`, so equal configs share an entry.
 const IDLE_TIME_TO_LIVE = "5 minutes";
 
 export class AnalysisModels extends LayerMap.Service<AnalysisModels>()("open-browser-translate/AnalysisModels", {
-  lookup: (key: string) => analysisLayer(JSON.parse(key) as ModelConfig),
+  lookup: analysisLayer,
   idleTimeToLive: IDLE_TIME_TO_LIVE,
 }) {}
 
 export class TranslationModels extends LayerMap.Service<TranslationModels>()("open-browser-translate/TranslationModels", {
-  lookup: (key: string) => translationLayer(JSON.parse(key) as ModelConfig),
+  lookup: translationLayer,
   idleTimeToLive: IDLE_TIME_TO_LIVE,
 }) {}
 
@@ -84,14 +80,13 @@ export const configuredSettings = (purposes?: readonly Purpose[]) => Effect.gen(
   return settings;
 });
 
-const configuredKey = (purpose: Purpose) =>
-  Effect.map(configuredSettings([purpose]), (settings) => JSON.stringify(modelConfig(settings, purpose)));
+const configuredModel = (purpose: Purpose) => Effect.map(configuredSettings([purpose]), (settings) => modelConfig(settings, purpose));
 
 /** `DecisionModel` on the analysis model the settings select when it's provided. */
-export const AnalysisModel = Layer.unwrap(Effect.map(configuredKey("analysis"), (key) => AnalysisModels.get(key)));
+export const AnalysisModel = Layer.unwrap(Effect.map(configuredModel("analysis"), AnalysisModels.get));
 
 /** `LanguageModel` on the translation model the settings select when it's provided. */
-export const TranslationModel = Layer.unwrap(Effect.map(configuredKey("translation"), (key) => TranslationModels.get(key)));
+export const TranslationModel = Layer.unwrap(Effect.map(configuredModel("translation"), TranslationModels.get));
 
 /** The model caches `AnalysisModel` and `TranslationModel` draw from. */
 export const ModelsLive = Layer.mergeAll(AnalysisModels.layer, TranslationModels.layer);
@@ -100,3 +95,9 @@ export const ModelsLive = Layer.mergeAll(AnalysisModels.layer, TranslationModels
 export const modelsFor = (settings: AISettings, token?: string) => ModelsLive.pipe(
   Layer.provideMerge(Layer.mergeAll(Settings.fixed(settings), token ? ChatGPTToken.fixed(token) : ChatGPTToken.signedOut)),
 );
+
+/** `AnalysisModel` on fixed `settings`; for tests. */
+export const analysisModelFor = (settings: AISettings, token?: string) => AnalysisModel.pipe(Layer.provide(modelsFor(settings, token)));
+
+/** `TranslationModel` on fixed `settings`; for tests. */
+export const translationModelFor = (settings: AISettings, token?: string) => TranslationModel.pipe(Layer.provide(modelsFor(settings, token)));

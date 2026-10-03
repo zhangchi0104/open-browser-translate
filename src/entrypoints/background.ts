@@ -1,10 +1,11 @@
-import { Effect, Layer, ManagedRuntime, Schema } from "effect";
+import { Effect, Layer, ManagedRuntime, Schema, type Tracer } from "effect";
 import { storage } from "wxt/utils/storage";
-import { aiSettings, Settings, SettingsLive } from "../modules/settings";
+import { aiSettings, Settings, SettingsLive, type AISettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan, PageContext } from "../modules/content-analyzer/page-plan";
 import { modelAttributes, TARGET_LANGUAGE, translateBatch } from "../modules/translator/translate-batch";
 import { configuredSettings, modelConfig, ModelsLive } from "../modules/ai/models";
+import { ChatGPTToken } from "../modules/ai/chatgpt";
 import { createTranslationCache, translateWithCache } from "../modules/translation-cache";
 import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
 import {
@@ -15,7 +16,7 @@ import { ANALYSIS_BATCH_SIZE } from "../modules/content-analyzer/protocol";
 import { createContextCarryover } from "../modules/translation-context/carryover";
 import type { TranslationContext } from "../modules/translation-context";
 import {
-  debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestOn, traceStore, tracingLayer,
+  debugLog, describeError, localTracer, markFailed, pageOf, traceRequest as traceRequestOn, traceStore, tracingLayer, type RunInSpan,
 } from "../modules/debug-log";
 import { listOpenAIModels } from "../modules/ai/openai-models";
 import { listGatewayModels } from "../modules/ai/gateway-models";
@@ -43,11 +44,26 @@ const BackgroundLive = Layer.mergeAll(ModelsLive, tracingLayer(localTracer)).pip
   Layer.provideMerge(Layer.mergeAll(SettingsLive, ChatGPTTokenLive)),
 );
 const runtime = ManagedRuntime.make(BackgroundLive);
-type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
+type Run = RunInSpan<ManagedRuntime.ManagedRuntime.Services<typeof runtime>>;
 
 // Translation requests are traced as OpenTelemetry spans kept locally (see debug-log/trace.ts).
-const traceRequest = <A>(name: string, attributes: Record<string, unknown>, body: Parameters<typeof traceRequestOn<A, Services>>[3]) =>
-  traceRequestOn(runtime.runPromise, name, attributes, body);
+// A request reads the settings and sign-in once, so its steps (model choice, cache scope, span
+// attributes) all see the same ones even if the options page saves mid-request.
+const traceRequest = <A>(
+  name: string,
+  attributes: Record<string, unknown>,
+  body: (span: Tracer.Span, run: Run, settings: AISettings) => Promise<A>,
+) => traceRequestOn(runtime.runPromise, name, attributes, async (span, run) => {
+  const [settings, token] = await run(Effect.all([
+    Settings.use((settings) => settings.get),
+    ChatGPTToken.use((token) => Effect.map(token.signedIn, (signedIn) => ({ ...token, signedIn: Effect.succeed(signedIn) }))),
+  ], { concurrency: 2 }));
+  const snapshot: Run = (effect) => run(effect.pipe(
+    Effect.provideService(Settings, { get: Effect.succeed(settings) }),
+    Effect.provideService(ChatGPTToken, token),
+  ));
+  return body(span, snapshot, settings);
+});
 
 export default defineBackground(() => {
   const contexts = createContextCarryover({
@@ -115,7 +131,7 @@ export default defineBackground(() => {
       });
     }
     if (message?.type === "prepare-translation") {
-      return traceRequest("prepare-translation", { "obt.page": page }, async (span, run) => {
+      return traceRequest("prepare-translation", { "obt.page": page }, async (span, run, settings) => {
         try {
           const context = Schema.decodeUnknownSync(PageContext)(message.context);
           span.attribute("obt.sample.chars", context.sample.length);
@@ -124,7 +140,6 @@ export default defineBackground(() => {
             return { status: "failed" };
           }
           return await run(Effect.gen(function* () {
-            const settings = yield* Settings.use((settings) => settings.get);
             for (const [key, value] of Object.entries(modelAttributes(settings, "analysis"))) span.attribute(key, value);
             yield* configuredSettings();
             void contexts.notePage(pageUrl(sender), context.title);
@@ -166,7 +181,7 @@ export default defineBackground(() => {
     onPartial?: (index: number, text: string, final?: boolean) => void,
   ) {
     const page = pageOf(pageUrl(sender));
-    return traceRequest(message.type, { "obt.page": page, ...(onPartial && { "obt.streaming": true }) }, async (span, run) => {
+    return traceRequest(message.type, { "obt.page": page, ...(onPartial && { "obt.streaming": true }) }, async (span, run, settings) => {
       try {
         const blocks = Schema.decodeUnknownSync(Blocks)(message.blocks);
         const length = blocks.reduce((sum, block) => sum + block.text.length, 0);
@@ -187,7 +202,7 @@ export default defineBackground(() => {
           // context. Private windows have no page URL here, so they bypass the cache.
           const url = pageUrl(sender);
           const origin = originOf(url);
-          const { provider, model } = modelConfig(await run(Settings.use((settings) => settings.get)), "translation");
+          const { provider, model } = modelConfig(settings, "translation");
           const result = await translateWithCache({
             cache: translationCache,
             scope: origin
