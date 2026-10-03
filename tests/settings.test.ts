@@ -182,3 +182,30 @@ test("fast mode is a ChatGPT plan option; key-based providers never send a servi
     assert.equal("providerOptions" in body, false);
   }
 });
+
+test("Jev's rounded probabilities are renormalized; a distribution far from 1 still fails", async () => {
+  const settings = structuredClone(defaultSettings);
+  settings.providers.VercelAIGateway.apiKey = "test-gateway";
+  const respond = (probabilities: Record<string, number>): typeof globalThis.fetch => async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    return Response.json({ model: body.model, answers: { kind: { type: "choice", choice: "content", confidence: 0.9, probabilities } } });
+  };
+  const definition = Decision.make({ input: Schema.String, decisions: {
+    kind: Decision.classify({ instructions: "What is this?", criteria: { content: "Content", navigation: "Navigation", advertisement: "Ad" } }),
+  } });
+  const decide = (fetch: typeof globalThis.fetch) => Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(
+    Effect.provide(analysisLayerFromSettings(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.result));
+
+  const rounded = await decide(respond({ content: 0.8333, navigation: 0.1333, advertisement: 0.0332 }));
+  assert.ok(rounded._tag === "Success", "a sum of 0.9998 is rounding, not a wrong answer");
+  const probabilities = rounded.success.answers.kind.probabilities;
+  assert.ok(Math.abs(Object.values(probabilities).reduce((sum, p) => sum + p, 0) - 1) < 1e-9);
+  assert.equal(rounded.success.answers.kind.label, "content");
+
+  const omitted = await decide(respond({ content: 0.9, navigation: 0.1 }));
+  assert.ok(omitted._tag === "Success", "a label left out counts as 0");
+  assert.equal(omitted.success.answers.kind.probabilities.advertisement, 0);
+
+  const wrong = await decide(respond({ content: 0.4, navigation: 0.1, advertisement: 0.1 }));
+  assert.ok(wrong._tag === "Failure", "a sum of 0.6 is a wrong answer and still fails");
+});

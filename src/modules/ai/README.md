@@ -85,7 +85,10 @@ typed questions and return probabilities without generating text.
 `vercelDecisionLayer` (`gateway-decisions.ts`) sends `DecisionModel` decisions to
 them through the TypeSafe-compatible System One API at
 `https://ai-gateway.vercel.sh/typesafe/v1`, so no structured-output simulation
-is involved. The options page offers the evaluation models hard-coded in
+is involved. It mirrors `@effect/ai-typesafe`'s adapter but renormalizes each
+distribution: Jev rounds its probabilities, so they can sum to 0.9998, while
+`DecisionModel` accepts only 1e-6 off. Sums within 0.05 of 1 are rescaled
+(omitted labels count as 0); anything further off still fails. The options page offers the evaluation models hard-coded in
 `GATEWAY_DECISION_MODELS` (`providers.ts`) for gateway analysis, and loads the
 gateway's language models for gateway translation (`gateway-models.ts`).
 
