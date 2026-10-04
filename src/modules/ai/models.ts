@@ -1,8 +1,7 @@
 import { Data, Effect, Layer, LayerMap, Redacted } from "effect";
 import type { DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { Settings } from "../settings/service";
-import type { AISettings, ReasoningEffort, SettingsProvider } from "../settings/model";
-import { AiProviders } from "./providers";
+import { AiProviders, type AISettings, type ReasoningEffort, type SettingsProvider } from "../settings/model";
 import type { Purpose } from "../protocol";
 import { openAICompatibleLayer, vercelLayer } from "./vercel";
 import { OPENAI_API_URL } from "./openai-models";

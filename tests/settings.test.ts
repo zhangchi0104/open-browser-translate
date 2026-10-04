@@ -5,7 +5,7 @@ import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Schema } from "effect";
 import { defaultSettings, migrateSettings, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, validateModel } from "../src/modules/settings/model";
-import { AiProviders } from "../src/modules/ai/providers";
+import { AiProviders } from "../src/modules/settings/model";
 import { analysisModelFor, modelsFor, translationModelFor } from "../src/modules/ai/models";
 import { blocksIn, chatCompletion, chatRequest, decisionResponse, isDecisionRequest, requestedModel, type ChatRequest } from "./decision-mock";
 

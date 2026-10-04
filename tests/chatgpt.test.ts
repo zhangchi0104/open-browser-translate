@@ -7,7 +7,7 @@ import {
   CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, listModels, parseCallback, refreshAccount, type ChatGPTAuth,
 } from "../src/modules/ai/chatgpt-auth";
 import { analysisModelFor, missingConfiguration, translationModelFor } from "../src/modules/ai/models";
-import { AiProviders } from "../src/modules/ai/providers";
+import { AiProviders } from "../src/modules/settings/model";
 import { listOpenAIModels } from "../src/modules/ai/openai-models";
 import { describeError } from "../src/modules/debug-log/model";
 import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/debug-log/trace";

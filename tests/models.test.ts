@@ -4,7 +4,7 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChatGPTToken } from "../src/modules/ai/chatgpt";
 import { ModelsLive } from "../src/modules/ai/models";
-import { AiProviders } from "../src/modules/ai/providers";
+import { AiProviders } from "../src/modules/settings/model";
 import { defaultSettings, type AISettings } from "../src/modules/settings/model";
 import { Settings } from "../src/modules/settings/service";
 import { translateBatch } from "../src/modules/translator/translate-batch";

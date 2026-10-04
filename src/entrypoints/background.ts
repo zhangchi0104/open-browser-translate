@@ -1,6 +1,6 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { storage } from "wxt/utils/storage";
-import { aiSettings, Settings, SettingsLive, type AISettings } from "../modules/settings";
+import { AiProviders, aiSettings, Settings, SettingsLive, type AISettings } from "../modules/settings";
 import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
 import { decideTranslationPlan } from "../modules/content-analyzer/page-plan";
 import { configuredSettings, modelAttributes, ModelsLive } from "../modules/ai/models";
@@ -10,7 +10,6 @@ import {
 } from "../modules/ai/chatgpt-session";
 import { listOpenAIModels } from "../modules/ai/openai-models";
 import { listGatewayModels } from "../modules/ai/gateway-models";
-import { AiProviders } from "../modules/ai/providers";
 import { translatePageBatch } from "../modules/batch-translation";
 import { createTranslationCache } from "../modules/translation-cache";
 import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";

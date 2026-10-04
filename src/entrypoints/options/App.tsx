@@ -3,10 +3,10 @@ import { background } from "@/lib/background";
 import { PURPOSE_NAMES, type ChatGPTModel, type Purpose, type Request } from "@/modules/protocol";
 import { Bug, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import {
-  aiSettings, REASONING_EFFORTS, validateModel,
+  AiProviders, aiSettings, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL, REASONING_EFFORTS, validateModel,
   type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider, type ReasoningEffort,
 } from "@/modules/settings";
-import { AiProviders, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL, GATEWAY_DECISION_MODELS } from "@/modules/ai/providers";
+import { GATEWAY_DECISION_MODELS } from "@/modules/ai/gateway-models";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/ai/chatgpt-session";
 import { Button } from "@/components/ui/button";
