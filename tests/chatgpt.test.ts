@@ -131,7 +131,7 @@ test("subscription translation streams Responses requests with the OAuth token",
     assert.equal(body.stream, true);
     assert.equal(body.store, false);
     assert.deepEqual(body.reasoning, { effort: "high" });
-    assert.equal(body.service_tier, "fast");
+    assert.equal(body.service_tier, "priority");
     return sse({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } }, { type: "response.completed", response: completed });
   };
   const result = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
@@ -218,7 +218,7 @@ test("subscription analysis answers decisions through the same streamed Response
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer oauth-token");
     const body = JSON.parse(String(init?.body));
     assert.equal(body.model, "gpt-test");
-    assert.equal(body.service_tier, "fast");
+    assert.equal(body.service_tier, "priority");
     assert.equal(body.stream, true);
     assert.equal(body.text.format.name, "decisions");
     const text = JSON.stringify({ relevant: { probabilities: { false: 0.1, true: 0.9 } } });
