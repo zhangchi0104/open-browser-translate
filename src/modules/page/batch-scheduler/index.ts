@@ -1,5 +1,5 @@
 import { describeError, type LogLevel } from "../../shared/debug-log/model";
-import { MAX_BATCH_BLOCKS, TRANSLATION_PRIORITY, type Block, type Mode, type PageAnalysisResult, type Purpose, type TranslationBatchResult } from "../../shared/protocol";
+import { MAX_BATCH_BLOCKS, SURROUNDINGS_LIMITS, TRANSLATION_PRIORITY, type Block, type Mode, type PageAnalysisResult, type Purpose, type TranslationBatchResult } from "../../shared/protocol";
 import { createBatchQueue, MAX_CONCURRENT_BATCHES, pickByPriority, pickNearViewport, viewportDistance, type Span } from "./viewport";
 
 /** What a session needs from the page it runs on. */
@@ -11,8 +11,11 @@ export interface SessionPage<T extends Block> {
   viewportHeight(): number;
   /** Analyzes a batch; a rejection counts as a failed analysis. */
   analyze(blocks: readonly T[], mode: Mode): Promise<PageAnalysisResult>;
-  /** Translates a batch, reporting each block's text by index as it arrives (`final` for cached blocks). */
-  translate(blocks: readonly T[], onBlock: (index: number, text: string, final: boolean) => void): Promise<TranslationBatchResult>;
+  /**
+   * Translates a batch, reporting each block's text by index as it arrives (`final` for cached
+   * blocks). `preceding` is the source text just before the batch, for the model to continue.
+   */
+  translate(blocks: readonly T[], onBlock: (index: number, text: string, final: boolean) => void, preceding?: string): Promise<TranslationBatchResult>;
   /** Shows a loading placeholder for each item. */
   loading(items: readonly T[]): void;
   /** Shows an item's translation; `final` false while it's still being written. */
@@ -44,8 +47,10 @@ export interface SessionProgress {
  * - Translation takes kept items by priority, distance breaking ties, but waits while anything on
  *   screen is unanalyzed, so visible navigation never goes before visible content.
  *
- * Blocks served from the cache stay shown even when the rest of their batch fails. A model that
- * isn't configured stops both queues.
+ * A translation batch goes out with the source text just before its first block in the page
+ * (`precedingText`), so the model reads it in place; within the batch, priority order stays, so
+ * content streams first. Blocks served from the cache stay shown even when the rest of their
+ * batch fails. A model that isn't configured stops both queues.
  */
 export function createTranslationSession<T extends Block>(
   items: readonly T[],
@@ -54,6 +59,13 @@ export function createTranslationSession<T extends Block>(
   onProgress: (progress: SessionProgress) => void,
 ) {
   let pending = items.slice();
+  // Document order: captured items in page order, then content added later as it arrives.
+  const inOrder: T[] = [];
+  const position = new Map<T, number>();
+  const register = (added: readonly T[]) => {
+    for (const item of added) if (!position.has(item)) position.set(item, inOrder.push(item) - 1);
+  };
+  register(items);
   const analysis = new Map<T, { keep: boolean; priority: number }>();
   const analyzing = new Set<T>();
   const counts = { translating: 0, shown: 0, failed: 0, fallbacks: 0 };
@@ -61,6 +73,18 @@ export function createTranslationSession<T extends Block>(
   let notConfigured: Purpose | undefined;
   const report = () => onProgress({ ...counts, analyzing: analyzing.size, pending: pending.length });
   const dropDetached = () => { pending = pending.filter((item) => page.attached(item)); };
+  /** Up to `SURROUNDINGS_LIMITS.preceding` characters of source just before the batch, skipping blocks analysis dropped. */
+  const precedingText = (batch: readonly T[]) => {
+    const parts: string[] = [];
+    let chars = 0;
+    for (let index = Math.min(...batch.map((item) => position.get(item)!)) - 1; index >= 0 && chars < SURROUNDINGS_LIMITS.preceding; index--) {
+      const item = inOrder[index]!;
+      if (!page.attached(item) || analysis.get(item)?.keep === false) continue;
+      parts.unshift(item.text);
+      chars += item.text.length + 1;
+    }
+    return parts.join("\n").slice(-SURROUNDINGS_LIMITS.preceding) || undefined;
+  };
   const stopAll = (purpose: Purpose) => {
     notConfigured = purpose;
     for (const queue of queues) queue.stop();
@@ -128,7 +152,7 @@ export function createTranslationSession<T extends Block>(
           if (stopped || !item) return;
           page.show(item, text, isFinal);
           if (isFinal) final.add(item);
-        });
+        }, precedingText(batch));
         if (stopped) return false;
         if (result.status === "ok") {
           batch.forEach((item, index) => page.show(item, result.translations[index]!, true));
@@ -158,6 +182,7 @@ export function createTranslationSession<T extends Block>(
     /** Adds content that appeared after the session started (infinite scroll, load more). */
     add(added: readonly T[]) {
       if (!added.length) return;
+      register(added);
       pending = pending.concat(added);
       this.nudge();
     },

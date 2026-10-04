@@ -147,3 +147,22 @@ test("results that arrive after the session stops are ignored", async () => {
   await settle();
   assert.equal(fake.shown.size, 0);
 });
+
+test("a batch carries the source just before its first block, skipping blocks analysis dropped", async () => {
+  const preceding: (string | undefined)[] = [];
+  const fake = fakePage();
+  const translate = fake.page.translate;
+  fake.page.translate = (blocks, onBlock, before) => {
+    preceding.push(before);
+    return translate(blocks, onBlock, before);
+  };
+  const items = [item("Opening", 0), item("Buy now", 10, "ad"), ...Array.from({ length: 9 }, (_, index) => item(`Paragraph ${index}`, 20 + index * 10))];
+  const { session, done } = start(items, fake.page);
+  await settle();
+  assert.deepEqual(fake.translated.map((batch) => batch[0]), ["Opening", "Paragraph 7"]);
+  assert.equal(preceding[0], undefined, "nothing comes before the first block");
+  assert.ok(preceding[1]!.endsWith("Paragraph 5\nParagraph 6"), "the second batch continues from the first");
+  assert.ok(!preceding[1]!.includes("Buy now"), "the ad analysis dropped isn't context");
+  session.stop();
+  await done;
+});

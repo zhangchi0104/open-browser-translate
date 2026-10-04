@@ -11,7 +11,8 @@ import {
 import { listOpenAIModels } from "../modules/background/ai/openai-models";
 import { listGatewayModels } from "../modules/background/ai/gateway-models";
 import { translatePageBatch } from "../modules/background/translation-dispatcher";
-import { createTranslationCache } from "../modules/background/cache-store";
+import { createTranslationService } from "../modules/background/translation-service";
+import { createCache } from "../modules/background/cache-store";
 import { createIndexedDbCacheStore } from "../modules/background/cache-store/indexeddb";
 import { createContextCarryover } from "../modules/background/site-context/carryover";
 import { siteOf, type TranslationContext } from "../modules/background/site-context";
@@ -19,7 +20,9 @@ import { debugLog, describeError, localTracer, markFailed, pageOf, traceStore, t
 import { batchChars, createDispatcher, PURPOSE_NAMES, type Block, type ChatGPTModel, type Failed, type ModelList, type Purpose, type Sender } from "../modules/shared/protocol";
 
 const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
-const translationCache = createTranslationCache(createIndexedDbCacheStore());
+const translationCache = createCache(createIndexedDbCacheStore("translation-cache"));
+const analysisCache = createCache(createIndexedDbCacheStore("analysis-cache"));
+const translationService = createTranslationService(translationCache);
 
 // Every request runs on one runtime, so built model layers (and their HTTP clients) are shared
 // across requests. Settings and the ChatGPT sign-in are read when a request starts.
@@ -100,7 +103,8 @@ export default defineBackground(() => {
       "debug-log-clear": () => debugLog.clear().then(() => ({ status: "ok" as const })),
       "traces-clear": () => traceStore.clear().then(() => ({ status: "ok" as const })),
       "cache-stats": () => translationCache.count().then((count) => ({ status: "ok" as const, count }), () => ({ status: "failed" as const })),
-      "cache-clear": () => translationCache.clear().then(() => ({ status: "ok" as const }), () => ({ status: "failed" as const })),
+      "cache-clear": () => Promise.all([translationCache.clear(), analysisCache.clear()])
+        .then(() => ({ status: "ok" as const }), () => ({ status: "failed" as const })),
       "chatgpt-sign-in": () => startChatGPTSignIn(),
       "chatgpt-sign-out": () => signOutChatGPT().then(() => ({ status: "ok" as const })),
       "chatgpt-models": () => catalog("ChatGPT", listChatGPTModels, "接口没有返回 visibility 为 list 的模型"),
@@ -123,12 +127,15 @@ export default defineBackground(() => {
       ),
       "analyze-content": ({ mode, blocks }, sender) => traceRequest(
         "analyze-content", sender, { "obt.mode": mode, ...batchAttributes(blocks) }, "内容分析失败",
-        (settings) => Effect.andThen(Effect.annotateCurrentSpan(modelAttributes(settings, "analysis")), analyzePageContent(blocks, mode)),
+        (settings) => Effect.andThen(
+          Effect.annotateCurrentSpan(modelAttributes(settings, "analysis")),
+          analyzePageContent(blocks, mode, { cache: analysisCache, site: siteOf(pageUrl(sender)) }),
+        ),
       ),
     },
-    translate: (blocks, sender, onBlock) => traceRequest(
+    translate: (blocks, sender, onBlock, surroundings) => traceRequest(
       "translate-content", sender, { "obt.streaming": true, ...batchAttributes(blocks) }, "翻译批次失败",
-      () => translatePageBatch(blocks, pageUrl(sender), { cache: translationCache, contexts }, onBlock),
+      () => translatePageBatch(blocks, pageUrl(sender), { translation: translationService, contexts }, onBlock, surroundings),
     ),
   });
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => dispatcher.onMessage(message, sender, sendResponse));

@@ -190,3 +190,18 @@ test("only the translation port from a trusted sender is served", async () => {
   await tick();
   assert.equal(calls, 0);
 });
+
+test("the batch's surroundings travel with it; empty ones aren't sent", async () => {
+  const received: unknown[] = [];
+  const { client } = connect({
+    trusted: () => true,
+    handlers: handlers({}),
+    translate: async (_blocks, _sender, _onBlock, surroundings) => {
+      received.push(surroundings);
+      return { status: "ok", translations: ["你好"], terms: [] };
+    },
+  });
+  await client.translate([{ text: "Hello", tag: "p" }], () => {}, { brief: "Greetings page", preceding: "Before" });
+  await client.translate([{ text: "Hello", tag: "p" }], () => {}, { brief: "", preceding: undefined });
+  assert.deepEqual(received, [{ brief: "Greetings page", preceding: "Before" }, {}]);
+});

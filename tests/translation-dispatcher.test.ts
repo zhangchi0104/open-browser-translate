@@ -6,7 +6,8 @@ import { modelsFor } from "../src/modules/background/ai/models";
 import { translatePageBatch, type BatchStores } from "../src/modules/background/translation-dispatcher";
 import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
 import { defaultSettings } from "../src/modules/shared/settings/model";
-import { createMemoryCacheStore, createTranslationCache } from "../src/modules/background/cache-store";
+import { createCache, createMemoryCacheStore } from "../src/modules/background/cache-store";
+import { createTranslationService } from "../src/modules/background/translation-service";
 import type { TranslationContext } from "../src/modules/background/site-context";
 import { createContextCarryover } from "../src/modules/background/site-context/carryover";
 import { chatCompletion, chatCompletionStream, chatRequest, translationInput } from "./decision-mock";
@@ -39,7 +40,7 @@ function memoryStores() {
   let contexts: Record<string, TranslationContext> | undefined;
   const cacheStore = createMemoryCacheStore();
   const stores: BatchStores = {
-    cache: createTranslationCache(cacheStore),
+    translation: createTranslationService(createCache(cacheStore)),
     contexts: createContextCarryover({ get: async () => contexts, set: async (value) => { contexts = value; } }),
   };
   return { stores, cacheStore, savedContexts: () => contexts };
@@ -123,4 +124,28 @@ test("the model call is traced inside the request that asked for it", async () =
   const request = spans.find((span) => span.name === "translate-content")!;
   assert.equal(spans.find((span) => span.name === "translation")!.parentSpanId, request.spanId);
   assert.deepEqual(request.attributes.find((a) => a.key === "obt.cache.hits")?.value, { intValue: "0" });
+});
+
+test("the page brief and preceding text ride with the batch, even on a page without a site", async () => {
+  const model = translationModel();
+  const { stores } = memoryStores();
+  const surroundings = { brief: "Fibers guide", preceding: "Earlier paragraph" };
+  for (const pageUrl of [PAGE, undefined]) {
+    await Effect.runPromise(translatePageBatch(blocks(`Text on ${pageUrl}`), pageUrl, stores, undefined, surroundings).pipe(
+      Effect.provide(modelsFor(settings)),
+      Effect.provideService(FetchHttpClient.Fetch, model.fetch),
+    ));
+  }
+  assert.deepEqual(model.requests.map(({ context }) => context), [surroundings, surroundings]);
+});
+
+test("only what the model newly translated enters the site context", async () => {
+  const model = translationModel();
+  const { stores, savedContexts } = memoryStores();
+  await translate(model, stores, ["Alpha"]);
+  await stores.contexts.flush();
+  await translate(model, stores, ["Alpha", "Beta"]);
+  await stores.contexts.flush();
+  const recent = Object.values(savedContexts()!)[0]!.recent.map(({ source }) => source);
+  assert.deepEqual(recent, ["Alpha", "Beta"], "the cached Alpha isn't recorded a second time");
 });

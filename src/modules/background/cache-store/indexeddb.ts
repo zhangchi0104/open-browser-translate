@@ -12,15 +12,22 @@ const committed = (transaction: IDBTransaction) => new Promise<void>((resolve, r
   transaction.onabort = () => reject(transaction.error);
 });
 
+// Version 2 renamed the entries' `translation` to `value`; version 1 entries are dropped.
+const VERSION = 2;
+
 /**
- * The translation cache in IndexedDB. In the background it belongs to the extension's
- * origin, so pages can't read it and clearing a site's data doesn't touch it.
+ * A cache in IndexedDB, one database per `name`. In the background it belongs to the
+ * extension's origin, so pages can't read it and clearing a site's data doesn't touch it.
  */
-export function createIndexedDbCacheStore(name = "translation-cache"): CacheStore {
+export function createIndexedDbCacheStore(name: string): CacheStore {
   let opened: Promise<IDBDatabase> | undefined;
   const database = () => opened ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open(name, 1);
+    const request = indexedDB.open(name, VERSION);
     request.onupgradeneeded = () => {
+      if (request.result.objectStoreNames.contains(STORE)) {
+        request.transaction!.objectStore(STORE).clear();
+        return;
+      }
       const store = request.result.createObjectStore(STORE, { keyPath: "key" });
       store.createIndex("usedAt", "usedAt");
       store.createIndex("origin", "origin");

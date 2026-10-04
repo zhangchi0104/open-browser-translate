@@ -20,6 +20,11 @@ analyze, translate and show it) and renders `SessionProgress`.
   with `add()`.
 - A failed batch discards its streamed text but keeps the blocks the cache
   served; only the others count as failed.
+- Each translation batch carries the source just before its first block in
+  document order (`precedingText`, up to 600 characters, skipping blocks
+  analysis dropped). Blocks within a batch stay in priority order, so content
+  streams before navigation. The launcher adds the page brief (`pageBrief` in
+  `../block-collector`).
 
 `bun test tests/batch-scheduler.test.ts` drives it with fake items and a
 fake page.

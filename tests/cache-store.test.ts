@@ -1,30 +1,34 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { CACHE_TTL, createMemoryCacheStore, createTranslationCache, type CacheScope } from "../src/modules/background/cache-store";
+import { CACHE_TTL, createCache, createMemoryCacheStore, type CacheScope } from "../src/modules/background/cache-store";
 
-const scope: CacheScope = { origin: "https://example.com", target: "简体中文", provider: "VercelAIGateway", model: "openai/gpt-6-luna" };
+const scope: CacheScope = { origin: "https://example.com", parts: ["简体中文", "VercelAIGateway", "openai/gpt-6-luna"] };
 
-test("the model, site and target language are part of the key", async () => {
-  const cache = createTranslationCache(createMemoryCacheStore());
-  await cache.put(scope, [{ text: "Hello", translation: "你好" }]);
+test("the site and every part of the scope are in the key", async () => {
+  const cache = createCache(createMemoryCacheStore());
+  await cache.put(scope, [{ item: "Hello", value: "你好" }]);
   assert.deepEqual(await cache.get(scope, ["Hello"]), ["你好"]);
-  for (const other of [{ model: "vendor/other" }, { origin: "https://other.com" }, { target: "日本語" }, { provider: "OpenAIApi" }]) {
-    assert.deepEqual(await cache.get({ ...scope, ...other }, ["Hello"]), [undefined], JSON.stringify(other));
-  }
+  const others: CacheScope[] = [
+    { ...scope, origin: "https://other.com" },
+    { ...scope, parts: ["日本語", "VercelAIGateway", "openai/gpt-6-luna"] },
+    { ...scope, parts: ["简体中文", "OpenAIApi", "openai/gpt-6-luna"] },
+    { ...scope, parts: ["简体中文", "VercelAIGateway", "vendor/other"] },
+  ];
+  for (const other of others) assert.deepEqual(await cache.get(other, ["Hello"]), [undefined], JSON.stringify(other));
 });
 
 test("entries expire after seven days, and the least recently used go first when full", async () => {
   let now = 1_000_000;
   const store = createMemoryCacheStore();
-  const cache = createTranslationCache(store, { now: () => now, maxEntries: 3 });
-  for (const [text, translation] of [["a", "甲"], ["b", "乙"], ["c", "丙"]] as const) {
-    await cache.put(scope, [{ text, translation }]);
+  const cache = createCache(store, { now: () => now, maxEntries: 3 });
+  for (const [item, value] of [["a", "甲"], ["b", "乙"], ["c", "丙"]] as const) {
+    await cache.put(scope, [{ item, value }]);
     now += 100;
   }
   now += 1000;
   await cache.get(scope, ["a"]);
   now += 1000;
-  await cache.put(scope, [{ text: "d", translation: "丁" }]);
+  await cache.put(scope, [{ item: "d", value: "丁" }]);
   assert.deepEqual(await cache.get(scope, ["a", "b", "c", "d"]), ["甲", undefined, "丙", "丁"], "b was used least recently");
   assert.equal(await cache.count(), 3);
 

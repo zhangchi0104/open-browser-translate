@@ -12,13 +12,16 @@ export const MAX_BATCH_BLOCKS = 8;
 export const MAX_BATCH_CHARS = 200_000;
 /** What the page may send about itself for planning. */
 export const PAGE_CONTEXT_LIMITS = { title: 1000, sample: 12_000, pagination: 20, paginationLabel: 100 } as const;
+/** What the page may send with a batch about where it sits. */
+export const SURROUNDINGS_LIMITS = { brief: 500, preceding: 600 } as const;
 
 /** A source phrase and how it was rendered in the target language. */
 export const TermPair = Schema.Struct({ source: Schema.String, target: Schema.String });
 export type TermPair = typeof TermPair.Type;
 
 /** A block's role on the page, as analysis classifies it. */
-export type ContentRole = "content" | "navigation" | "control" | "auxiliary" | "advertisement" | "unknown";
+export const CONTENT_ROLES = ["content", "navigation", "control", "auxiliary", "advertisement", "unknown"] as const;
+export type ContentRole = typeof CONTENT_ROLES[number];
 
 /** Translation order by role, lower first: reading content before interface text, ads last. */
 export const TRANSLATION_PRIORITY: Record<ContentRole, number> = {
@@ -162,7 +165,16 @@ export type Response<K extends RequestType> = typeof Replies[K]["Type"];
 // Streaming translation: the page opens a port, sends one batch, and receives each block's
 // text as it's written (or at once and final when it was cached), then the result.
 export const STREAM_PORT = "translate-stream";
-const StreamRequest = Schema.Struct({ blocks: Batch });
+/**
+ * What the page sends with a batch so it's translated in place: the page brief (what the page
+ * is about) and the preceding text (the source just before the batch's first block).
+ */
+const Surroundings = Schema.Struct({
+  brief: Schema.optional(Schema.String.check(Schema.isMaxLength(SURROUNDINGS_LIMITS.brief))),
+  preceding: Schema.optional(Schema.String.check(Schema.isMaxLength(SURROUNDINGS_LIMITS.preceding))),
+});
+export type Surroundings = typeof Surroundings.Type;
+const StreamRequest = Schema.Struct({ blocks: Batch, ...Surroundings.fields });
 /** Receives a block's text by index in its batch; `final` once it won't change (cached, or validated). */
 export type OnBlock = (index: number, text: string, final: boolean) => void;
 const StreamEvent = Schema.Union([
@@ -206,7 +218,7 @@ export function createClient(runtime: {
      * Resolves once with the result; losing the background (extension reloaded, worker stopped)
      * resolves it as failed.
      */
-    translate(blocks: readonly Block[], onBlock: OnBlock): Promise<TranslationBatchResult> {
+    translate(blocks: readonly Block[], onBlock: OnBlock, surroundings: Surroundings = {}): Promise<TranslationBatchResult> {
       return new Promise((resolve) => {
         let settled = false;
         let port: Port | undefined;
@@ -228,7 +240,8 @@ export function createClient(runtime: {
           else finish(event.success.result);
         });
         port.onDisconnect.addListener(() => finish({ status: "failed", error: `与后台的连接中断：${runtime.lastError?.message ?? "未知原因"}` }));
-        port.postMessage({ blocks: blocks.map(({ text, tag }) => ({ text, tag })) });
+        const { brief, preceding } = surroundings;
+        port.postMessage({ blocks: blocks.map(({ text, tag }) => ({ text, tag })), ...(brief && { brief }), ...(preceding && { preceding }) });
       });
     },
   };
@@ -247,7 +260,7 @@ export type Handlers = {
 export function createDispatcher(options: {
   trusted: (sender: Sender) => boolean;
   handlers: Handlers;
-  translate: (blocks: readonly Block[], sender: Sender, onBlock: OnBlock) => Promise<TranslationBatchResult>;
+  translate: (blocks: readonly Block[], sender: Sender, onBlock: OnBlock, surroundings: Surroundings) => Promise<TranslationBatchResult>;
   onInvalid?: (type: string, error: string) => void;
 }) {
   const decode = <S extends Schema.Top & { readonly DecodingServices: never }>(schema: S, type: string, value: unknown): S["Type"] | undefined => {
@@ -283,7 +296,8 @@ export function createDispatcher(options: {
       port.onMessage.addListener((message: unknown) => {
         const decoded = decode(StreamRequest, STREAM_PORT, message);
         if (!decoded) return post({ type: "result", result: { status: "failed" } });
-        options.translate(decoded.blocks, sender, (index, text, final) => post({ type: "block", index, text, final })).then(
+        const { blocks, ...surroundings } = decoded;
+        options.translate(blocks, sender, (index, text, final) => post({ type: "block", index, text, final }), surroundings).then(
           (result) => post({ type: "result", result }),
           (error) => post({ type: "result", result: { status: "failed", error: String(error) } }),
         );
