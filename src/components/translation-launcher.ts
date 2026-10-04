@@ -9,8 +9,8 @@ import { createCapturedContent } from "./captured-content";
 import { PAGE_CONTEXT_LIMITS, PURPOSE_NAMES, type Purpose } from "../modules/shared/protocol";
 import { describeError, type LogLevel } from "../modules/shared/debug-log/model";
 
-const BALL_SIZE = 52;
-const LAUNCHER_HEIGHT = 94;
+const BALL_SIZE = 44;
+const LAUNCHER_HEIGHT = 82;
 const EDGE_MARGIN = 16;
 const DRAG_THRESHOLD = 4;
 
@@ -102,16 +102,19 @@ export function mountTranslationLauncher(container: HTMLElement) {
   });
   root.append(settings);
 
+  // The visible area without the page's scrollbars: `innerWidth` includes a classic scrollbar,
+  // which would cover a launcher placed against the right edge.
+  const viewportWidth = () => document.documentElement.clientWidth || window.innerWidth;
+  const viewportHeight = () => document.documentElement.clientHeight || window.innerHeight;
+  // Kept EDGE_MARGIN from every edge, clear of overlay scrollbars too; this also pulls in
+  // positions saved flush against an edge.
   const clampX = (x: number) =>
-    Math.min(Math.max(x, 0), Math.max(0, window.innerWidth - BALL_SIZE));
+    Math.min(Math.max(x, EDGE_MARGIN), Math.max(EDGE_MARGIN, viewportWidth() - BALL_SIZE - EDGE_MARGIN));
   const clampY = (y: number) =>
-    Math.min(Math.max(y, 0), Math.max(0, window.innerHeight - LAUNCHER_HEIGHT));
+    Math.min(Math.max(y, EDGE_MARGIN), Math.max(EDGE_MARGIN, viewportHeight() - LAUNCHER_HEIGHT - EDGE_MARGIN));
 
   // 默认位置：右下角
-  const pos: BallPosition = {
-    x: clampX(window.innerWidth - BALL_SIZE - EDGE_MARGIN),
-    y: clampY(window.innerHeight - LAUNCHER_HEIGHT - EDGE_MARGIN),
-  };
+  const pos: BallPosition = { x: clampX(Infinity), y: clampY(Infinity) };
 
   const applyPosition = () => {
     root.style.left = `${pos.x}px`;
@@ -169,7 +172,7 @@ export function mountTranslationLauncher(container: HTMLElement) {
     dragging = false;
     if (!moved) return;
     // 松手后吸附到左右边缘
-    pos.x = pos.x < window.innerWidth / 2 ? 0 : clampX(window.innerWidth);
+    pos.x = clampX(pos.x + BALL_SIZE / 2 < viewportWidth() / 2 ? 0 : Infinity);
     applyPosition();
     void ballPosition.setValue({ ...pos }).catch(() => {});
   };
