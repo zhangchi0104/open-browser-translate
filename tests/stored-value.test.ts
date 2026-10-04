@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { Schema } from "effect";
-import { createStoredValue } from "../src/modules/stored-value";
+import { createStoredValue } from "../src/modules/shared/stored-value";
 
 function memoryStore(initial?: number[]) {
   let saved = initial;

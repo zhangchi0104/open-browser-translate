@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { DomParser } from "../src/modules/dom-parser";
+import { DomParser } from "../src/modules/page/block-collector";
 import { createCapturedContent } from "../src/components/captured-content";
 
 const fixture = document.createElement("main");

@@ -1,22 +1,22 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { storage } from "wxt/utils/storage";
-import { AiProviders, aiSettings, Settings, SettingsLive, type AISettings } from "../modules/settings";
-import { analyzePageContent } from "../modules/content-analyzer/page-analysis";
-import { decideTranslationPlan } from "../modules/content-analyzer/page-plan";
-import { configuredSettings, modelAttributes, ModelsLive } from "../modules/ai/models";
-import { ChatGPTToken } from "../modules/ai/chatgpt";
+import { AiProviders, aiSettings, Settings, SettingsLive, type AISettings } from "../modules/shared/settings";
+import { analyzePageContent } from "../modules/background/content-analyzer/page-analysis";
+import { decideTranslationPlan } from "../modules/background/content-analyzer/page-plan";
+import { configuredSettings, modelAttributes, ModelsLive } from "../modules/background/ai/models";
+import { ChatGPTToken } from "../modules/background/ai/chatgpt";
 import {
   ChatGPTTokenLive, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
-} from "../modules/ai/chatgpt-session";
-import { listOpenAIModels } from "../modules/ai/openai-models";
-import { listGatewayModels } from "../modules/ai/gateway-models";
-import { translatePageBatch } from "../modules/batch-translation";
-import { createTranslationCache } from "../modules/translation-cache";
-import { createIndexedDbCacheStore } from "../modules/translation-cache/indexeddb";
-import { createContextCarryover } from "../modules/translation-context/carryover";
-import { siteOf, type TranslationContext } from "../modules/translation-context";
-import { debugLog, describeError, localTracer, markFailed, pageOf, traceStore, tracingLayer } from "../modules/debug-log";
-import { batchChars, createDispatcher, PURPOSE_NAMES, type Block, type ChatGPTModel, type Failed, type ModelList, type Purpose, type Sender } from "../modules/protocol";
+} from "../modules/background/ai/chatgpt-session";
+import { listOpenAIModels } from "../modules/background/ai/openai-models";
+import { listGatewayModels } from "../modules/background/ai/gateway-models";
+import { translatePageBatch } from "../modules/background/translation-dispatcher";
+import { createTranslationCache } from "../modules/background/cache-store";
+import { createIndexedDbCacheStore } from "../modules/background/cache-store/indexeddb";
+import { createContextCarryover } from "../modules/background/site-context/carryover";
+import { siteOf, type TranslationContext } from "../modules/background/site-context";
+import { debugLog, describeError, localTracer, markFailed, pageOf, traceStore, tracingLayer } from "../modules/shared/debug-log";
+import { batchChars, createDispatcher, PURPOSE_NAMES, type Block, type ChatGPTModel, type Failed, type ModelList, type Purpose, type Sender } from "../modules/shared/protocol";
 
 const translationContexts = storage.defineItem<Record<string, TranslationContext>>("local:translationContexts", { fallback: {} });
 const translationCache = createTranslationCache(createIndexedDbCacheStore());

@@ -2,12 +2,12 @@ import { Effect } from "effect";
 import { background } from "@/lib/background";
 import { storage } from "wxt/utils/storage";
 import { browser } from "wxt/browser";
-import { DomParser, type TranslatableContent } from "../modules/dom-parser";
-import type { Span } from "../modules/viewport-queue";
-import { createTranslationSession, type SessionProgress, type TranslationSession } from "../modules/translation-session";
+import { DomParser, type TranslatableContent } from "../modules/page/block-collector";
+import type { Span } from "../modules/page/batch-scheduler/viewport";
+import { createTranslationSession, type SessionProgress, type TranslationSession } from "../modules/page/batch-scheduler";
 import { createCapturedContent } from "./captured-content";
-import { PAGE_CONTEXT_LIMITS, PURPOSE_NAMES, type Purpose } from "../modules/protocol";
-import { describeError, type LogLevel } from "../modules/debug-log/model";
+import { PAGE_CONTEXT_LIMITS, PURPOSE_NAMES, type Purpose } from "../modules/shared/protocol";
+import { describeError, type LogLevel } from "../modules/shared/debug-log/model";
 
 const BALL_SIZE = 52;
 const LAUNCHER_HEIGHT = 94;

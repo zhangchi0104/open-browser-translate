@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
   createClient, createDispatcher, MAX_BATCH_BLOCKS, MAX_BATCH_CHARS, PAGE_CONTEXT_LIMITS, STREAM_PORT,
   type Block, type Handlers, type Port, type Sender, type TranslationBatchResult,
-} from "../src/modules/protocol";
+} from "../src/modules/shared/protocol";
 
 const PAGE: Sender = { id: "extension", tab: { url: "https://example.com/a" } };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));

@@ -1,14 +1,14 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { background } from "@/lib/background";
-import { PURPOSE_NAMES, type ChatGPTModel, type Purpose, type Request } from "@/modules/protocol";
+import { PURPOSE_NAMES, type ChatGPTModel, type Purpose, type Request } from "@/modules/shared/protocol";
 import { Bug, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import {
   AiProviders, aiSettings, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL, REASONING_EFFORTS, validateModel,
   type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider, type ReasoningEffort,
-} from "@/modules/settings";
-import { GATEWAY_DECISION_MODELS } from "@/modules/ai/gateway-models";
-import { chatgptAuth, chatgptSignInResult } from "@/modules/ai/chatgpt-session";
-import type { SignInResult } from "@/modules/ai/chatgpt-session";
+} from "@/modules/shared/settings";
+import { GATEWAY_DECISION_MODELS } from "@/modules/background/ai/gateway-models";
+import { chatgptAuth, chatgptSignInResult } from "@/modules/background/ai/chatgpt-session";
+import type { SignInResult } from "@/modules/background/ai/chatgpt-session";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";

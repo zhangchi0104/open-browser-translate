@@ -3,8 +3,8 @@ import { test } from "node:test";
 import { Effect, Redacted } from "effect";
 import { LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
-import { vercelLayer } from "../src/modules/ai/vercel";
-import { listGatewayModels } from "../src/modules/ai/gateway-models";
+import { vercelLayer } from "../src/modules/background/ai/vercel";
+import { listGatewayModels } from "../src/modules/background/ai/gateway-models";
 
 test("Vercel layer uses Chat Completions with the selected model", async () => {
   let calls = 0;

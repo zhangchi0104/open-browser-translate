@@ -4,9 +4,9 @@ import { Effect } from "effect";
 import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Schema } from "effect";
-import { defaultSettings, migrateSettings, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, validateModel } from "../src/modules/settings/model";
-import { AiProviders } from "../src/modules/settings/model";
-import { analysisModelFor, modelsFor, translationModelFor } from "../src/modules/ai/models";
+import { defaultSettings, migrateSettings, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, validateModel } from "../src/modules/shared/settings/model";
+import { AiProviders } from "../src/modules/shared/settings/model";
+import { analysisModelFor, modelsFor, translationModelFor } from "../src/modules/background/ai/models";
 import { blocksIn, chatCompletion, chatRequest, decisionResponse, isDecisionRequest, requestedModel, type ChatRequest } from "./decision-mock";
 
 test("models can be configured independently, while nonempty IDs remain validated", () => {
@@ -75,7 +75,7 @@ test("analysis and translation route independently through configured providers"
 });
 
 test("page analysis requires configuration and returns only serializable decisions", async () => {
-  const { analyzePageContent } = await import("../src/modules/content-analyzer/page-analysis");
+  const { analyzePageContent } = await import("../src/modules/background/content-analyzer/page-analysis");
   const settings = structuredClone(defaultSettings);
   settings.analysis.provider = AiProviders.OpenAIApi;
   const blocks = [{ text: "Article text", tag: "p" }, { text: "Home", tag: "a" }];

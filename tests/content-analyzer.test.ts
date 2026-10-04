@@ -3,11 +3,12 @@ import { test } from "node:test";
 import { Effect, Layer, Redacted } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
-import { AI, openAIDecisionLayer } from "../src/modules/ai";
-import { toProviderAnswer } from "../src/modules/ai/openai-decisions";
+import { AI, openAIDecisionLayer } from "../src/modules/background/ai";
+import { toProviderAnswer } from "../src/modules/background/ai/openai-decisions";
 import { blocksIn, chatRequest, decisionResponse, isDecisionRequest } from "./decision-mock";
-import { ContentAnalyzer, TRANSLATION_PRIORITY, type ContentRole } from "../src/modules/content-analyzer";
-import type { TranslatableContent } from "../src/modules/dom-parser";
+import { ContentAnalyzer } from "../src/modules/background/content-analyzer";
+import { TRANSLATION_PRIORITY, type ContentRole } from "../src/modules/shared/protocol";
+import type { TranslatableContent } from "../src/modules/page/block-collector";
 
 const content = (text: string): TranslatableContent => ({
   element: { tagName: "P" } as Element,
