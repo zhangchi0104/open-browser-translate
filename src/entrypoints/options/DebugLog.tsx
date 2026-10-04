@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { background } from "@/lib/background";
-import { debugLogEntries, formatEntries, type LogEntry, type LogLevel } from "@/modules/debug-log";
+import { debugLogEntries, formatEntries, type LogEntry, type LogLevel } from "@/modules/shared/debug-log";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";

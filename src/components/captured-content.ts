@@ -1,4 +1,4 @@
-import type { TranslatableContent } from "../modules/dom-parser";
+import type { TranslatableContent } from "../modules/page/block-collector";
 
 // Shimmering bars in a faint version of the text color, so they suit light and dark pages.
 const PLACEHOLDER_CSS = `:host { overflow-wrap: anywhere; } .text { white-space: pre-wrap; }

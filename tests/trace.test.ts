@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { Effect, ManagedRuntime } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { createLocalTracer, createTraceStore, groupTraces, markFailed, toOtlpExport, traced, tracingLayer, type OtlpSpan } from "../src/modules/debug-log/trace";
+import { createLocalTracer, createTraceStore, groupTraces, markFailed, toOtlpExport, traced, tracingLayer, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
 
 const value = (span: OtlpSpan, key: string) => span.attributes.find((attribute) => attribute.key === key)?.value;
 

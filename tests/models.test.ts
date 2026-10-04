@@ -2,12 +2,12 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { ChatGPTToken } from "../src/modules/ai/chatgpt";
-import { ModelsLive } from "../src/modules/ai/models";
-import { AiProviders } from "../src/modules/settings/model";
-import { defaultSettings, type AISettings } from "../src/modules/settings/model";
-import { Settings } from "../src/modules/settings/service";
-import { translateBatch } from "../src/modules/translator/translate-batch";
+import { ChatGPTToken } from "../src/modules/background/ai/chatgpt";
+import { ModelsLive } from "../src/modules/background/ai/models";
+import { AiProviders } from "../src/modules/shared/settings/model";
+import { defaultSettings, type AISettings } from "../src/modules/shared/settings/model";
+import { Settings } from "../src/modules/shared/settings/service";
+import { translateBatch } from "../src/modules/background/translation-service/translate-batch";
 import { chatCompletion, chatRequest } from "./decision-mock";
 
 test("one runtime translates on whatever model the settings select when each request starts", async () => {

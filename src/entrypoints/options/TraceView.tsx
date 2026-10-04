@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { background } from "@/lib/background";
-import { groupTraces, toOtlpExport, traceSpans, type OtlpSpan, type OtlpValue, type TraceView as Trace } from "@/modules/debug-log";
+import { groupTraces, toOtlpExport, traceSpans, type OtlpSpan, type OtlpValue, type TraceView as Trace } from "@/modules/shared/debug-log";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";

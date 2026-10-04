@@ -5,13 +5,13 @@ import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import {
   CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, listModels, parseCallback, refreshAccount, type ChatGPTAuth,
-} from "../src/modules/ai/chatgpt-auth";
-import { analysisModelFor, missingConfiguration, translationModelFor } from "../src/modules/ai/models";
-import { AiProviders } from "../src/modules/settings/model";
-import { listOpenAIModels } from "../src/modules/ai/openai-models";
-import { describeError } from "../src/modules/debug-log/model";
-import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/debug-log/trace";
-import { defaultSettings } from "../src/modules/settings/model";
+} from "../src/modules/background/ai/chatgpt-auth";
+import { analysisModelFor, missingConfiguration, translationModelFor } from "../src/modules/background/ai/models";
+import { AiProviders } from "../src/modules/shared/settings/model";
+import { listOpenAIModels } from "../src/modules/background/ai/openai-models";
+import { describeError } from "../src/modules/shared/debug-log/model";
+import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
+import { defaultSettings } from "../src/modules/shared/settings/model";
 
 const b64url = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
 const keys = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
@@ -191,7 +191,7 @@ test("subscription translation streams Responses requests with the OAuth token",
 });
 
 test("the translator's structured output works over the subscription", async () => {
-  const { Translator } = await import("../src/modules/translator");
+  const { Translator } = await import("../src/modules/background/translation-service/translator");
   const { Layer } = await import("effect");
   const settings = structuredClone(defaultSettings);
   settings.translation.provider = AiProviders.OpenAISubscription;
@@ -303,7 +303,7 @@ test("reading the plan's response stream is its own span, with time to first out
 });
 
 test("streaming translation over the plan passes the event stream through and reports partial text", async () => {
-  const { Translator } = await import("../src/modules/translator");
+  const { Translator } = await import("../src/modules/background/translation-service/translator");
   const { Layer } = await import("effect");
   const settings = structuredClone(defaultSettings);
   settings.translation.provider = AiProviders.OpenAISubscription;

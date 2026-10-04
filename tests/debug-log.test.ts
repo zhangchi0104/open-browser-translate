@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { Cause } from "effect";
 import { AiError } from "effect/unstable/ai";
-import { createDebugLog, describeError, formatEntries, MAX_ENTRIES, pageOf, type LogEntry } from "../src/modules/debug-log/model";
+import { createDebugLog, describeError, formatEntries, MAX_ENTRIES, pageOf, type LogEntry } from "../src/modules/shared/debug-log/model";
 
 function memoryStore() {
   let saved: LogEntry[] | null = null;

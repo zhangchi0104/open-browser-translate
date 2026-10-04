@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { parsePartialJson, partialTranslations } from "../src/modules/translator/partial-json";
+import { parsePartialJson, partialTranslations } from "../src/modules/background/translation-service/partial-json";
 
 test("complete JSON parses as usual", () => {
   const value = { translations: [{ id: 0, text: "你好" }], terms: [{ source: "A", target: "甲" }], n: -1.5e2, ok: true, none: null };
