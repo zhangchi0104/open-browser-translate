@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { background } from "@/lib/background";
 import { debugLogEntries, formatEntries, type LogEntry, type LogLevel } from "@/modules/shared/debug-log";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { TraceView } from "./TraceView";
@@ -15,7 +14,7 @@ const filters: Record<Filter, { label: string; keep: (level: LogLevel) => boolea
 };
 const levelStyles: Record<LogLevel, { label: string; className: string }> = {
   info: { label: "信息", className: "bg-muted text-muted-foreground" },
-  warn: { label: "警告", className: "bg-amber-100 text-amber-900" },
+  warn: { label: "警告", className: "bg-warning-soft text-warning-foreground" },
   error: { label: "错误", className: "bg-destructive/10 text-destructive" },
 };
 const sourceLabels: Record<LogEntry["source"], string> = { background: "后台", page: "网页" };
@@ -46,6 +45,9 @@ export function DebugLog() {
         ))}
       </div>
       {view === "traces" ? <TraceView /> : <LogView />}
+      <p className="px-1 text-[12px] leading-relaxed text-muted-foreground">
+        数据只保存在本机，保留最近 100 次请求，可导出为 OTLP JSON 交给开发者排查。记录网址路径，不记录网页正文和 API key；服务商返回的错误信息可能引用模型输出。
+      </p>
     </div>
   );
 }
@@ -96,8 +98,7 @@ function LogView() {
           <Button type="button" variant="outline" size="sm" className="text-muted-foreground" onClick={clear} disabled={!entries?.length}>清空</Button>
         </div>
       </div>
-      <Card className="py-0">
-        <CardContent className="px-0">
+      <div className="overflow-hidden rounded-xl border bg-card">
           {entries && !visible.length ? (
             <p className="px-5 py-8 text-center text-sm text-muted-foreground">
               {entries.length ? "没有符合筛选条件的日志。" : "暂无日志。登录、读取模型列表和网页端的错误会记在这里；翻译请求见「请求追踪」。"}
@@ -107,8 +108,7 @@ function LogView() {
               {visible.slice().reverse().map((entry, index) => <Row key={`${entry.at}-${index}`} entry={entry} />)}
             </ol>
           )}
-        </CardContent>
-      </Card>
+      </div>
     </div>
   );
 }

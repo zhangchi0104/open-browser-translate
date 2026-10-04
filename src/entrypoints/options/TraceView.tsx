@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { background } from "@/lib/background";
 import { groupTraces, toOtlpExport, traceSpans, type OtlpSpan, type OtlpValue, type TraceView as Trace } from "@/modules/shared/debug-log";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
@@ -120,8 +119,7 @@ export function TraceView() {
           <Button type="button" variant="outline" size="sm" className="text-muted-foreground" onClick={clear} disabled={!spans?.length}>清空</Button>
         </div>
       </div>
-      <Card className="py-0">
-        <CardContent className="px-0">
+      <div className="overflow-hidden rounded-xl border bg-card">
           {spans && !visible.length ? (
             <p className="px-5 py-8 text-center text-sm text-muted-foreground">
               {traces.length ? "没有出错的请求。" : "暂无追踪数据。点击网页上的翻译按钮后，每次请求的步骤和耗时会显示在这里。"}
@@ -131,8 +129,7 @@ export function TraceView() {
               {visible.map((trace) => <TraceRow key={trace.traceId} trace={trace} />)}
             </ol>
           )}
-        </CardContent>
-      </Card>
+      </div>
     </div>
   );
 }
@@ -183,7 +180,7 @@ function TraceRow({ trace }: { trace: Trace }) {
                     </span>
                     {firstOutput && (
                       <span className="truncate text-[11px] text-muted-foreground">
-                        <span className="text-amber-700">等待 {formatDuration(Number(firstOutput))}</span>
+                        <span className="text-warning-foreground">等待 {formatDuration(Number(firstOutput))}</span>
                         {" → 输出 "}{formatDuration(ms(BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano)) - Number(firstOutput))}
                         {attribute(span, "obt.usage.reasoning_tokens") && ` · 推理 ${attribute(span, "obt.usage.reasoning_tokens")} tokens`}
                       </span>
@@ -195,7 +192,7 @@ function TraceRow({ trace }: { trace: Trace }) {
                       style={{ left: `${offset * 100}%`, width: `max(${width * 100}%, 2px)` }}
                     >
                       {/* Before the first output text the model is queued or thinking. */}
-                      {waiting !== undefined && !failed && <span className="h-full bg-amber-400" style={{ width: `${waiting * 100}%` }} />}
+                      {waiting !== undefined && !failed && <span className="h-full bg-warning" style={{ width: `${waiting * 100}%` }} />}
                     </span>
                   </span>
                 </button>
