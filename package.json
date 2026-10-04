@@ -1,6 +1,6 @@
 {
-  "name": "wxt-starter",
-  "description": "manifest.json description",
+  "name": "open-browser-translate",
+  "description": "A browser extension that translates the page you're reading in place, content near the viewport first, with models you configure.",
   "private": true,
   "version": "0.0.1",
   "type": "module",
