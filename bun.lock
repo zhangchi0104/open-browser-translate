@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "wxt-starter",
+      "name": "open-browser-translate",
       "dependencies": {
         "@effect/ai-openai": "4.0.0-rc.116",
         "@effect/ai-openai-compat": "4.0.0-rc.116",
