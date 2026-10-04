@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { background } from "@/lib/background";
 import { storage } from "wxt/utils/storage";
 import { browser } from "wxt/browser";
-import { DomParser, type TranslatableContent } from "../modules/page/block-collector";
+import { DomParser, pageBrief, type TranslatableContent } from "../modules/page/block-collector";
 import type { Span } from "../modules/page/batch-scheduler/viewport";
 import { createTranslationSession, type SessionProgress, type TranslationSession } from "../modules/page/batch-scheduler";
 import { createCapturedContent } from "./captured-content";
@@ -259,12 +259,17 @@ export function mountTranslationLauncher(container: HTMLElement) {
         + (failed ? `${failed} 段翻译失败，请重试。` : "")
         + (fallbacks || plan.fallback ? "部分内容使用本地筛选回退。" : "");
 
+      const brief = pageBrief({
+        title: document.title,
+        description: document.querySelector('meta[name="description"]')?.getAttribute("content"),
+        heading: document.querySelector("h1")?.textContent,
+      });
       translation = createTranslationSession(content, plan.mode, {
         spanOf,
         attached: ({ element }) => element.isConnected,
         viewportHeight: () => window.innerHeight,
         analyze: (blocks, mode) => background.request({ type: "analyze-content", mode, blocks: blocks.map(({ text, tag }) => ({ text, tag })) }),
-        translate: (blocks, onBlock) => background.translate(blocks, onBlock),
+        translate: (blocks, onBlock, preceding) => background.translate(blocks, onBlock, { brief, preceding }),
         loading: (items) => capturedContent.loading(items),
         show: (item, text, final) => capturedContent.update(item, text, !final),
         discard: (items) => capturedContent.discard(items),

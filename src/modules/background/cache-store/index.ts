@@ -1,22 +1,20 @@
-// Translations are cached per block so revisiting a page, or text repeated across a site's
-// pages, needs no model call. A key covers everything that changes the translation: the site
-// (its glossary differs), target language, provider, model and the exact source text. Changed
+// Model answers are cached per item (a block's text) so revisiting a page, or text repeated
+// across a site's pages, needs no model call. A scope holds everything else that changes the
+// answer: the site, then whatever the caller adds (target language, provider, model). Changed
 // text is a new key, so an entry only goes stale with time: it's kept for seven days from when
-// it was translated.
+// it was saved.
 
 export const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 export const MAX_CACHE_ENTRIES = 20_000;
 
 export interface CacheScope {
-  origin: string;
-  target: string;
-  provider: string;
-  model: string;
+  readonly origin: string;
+  readonly parts: readonly string[];
 }
 export interface CacheEntry {
   key: string;
   origin: string;
-  translation: string;
+  value: string;
   savedAt: number;
   usedAt: number;
 }
@@ -31,20 +29,20 @@ export interface CacheStore {
   clear(): Promise<void>;
 }
 
-/** A hash of the scope and text, so the store keeps no source text. */
-async function keyOf(scope: CacheScope, text: string) {
-  const data = new TextEncoder().encode(JSON.stringify([scope.origin, scope.target, scope.provider, scope.model, text]));
+/** A hash of the scope and item, so the store keeps no source text. */
+async function keyOf(scope: CacheScope, item: string) {
+  const data = new TextEncoder().encode(JSON.stringify([scope.origin, ...scope.parts, item]));
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function createTranslationCache(store: CacheStore, options: { now?: () => number; maxEntries?: number } = {}) {
+export function createCache(store: CacheStore, options: { now?: () => number; maxEntries?: number } = {}) {
   const now = options.now ?? Date.now;
   const maxEntries = options.maxEntries ?? MAX_CACHE_ENTRIES;
   return {
-    /** Each text's cached translation, or undefined when it isn't cached. */
-    async get(scope: CacheScope, texts: readonly string[]): Promise<(string | undefined)[]> {
-      const keys = await Promise.all(texts.map((text) => keyOf(scope, text)));
+    /** Each item's cached value, or undefined when it isn't cached. */
+    async get(scope: CacheScope, items: readonly string[]): Promise<(string | undefined)[]> {
+      const keys = await Promise.all(items.map((item) => keyOf(scope, item)));
       const entries = await store.get(keys);
       const time = now();
       const stale = entries.flatMap((entry) => entry && time - entry.savedAt > CACHE_TTL ? [entry.key] : []);
@@ -52,13 +50,13 @@ export function createTranslationCache(store: CacheStore, options: { now?: () =>
       if (stale.length) await store.delete(stale);
       const used = fresh.flatMap((entry) => entry ? [{ ...entry, usedAt: time }] : []);
       if (used.length) await store.put(used);
-      return fresh.map((entry) => entry?.translation);
+      return fresh.map((entry) => entry?.value);
     },
-    async put(scope: CacheScope, items: readonly { text: string; translation: string }[]) {
-      if (!items.length) return;
+    async put(scope: CacheScope, entries: readonly { item: string; value: string }[]) {
+      if (!entries.length) return;
       const time = now();
-      await store.put(await Promise.all(items.map(async ({ text, translation }) => ({
-        key: await keyOf(scope, text), origin: scope.origin, translation, savedAt: time, usedAt: time,
+      await store.put(await Promise.all(entries.map(async ({ item, value }) => ({
+        key: await keyOf(scope, item), origin: scope.origin, value, savedAt: time, usedAt: time,
       }))));
       const over = await store.count() - maxEntries;
       if (over > 0) await store.delete(await store.leastRecentlyUsed(over));
@@ -67,7 +65,7 @@ export function createTranslationCache(store: CacheStore, options: { now?: () =>
     clear: () => store.clear(),
   };
 }
-export type TranslationCache = ReturnType<typeof createTranslationCache>;
+export type Cache = ReturnType<typeof createCache>;
 
 /** An in-memory store, for tests. */
 export function createMemoryCacheStore(): CacheStore {

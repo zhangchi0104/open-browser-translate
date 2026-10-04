@@ -40,6 +40,17 @@ const Input = Schema.Struct({
 const MAX_BLOCK_LENGTH = 2000;
 const MIN_CONFIDENCE = 0.8;
 
+/**
+ * Whether a classified block is translated, and when. A confident auxiliary or ad is skipped, and
+ * in `main` mode so is confident navigation or controls; an unsure answer counts as unknown.
+ */
+export function judge(role: ContentRole, confidence: number | undefined, mode: Mode | undefined) {
+  const confident = (confidence ?? 0) >= MIN_CONFIDENCE;
+  const excluded = role === "auxiliary" || role === "advertisement"
+    || (mode === "main" && (role === "navigation" || role === "control"));
+  return { shouldTranslate: !(confident && excluded), priority: confident ? TRANSLATION_PRIORITY[role] : TRANSLATION_PRIORITY.unknown };
+}
+
 const fallback = <T extends Block>(
   content: T,
   fallbackReason: AnalyzedContent["fallbackReason"],
@@ -93,16 +104,7 @@ export class ContentAnalyzer extends Context.Service<ContentAnalyzer, {
               results.push(fallback(item, "request-failed", "error" in response ? response.error : `模型没有返回 block ${index} 的分类`));
               continue;
             }
-            const confident = (answer.confidence ?? 0) >= MIN_CONFIDENCE;
-            const excluded = answer.label === "auxiliary" || answer.label === "advertisement"
-              || (options.mode === "main" && (answer.label === "navigation" || answer.label === "control"));
-            results.push({
-              content: item,
-              role: answer.label,
-              confidence: answer.confidence,
-              shouldTranslate: !(confident && excluded),
-              priority: confident ? TRANSLATION_PRIORITY[answer.label] : TRANSLATION_PRIORITY.unknown,
-            });
+            results.push({ content: item, role: answer.label, confidence: answer.confidence, ...judge(answer.label, answer.confidence, options.mode) });
           }
         }
         return results;

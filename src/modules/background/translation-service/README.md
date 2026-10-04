@@ -1,5 +1,12 @@
 # Translation service
 
+`createTranslationService(cache)` is the read-through translation cache in front
+of the model (ADR-0002): `translate(blocks, { site, context, onBlock })` sends
+cached blocks to `onBlock` at once and final, translates only the rest with
+`translateBatch`, and caches a successful result. The cache key's model comes
+from the request's settings, the same ones the model is built from. The rest of
+this file describes the translation flow end to end.
+
 The launcher captures source groups, then asks the analysis model for a page-level plan using
 bounded text samples, title, article presence, and pagination labels. High
 confidence selects `all` (ordinary webpages) or `main` (reading content only).
@@ -34,7 +41,7 @@ source nodes remain unchanged; changed or disconnected sources are skipped.
 
 Translations stream onto the page. The launcher sends each batch over the
 `translate-stream` port (`../../shared/protocol`); the background runs it through
-`translatePageBatch` (`../translation-dispatcher`), which calls `translateBatch` with `onPartial`,
+`translatePageBatch` (`../translation-dispatcher`), which calls the service, and `translateBatch` passes `onPartial`,
 and the Translator then uses `streamText` instead of `generateObject`, since
 Effect can't stream structured output. The prompt spells out the same JSON
 shape, `partial-json.ts` reads the half-written JSON as it arrives, and each
@@ -74,7 +81,11 @@ Context carries across viewport batches and pages on the same site
 origin in extension storage: the last five page titles, a glossary of terms the
 model reported translating (newest rendering wins, at most 60), and the last
 three translated passages. Each batch is sent with the page titles, the recent
-passages, and only the glossary terms that occur in that batch. Glossary terms
+passages, and only the glossary terms that occur in that batch, plus what the
+page sends about where the batch sits: the page brief (its title, meta
+description and first heading) and the preceding text (up to 600 characters of
+source just before the batch's first block, skipping blocks analysis dropped).
+Pages without a site still send those two. Glossary terms
 are kept only if their source text appears in the batch they came from.
 Contexts expire after seven days, at most 50 sites are kept, and private
 windows keep none.

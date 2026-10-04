@@ -47,7 +47,7 @@ What earlier translations on a site leave for later batches: recent page titles,
 _Avoid_: carryover (that's how it travels, not what it is), translation context
 
 **Page brief**:
-What a page is about, written once when the page is analyzed and sent with each of its batches.
+What a page is about in its own words (title, description, first heading), collected when translation starts and sent with each of its batches.
 _Avoid_: page summary
 
 **Preceding text**:

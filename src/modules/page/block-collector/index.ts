@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from "effect";
+import { SURROUNDINGS_LIMITS } from "../../shared/protocol";
 
 export interface TranslatableContent {
   tag: string;
@@ -125,4 +126,17 @@ function parseTranslatableContent(
   visit(root);
   flush();
   return content;
+}
+
+/**
+ * The page brief: what the page is about, in its own words (title, meta description, first
+ * heading), with repeats and blank parts left out. Sent with every batch of the page.
+ */
+export function pageBrief(page: { title: string; description?: string | null; heading?: string | null }): string | undefined {
+  const parts: string[] = [];
+  for (const part of [page.title, page.description, page.heading]) {
+    const text = part?.replace(/\s+/g, " ").trim();
+    if (text && !parts.some((kept) => kept.includes(text))) parts.push(text);
+  }
+  return parts.join("\n").slice(0, SURROUNDINGS_LIMITS.brief) || undefined;
 }

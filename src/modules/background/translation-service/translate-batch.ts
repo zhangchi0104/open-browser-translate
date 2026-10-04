@@ -1,16 +1,19 @@
 import { Effect, Layer } from "effect";
 import { describeError } from "../../shared/debug-log/model";
 import { Translator } from "./translator";
-import type { Block, TranslationBatchResult } from "../../shared/protocol";
+import type { Block, Surroundings, TranslationBatchResult } from "../../shared/protocol";
 import { configuredSettings, modelAttributes, TranslationModel } from "../ai/models";
 import type { PromptContext } from "../site-context";
 
 /** The language pages are translated into. */
 export const TARGET_LANGUAGE = "简体中文";
 
+/** Everything sent with a batch for reference: the site's context and the batch's surroundings on the page. */
+export type PromptInput = Partial<PromptContext> & Surroundings;
+
 export interface TranslateBatchOptions {
-  /** Site context from earlier batches, sent with the prompt. */
-  context?: PromptContext;
+  /** Site context and the batch's surroundings, sent with the prompt. */
+  context?: PromptInput;
   /** Receives a block's translation (by its index in `blocks`) as it streams; omit to translate without streaming. */
   onPartial?: (index: number, text: string) => void;
 }

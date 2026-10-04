@@ -47,3 +47,11 @@ serializable text/tag blocks; DOM references stay in the content script.
 Run `bun test tests/content-analyzer.test.ts` to validate classification policy,
 mapping, batching, fallback, and the official adapter's HTTP contract. Tests use
 fake responses and do not establish live model quality or API availability.
+
+`analyzePageContent(blocks, mode, { cache, site })` (`page-analysis.ts`) puts a
+read-through cache in front of the model (ADR-0002, `../cache-store`): a site's
+repeated navigation and footers are classified once. It keeps each block's role
+and confidence, keyed by site, provider, model, tag and text, and `judge`
+turns them into keep and priority for the current mode. Fallbacks aren't
+cached, and cached blocks are no longer sent alongside the rest of their batch
+as neighbouring context. `bun test tests/analysis-cache.test.ts` covers it.

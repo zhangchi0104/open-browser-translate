@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-/** The translation cache lives in the background's IndexedDB, so its size and clearing go through messages. */
+/** The caches live in the background's IndexedDB, so their size and clearing go through messages; clearing empties translations and analysis. */
 export function CacheSettings() {
   const [count, setCount] = useState<number>();
   const [busy, setBusy] = useState(false);
@@ -37,7 +37,7 @@ export function CacheSettings() {
           <p className="mt-1 text-[13px] text-muted-foreground">段已缓存的译文</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" variant="outline" size="sm" onClick={clear} disabled={busy || !count}>清空翻译缓存</Button>
+          <Button type="button" variant="outline" size="sm" onClick={clear} disabled={busy || !count}>清空缓存</Button>
           <span role="status" aria-live="polite" className={cn("text-[13px]", status.error ? "text-destructive" : "text-success")}>{status.text}</span>
         </div>
       </CardContent>
