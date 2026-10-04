@@ -2,7 +2,7 @@
   "name": "open-browser-translate",
   "description": "A browser extension that translates the page you're reading in place, content near the viewport first, with models you configure.",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "scripts": {
     "dev": "wxt",
