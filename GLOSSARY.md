@@ -40,10 +40,19 @@ A decision taken without a confident model answer: a plan that defaults to `all`
 
 **Batch**:
 Up to eight blocks sent together for analysis or translation.
+_Avoid_: chunk
 
 **Site context**:
 What earlier translations on a site leave for later batches: recent page titles, the glossary, and recent passages.
 _Avoid_: carryover (that's how it travels, not what it is), translation context
+
+**Page brief**:
+What a page is about, written once when the page is analyzed and sent with each of its batches.
+_Avoid_: page summary
+
+**Preceding text**:
+The source text just before a batch on the page, sent with it so the batch is translated in its surroundings.
+_Avoid_: previous translation
 
 **Glossary**:
 The renderings of terms a site's earlier translations chose, reused so a term reads the same across pages.
