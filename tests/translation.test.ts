@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { modelsFor } from "../src/modules/ai/models";
 import { FetchHttpClient } from "effect/unstable/http";
 import { defaultSettings } from "../src/modules/settings/model";
-import { AiProviders } from "../src/modules/ai/providers";
+import { AiProviders } from "../src/modules/settings/model";
 import { decideTranslationPlan } from "../src/modules/content-analyzer/page-plan";
 import { translateBatch } from "../src/modules/translator/translate-batch";
 import { blocksIn, chatCompletion, chatCompletionStream, chatRequest, decisionResponse, isDecisionRequest, translationInput, type ChatRequest } from "./decision-mock";

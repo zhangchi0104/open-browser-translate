@@ -3,7 +3,7 @@ import type * as TypeSafeSchema from "@effect/ai-typesafe/TypeSafeSchema";
 import { Effect, Layer, type Redacted } from "effect";
 import { DecisionModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
-import { DEFAULT_GATEWAY_DECISION_MODEL } from "./providers";
+import { DEFAULT_GATEWAY_DECISION_MODEL } from "../settings/model";
 
 // How far a distribution's sum may stray from 1 and still count as rounding. Jev's
 // probabilities are rounded when serialized, so they can sum to 0.9998 or 1.0002, while

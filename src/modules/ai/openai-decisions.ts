@@ -3,8 +3,7 @@ import { AiError, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import type * as Decision from "effect/unstable/ai/Decision";
 import { openAICompatibleLayer } from "./vercel";
 import { chatgptLayer } from "./chatgpt";
-import { DEFAULT_DECISION_MODEL } from "./providers";
-import type { ReasoningEffort } from "../settings/model";
+import { DEFAULT_DECISION_MODEL, type ReasoningEffort } from "../settings/model";
 
 // OpenAI's Decisions API is in limited preview with no published request format, so
 // decisions run on a regular OpenAI model through structured outputs. Once the API is
