@@ -1,7 +1,7 @@
 import { Effect, Layer, Option, Schema } from "effect";
 import { ContentAnalyzer, judge, type AnalyzedContent } from "./index";
 import { CONTENT_ROLES, type Block, type Mode, type PageAnalysisResult } from "../../shared/protocol";
-import { AnalysisModel, modelConfig } from "../ai/models";
+import { AnalysisModel, modelConfig, modelIdentity } from "../ai/models";
 import type { Cache } from "../cache-store";
 import { describeError } from "../../shared/debug-log/model";
 import { Settings } from "../../shared/settings/service";
@@ -25,8 +25,8 @@ export interface AnalysisCacheOptions {
  */
 export function analyzePageContent(blocks: readonly Block[], mode: Mode = "main", { cache, site }: AnalysisCacheOptions = {}) {
   return Effect.gen(function* () {
-    const { provider, model } = modelConfig(yield* Settings.use((settings) => settings.get), "analysis");
-    const scope = cache && site ? { origin: site, parts: [provider, model] } : undefined;
+    const config = modelConfig(yield* Settings.use((settings) => settings.get), "analysis");
+    const scope = cache && site ? { origin: site, parts: modelIdentity(config) } : undefined;
     const items = blocks.map(({ tag, text }) => JSON.stringify([tag, text]));
     const stored = scope ? yield* Effect.tryPromise(() => cache!.get(scope, items)) : items.map(() => undefined);
     // An entry that doesn't decode counts as a miss and is overwritten.

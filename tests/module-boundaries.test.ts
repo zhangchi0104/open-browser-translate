@@ -32,7 +32,7 @@ const PAGE = "src/modules/page";
 const BACKGROUND = "src/modules/background";
 
 test("the page side never imports background modules", () => {
-  const pageSide = [...sourcesIn(PAGE), ...sourcesIn("src/components"), ...sourcesIn("src/lib"), "src/entrypoints/content.ts"];
+  const pageSide = [...sourcesIn(PAGE), ...sourcesIn("src/components"), ...sourcesIn("src/lib"), ...sourcesIn("src/entrypoints/content")];
   assert.deepEqual(violations(pageSide, [BACKGROUND]), []);
 });
 

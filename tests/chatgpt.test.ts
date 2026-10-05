@@ -7,7 +7,7 @@ import {
   CHATGPT_REDIRECT_URI, completeSignIn, createSignIn, listModels, parseCallback, refreshAccount, type ChatGPTAuth,
 } from "../src/modules/background/ai/chatgpt-auth";
 import { analysisModelFor, missingConfiguration, translationModelFor } from "../src/modules/background/ai/models";
-import { AiProviders } from "../src/modules/shared/settings/model";
+import { AiProviders, findConnection } from "../src/modules/shared/settings/model";
 import { listOpenAIModels } from "../src/modules/background/ai/openai-models";
 import { describeError } from "../src/modules/shared/debug-log/model";
 import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
@@ -114,12 +114,12 @@ function sse(...events: unknown[]) {
 
 test("subscription translation streams Responses requests with the OAuth token", async () => {
   const settings = structuredClone(defaultSettings);
-  settings.analysis.provider = AiProviders.OpenAIApi;
-  settings.translation.provider = AiProviders.OpenAISubscription;
+  settings.analysis.connection = AiProviders.OpenAIApi;
+  settings.translation.connection = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
   settings.translation.reasoningEffort = "high";
   settings.translation.fast = true;
-  settings.providers.OpenAIApi.apiKey = "test-direct";
+  findConnection(settings, AiProviders.OpenAIApi)!.apiKey = "test-direct";
   assert.equal(missingConfiguration(settings, false), "translation");
   assert.equal(missingConfiguration(settings, true), undefined);
 
@@ -131,7 +131,7 @@ test("subscription translation streams Responses requests with the OAuth token",
     assert.equal(body.stream, true);
     assert.equal(body.store, false);
     assert.deepEqual(body.reasoning, { effort: "high" });
-    assert.equal(body.service_tier, "fast");
+    assert.equal(body.service_tier, "priority");
     return sse({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } }, { type: "response.completed", response: completed });
   };
   const result = await Effect.runPromise(LanguageModel.generateText({ prompt: "Hello" }).pipe(
@@ -194,7 +194,7 @@ test("the translator's structured output works over the subscription", async () 
   const { Translator } = await import("../src/modules/background/translation-service/translator");
   const { Layer } = await import("effect");
   const settings = structuredClone(defaultSettings);
-  settings.translation.provider = AiProviders.OpenAISubscription;
+  settings.translation.connection = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
   const text = JSON.stringify({ translations: [{ id: 0, text: "你好" }], terms: [] });
   const fetchMock: typeof fetch = async (_, init) => {
@@ -210,7 +210,7 @@ test("the translator's structured output works over the subscription", async () 
 
 test("subscription analysis answers decisions through the same streamed Responses requests", async () => {
   const settings = structuredClone(defaultSettings);
-  settings.analysis.provider = AiProviders.OpenAISubscription;
+  settings.analysis.connection = AiProviders.OpenAISubscription;
   settings.analysis.models.OpenAISubscription = "gpt-test";
   settings.analysis.fast = true;
   const fetchMock: typeof fetch = async (input, init) => {
@@ -218,7 +218,7 @@ test("subscription analysis answers decisions through the same streamed Response
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer oauth-token");
     const body = JSON.parse(String(init?.body));
     assert.equal(body.model, "gpt-test");
-    assert.equal(body.service_tier, "fast");
+    assert.equal(body.service_tier, "priority");
     assert.equal(body.stream, true);
     assert.equal(body.text.format.name, "decisions");
     const text = JSON.stringify({ relevant: { probabilities: { false: 0.1, true: 0.9 } } });
@@ -268,8 +268,8 @@ test("an OpenAI API key's catalog keeps text models, newest first", async () => 
 
 test("reading the plan's response stream is its own span, with time to first output and reasoning tokens", async () => {
   const settings = structuredClone(defaultSettings);
-  settings.analysis.provider = AiProviders.OpenAIApi;
-  settings.translation.provider = AiProviders.OpenAISubscription;
+  settings.analysis.connection = AiProviders.OpenAIApi;
+  settings.translation.connection = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   // Events arrive over time, as they do while the model thinks and then writes.
@@ -306,7 +306,7 @@ test("streaming translation over the plan passes the event stream through and re
   const { Translator } = await import("../src/modules/background/translation-service/translator");
   const { Layer } = await import("effect");
   const settings = structuredClone(defaultSettings);
-  settings.translation.provider = AiProviders.OpenAISubscription;
+  settings.translation.connection = AiProviders.OpenAISubscription;
   settings.translation.models.OpenAISubscription = "gpt-test";
   const json = JSON.stringify({ translations: [{ id: 0, text: "你好，世界" }], terms: [] });
   const deltas = json.match(/[\s\S]{1,6}/g)!;

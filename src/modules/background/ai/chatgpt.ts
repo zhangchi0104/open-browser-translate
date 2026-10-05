@@ -136,7 +136,8 @@ function planClient(signIn: ChatGPTToken["Service"]) {
 export function chatgptLayer(options: { model: string; reasoningEffort?: ReasoningEffort; fast?: boolean }) {
   const reasoning = options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : undefined;
   // Fast mode, as Codex requests it on a ChatGPT plan; it uses plan limits at 2.5x the standard rate.
-  const tier = options.fast ? { service_tier: "fast" as const } : undefined;
+  // Codex calls it `fast` in its config but sends `priority`; the API rejects `fast`.
+  const tier = options.fast ? { service_tier: "priority" as const } : undefined;
   return Layer.unwrap(Effect.map(ChatGPTToken, (signIn) =>
     OpenAiLanguageModel.layer({ model: options.model, config: { store: false, ...reasoning, ...tier } }).pipe(
       Layer.provide(OpenAiClient.layer({ apiUrl: CHATGPT_API_URL, transformClient: planClient(signIn) })),

@@ -38,19 +38,23 @@ const DROPPED = /^http\.(request|response)\.header\./;
 const STATUS_CODE = "otel.status_code";
 const STATUS_DESCRIPTION = "otel.status_description";
 
-function toValue(value: unknown): OtlpValue | undefined {
+// Span attributes are short values; events can carry a prompt, a context or a batch's text.
+const MAX_VALUE = 2000;
+const MAX_EVENT_VALUE = 20_000;
+
+function toValue(value: unknown, limit = MAX_VALUE): OtlpValue | undefined {
   if (value === undefined || value === null) return;
-  if (typeof value === "string") return { stringValue: truncate(value, 2000) };
+  if (typeof value === "string") return { stringValue: truncate(value, limit) };
   if (typeof value === "boolean") return { boolValue: value };
   if (typeof value === "bigint") return { intValue: String(value) };
   if (typeof value === "number") return Number.isInteger(value) ? { intValue: String(value) } : { doubleValue: value };
-  if (Array.isArray(value)) return { arrayValue: { values: value.flatMap((item) => toValue(item) ?? []) } };
-  try { return { stringValue: truncate(JSON.stringify(value), 2000) }; } catch { return { stringValue: String(value) }; }
+  if (Array.isArray(value)) return { arrayValue: { values: value.flatMap((item) => toValue(item, limit) ?? []) } };
+  try { return { stringValue: truncate(JSON.stringify(value), limit) }; } catch { return { stringValue: String(value) }; }
 }
-function toAttributes(entries: Iterable<[string, unknown]>): OtlpAttribute[] {
+function toAttributes(entries: Iterable<[string, unknown]>, limit = MAX_VALUE): OtlpAttribute[] {
   return [...entries].flatMap(([key, raw]) => {
     if (DROPPED.test(key) || key === STATUS_CODE || key === STATUS_DESCRIPTION) return [];
-    const value = toValue(raw);
+    const value = toValue(raw, limit);
     return value ? [{ key, value }] : [];
   });
 }
@@ -73,7 +77,7 @@ class RecordingSpan extends Tracer.NativeSpan {
   override end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
     super.end(endTime, exit);
     const events: OtlpEvent[] = this.events.map(([name, time, attributes]) => ({
-      timeUnixNano: String(time), name, attributes: toAttributes(Object.entries(attributes)),
+      timeUnixNano: String(time), name, attributes: toAttributes(Object.entries(attributes), MAX_EVENT_VALUE),
     }));
     if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
       const error = Cause.squash(exit.cause);

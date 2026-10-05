@@ -3,6 +3,7 @@ import { AiError, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import type * as Decision from "effect/unstable/ai/Decision";
 import { openAICompatibleLayer } from "./vercel";
 import { chatgptLayer } from "./chatgpt";
+import { OPENAI_API_URL } from "./openai-models";
 import { DEFAULT_DECISION_MODEL, type ReasoningEffort } from "../../shared/settings/model";
 
 // OpenAI's Decisions API is in limited preview with no published request format, so
@@ -75,11 +76,12 @@ export const languageModelDecisionLayer = Layer.effect(DecisionModel.DecisionMod
   });
 }));
 
-export function openAIDecisionLayer(options: { apiKey: Redacted.Redacted<string>; model?: string; reasoningEffort?: ReasoningEffort }) {
+/** Decisions on an OpenAI model, or on any OpenAI-compatible API at `apiUrl`. */
+export function openAIDecisionLayer(options: { apiKey: Redacted.Redacted<string>; model?: string; apiUrl?: string; reasoningEffort?: ReasoningEffort }) {
   return languageModelDecisionLayer.pipe(Layer.provide(openAICompatibleLayer({
     apiKey: options.apiKey,
     model: options.model || DEFAULT_DECISION_MODEL,
-    apiUrl: "https://api.openai.com/v1",
+    apiUrl: options.apiUrl ?? OPENAI_API_URL,
     reasoningEffort: options.reasoningEffort,
   })));
 }

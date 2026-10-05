@@ -42,6 +42,9 @@ try {
   check("standalone symbols", '<p>123 !</p><p>Text</p>', ["Text"]);
   check("separate controls", '<div><button>First</button><button>Second</button></div>', ["First", "Second"]);
   check("excluded inline boundary", '<p>Before <code>code</code> after</p>', ["Before ", " after"]);
+  // openai.com's links end with a screen-reader-only label; the sentence still reads as one.
+  check("hidden helper inside a link", '<p>Keep it short. <a href="#"><u>Cut context</u><span style="display:block;position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap">(opens in a new window)</span></a> while keeping evidence.</p>', ["Keep it short. Cut context while keeping evidence."]);
+  check("display none inside a sentence", '<p>One <span style="display:none">unseen</span>sentence.</p>', ["One sentence."]);
   document.body.textContent = `PASS: ${passed} DOM parser browser cases`;
 } catch (error) {
   document.body.textContent = `FAIL: ${String(error)}`;

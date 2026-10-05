@@ -102,8 +102,25 @@ try {
   assert(!("loading" in shortSkeleton.dataset) && !shortSkeleton.hasAttribute("aria-busy"), "and it stops reading as loading");
   preview.discard([waiting[1]!]);
   assert(fixture.querySelector("#para open-browser-translate-placeholder") === null, "a block that won't be translated loses its skeleton");
+
+  // A nav button lays its label out as a flex row: the translation becomes a flex item there and,
+  // squeezed, would put one Chinese character on each line.
+  fixture.innerHTML = '<nav style="display:flex;width:300px;gap:8px"><button id="nav-one" style="display:flex;font:16px/24px sans-serif">Platform<b>v</b></button><button style="display:flex;font:16px/24px sans-serif">Solutions<b>v</b></button><button style="display:flex;font:16px/24px sans-serif">Resources<b>v</b></button></nav>';
+  const nav = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  for (const item of nav) preview.update(item, "解决方案", false);
+  const navTranslation = fixture.querySelector("#nav-one open-browser-translate-placeholder") as HTMLElement;
+  // Four characters at 16px on one line; squeezed, it would be one character (16px) wide. Its height
+  // is the row's, as flex items stretch.
+  assert(navTranslation?.dataset.nowrap === "" && navTranslation.getBoundingClientRect().width >= 60, "a translation inside a flex row stays on one line");
+
+  // A one-line block ending in a link: the translation follows the link rather than joining it.
+  fixture.innerHTML = '<p id="ends-in-link" style="width:600px;font:16px/24px sans-serif">Read the <a id="guide" href="#">guide</a></p>';
+  const linked = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  preview.update(linked[0]!, "阅读指南", false);
+  const afterLink = fixture.querySelector("#ends-in-link > open-browser-translate-placeholder");
+  assert(afterLink !== null && afterLink.previousElementSibling?.id === "guide" && !fixture.querySelector("#guide open-browser-translate-placeholder"), "the translation sits after the link, outside it");
   preview.remove();
-  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming, inline after one-line sources, loading skeleton";
+  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming, inline after one-line sources, loading skeleton, flex rows, links";
 } catch (error) {
   preview.remove();
   document.body.textContent = `FAIL: ${String(error)}`;

@@ -1,5 +1,5 @@
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai-compat";
-import { Layer, type Redacted } from "effect";
+import { Layer, Redacted } from "effect";
 import type { ReasoningEffort } from "../../shared/settings/model";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -21,7 +21,8 @@ export function openAICompatibleLayer(options: {
   const config = options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : undefined;
   return OpenAiLanguageModel.layer({ model: options.model, config }).pipe(
     Layer.provide(OpenAiClient.layer({
-      apiKey: options.apiKey,
+      // A custom connection to a local server may have no key; send no Authorization header then.
+      apiKey: Redacted.value(options.apiKey) ? options.apiKey : undefined,
       apiUrl: options.apiUrl,
     })),
     Layer.provide(FetchHttpClient.layer),

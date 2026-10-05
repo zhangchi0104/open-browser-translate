@@ -1,12 +1,11 @@
 import { Effect } from "effect";
-import { modelConfig } from "../ai/models";
+import { modelConfig, modelIdentity } from "../ai/models";
 import type { Cache } from "../cache-store";
 import { describeError } from "../../shared/debug-log/model";
 import type { Block, OnBlock, TranslationBatchResult } from "../../shared/protocol";
 import { Settings } from "../../shared/settings/service";
-import { TARGET_LANGUAGE, translateBatch, type PromptInput } from "./translate-batch";
-
-export { TARGET_LANGUAGE } from "./translate-batch";
+import { targetLanguageOf } from "../../shared/settings/model";
+import { translateBatch, type PromptInput } from "./translate-batch";
 
 export interface TranslateRequest {
   /** The page's site (`siteOf`); without one nothing is read from or written to the cache. */
@@ -30,8 +29,9 @@ export type ServiceResult = Exclude<TranslationBatchResult, Ok> | (Ok & { readon
 export function createTranslationService(cache: Cache) {
   return {
     translate: (blocks: readonly Block[], request: TranslateRequest = {}) => Effect.gen(function* () {
-      const { provider, model } = modelConfig(yield* Settings.use((settings) => settings.get), "translation");
-      const scope = request.site ? { origin: request.site, parts: [TARGET_LANGUAGE, provider, model] } : undefined;
+      const settings = yield* Settings.use((service) => service.get);
+      const config = modelConfig(settings, "translation");
+      const scope = request.site ? { origin: request.site, parts: [targetLanguageOf(settings).name, ...modelIdentity(config)] } : undefined;
       const texts = blocks.map(({ text }) => text);
       const hits = scope ? yield* Effect.tryPromise(() => cache.get(scope, texts)) : texts.map(() => undefined);
       hits.forEach((translation, index) => { if (translation !== undefined) request.onBlock?.(index, translation, true); });

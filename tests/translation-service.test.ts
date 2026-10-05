@@ -3,16 +3,18 @@ import { test } from "node:test";
 import { Effect } from "effect";
 import { modelsFor } from "../src/modules/background/ai/models";
 import { FetchHttpClient } from "effect/unstable/http";
-import { defaultSettings } from "../src/modules/shared/settings/model";
+import { defaultSettings, findConnection, targetLanguageOf } from "../src/modules/shared/settings/model";
+import { contextKeyOf } from "../src/modules/background/site-context";
+import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
 import { AiProviders } from "../src/modules/shared/settings/model";
 import { decideTranslationPlan } from "../src/modules/background/content-analyzer/page-plan";
 import { translateBatch } from "../src/modules/background/translation-service/translate-batch";
 import { blocksIn, chatCompletion, chatCompletionStream, chatRequest, decisionResponse, isDecisionRequest, translationInput, type ChatRequest } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
-settings.analysis.provider = AiProviders.OpenAIApi;
-settings.providers.VercelAIGateway.apiKey = "test-placeholder";
-settings.providers.OpenAIApi.apiKey = "test-openai";
+settings.analysis.connection = AiProviders.OpenAIApi;
+findConnection(settings, AiProviders.VercelAIGateway)!.apiKey = "test-placeholder";
+findConnection(settings, AiProviders.OpenAIApi)!.apiKey = "test-openai";
 settings.translation.models.VercelAIGateway = "test/translator";
 function mockFetch(output: unknown, requests: string[], bodies: ChatRequest[] = []): typeof globalThis.fetch {
   return async (input, init) => {
@@ -117,4 +119,38 @@ test("a streamed response that isn't the promised JSON fails the batch with the 
   const missing = await Effect.runPromise(translateBatch([...blocks, { text: "World", tag: "p" }], { onPartial: () => {} })
     .pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, streamingFetch(JSON.stringify({ translations: [{ id: 0, text: "你好" }], terms: [] })))));
   assert.match(missing.status === "failed" ? missing.error ?? "" : "", /missing ids \[1\]/);
+});
+
+test("the translation span records the prompt, the context, and the source and translated text", async () => {
+  const spans: OtlpSpan[] = [];
+  const fetch = mockFetch({ translations: [{ id: 0, text: "你好" }, { id: 1, text: "世界" }], terms: [] }, []);
+  await Effect.runPromise(traced(
+    translateBatch([{ text: "Hello", tag: "p" }, { text: "World", tag: "p" }], { context: { brief: "A greeting page" } })
+      .pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch)),
+    createLocalTracer((span) => spans.push(span)),
+  ));
+  const span = spans.find(({ name }) => name === "translation")!;
+  const attribute = (name: string, key: string) => span.events.find((event) => event.name === name)?.attributes.find((entry) => entry.key === key)?.value;
+  const content = (name: string) => attribute(name, "content")?.stringValue;
+  const blocks = (name: string) => attribute(name, "blocks")?.arrayValue?.values.map(({ stringValue }) => stringValue);
+  assert.match(content("obt.prompt.system") ?? "", /^Translate every supplied block into 简体中文/);
+  assert.match(content("obt.prompt.context") ?? "", /A greeting page/);
+  assert.deepEqual(blocks("obt.source"), ["Hello", "World"]);
+  assert.deepEqual(blocks("obt.translation"), ["你好", "世界"]);
+});
+
+test("the target language reaches the prompt; unset or unknown means Simplified Chinese", async () => {
+  const bodies: ChatRequest[] = [];
+  const fetch = mockFetch({ translations: [{ id: 0, text: "こんにちは" }], terms: [] }, [], bodies);
+  const japanese = structuredClone(settings);
+  japanese.targetLanguage = "ja";
+  await Effect.runPromise(translateBatch([{ text: "Hello", tag: "p" }]).pipe(Effect.provide(modelsFor(japanese)), Effect.provideService(FetchHttpClient.Fetch, fetch)));
+  assert.match(JSON.stringify(bodies.at(-1)!.messages), /into 日本語/);
+  await Effect.runPromise(translateBatch([{ text: "Hello", tag: "p" }]).pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch)));
+  assert.match(JSON.stringify(bodies.at(-1)!.messages), /into 简体中文/);
+  assert.equal(targetLanguageOf({ targetLanguage: "xx" }).code, "zh-CN");
+  // Each language keeps its own site context; Simplified Chinese keeps the bare site it always had.
+  assert.equal(contextKeyOf("https://example.com", "zh-CN"), "https://example.com");
+  assert.equal(contextKeyOf("https://example.com", "ja"), "https://example.com ja");
+  assert.equal(contextKeyOf(undefined, "ja"), undefined);
 });
