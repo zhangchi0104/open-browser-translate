@@ -6,7 +6,8 @@ import { resolve } from "node:path";
 // Served by GitHub Pages at https://zhangchi0104.github.io/open-browser-translate/. Each page is its
 // own HTML entry, so /privacy-policy/ is a plain file there and needs no client-side routing.
 export default defineConfig({
-  base: "/open-browser-translate/",
+  // pages.yml passes the base path actions/configure-pages reports, which follows a custom domain.
+  base: process.env.SITE_BASE || "/open-browser-translate/",
   plugins: [react(), tailwindcss()],
   build: {
     rolldownOptions: {

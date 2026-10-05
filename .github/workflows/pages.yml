@@ -34,8 +34,17 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
     steps:
       - uses: actions/checkout@v5
+
+      # Reads the site's Pages settings; its base path becomes Vite's `base`. Skipped on pull
+      # requests, which only check that the site builds (and may run before Pages is set up).
+      - id: pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -55,6 +64,8 @@ jobs:
 
       - run: bun install --frozen-lockfile
       - run: bunx turbo run build --filter=open-browser-translate-site
+        env:
+          SITE_BASE: ${{ github.event_name != 'pull_request' && format('{0}/', steps.pages.outputs.base_path) || '' }}
 
       - if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
