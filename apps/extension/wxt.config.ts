@@ -14,6 +14,12 @@ export default defineConfig({
   // Tailwind only processes stylesheets that import it: the options page and the content script UI.
   vite: () => ({ plugins: [tailwindcss()] }),
   webExt: { chromiumProfile, keepProfileChanges: true },
+  // AMO reviewers rebuild from the sources ZIP, which needs the workspace root's package.json and
+  // bun.lock; the site and the store images aren't part of the extension.
+  zip: {
+    sourcesRoot: resolve("../.."),
+    excludeSources: ["apps/site/**", "store/**", "docs/**", "**/node_modules/**", "**/.output/**"],
+  },
   manifest: ({ browser, manifestVersion }) => ({
     // Name and description come from public/_locales; the Chrome Web Store shows them as each
     // language's listing title and summary (at most 132 characters).

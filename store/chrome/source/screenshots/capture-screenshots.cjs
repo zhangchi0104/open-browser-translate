@@ -1,4 +1,4 @@
-// Takes the store screenshots from the real extension: a build in .output/chrome-mv3, loaded
+// Takes the store screenshots from the real extension: a build in apps/extension/.output/chrome-mv3, loaded
 // into Chromium, translating a demo page. Both https://fieldnotes.example (the page) and
 // https://api.openai.com resolve to a local server; as OpenAI it answers with the translations in
 // translations.json, so no key or network is needed.
@@ -18,7 +18,7 @@ const https = require("node:https");
 const here = __dirname;
 const root = resolve(here, "../../../..");
 const out = resolve(here, "../..");
-const extension = join(root, ".output/chrome-mv3");
+const extension = join(root, "apps/extension/.output/chrome-mv3");
 const translations = JSON.parse(readFileSync(join(here, "translations.json"), "utf8"));
 const missing = new Set();
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));

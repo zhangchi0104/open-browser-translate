@@ -1,8 +1,3 @@
----
-title: Open Browser Translate 隐私政策 / Privacy Policy
-permalink: /privacy-policy/
----
-
 # Open Browser Translate 隐私政策
 
 最后更新：2026-10-05

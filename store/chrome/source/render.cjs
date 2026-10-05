@@ -13,8 +13,8 @@ const store = resolve(here, "..");
 // Toolbar sizes drop most of the padding so the mark stays legible; 96 and 128 keep the
 // 16/128 transparent margin the Chrome Web Store asks of its icon.
 const icons = [
-  ...[16, 32, 48].map((size) => ({ size, viewBox: "14 14 100 100", out: `${root}/public/icon/${size}.png` })),
-  ...[96, 128].map((size) => ({ size, viewBox: "0 0 128 128", out: `${root}/public/icon/${size}.png` })),
+  ...[16, 32, 48].map((size) => ({ size, viewBox: "14 14 100 100", out: `${root}/apps/extension/public/icon/${size}.png` })),
+  ...[96, 128].map((size) => ({ size, viewBox: "0 0 128 128", out: `${root}/apps/extension/public/icon/${size}.png` })),
   { size: 128, viewBox: "0 0 128 128", out: `${store}/icon-128.png` },
 ];
 const promos = [

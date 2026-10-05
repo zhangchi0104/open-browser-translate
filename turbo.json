@@ -1,0 +1,22 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "tasks": {
+    "build": {
+      "outputs": ["dist/**", ".output/chrome-mv3/**"]
+    },
+    "build:firefox": {
+      "outputs": [".output/firefox-mv2/**"]
+    },
+    "zip": {
+      "outputs": [".output/chrome-mv3/**", ".output/*-chrome.zip"]
+    },
+    "zip:firefox": {
+      "outputs": [".output/firefox-mv2/**", ".output/*-firefox.zip", ".output/*-sources.zip"]
+    },
+    "compile": {},
+    "test": {},
+    "dev": { "cache": false, "persistent": true },
+    "dev:firefox": { "cache": false, "persistent": true },
+    "preview": { "cache": false, "persistent": true }
+  }
+}
