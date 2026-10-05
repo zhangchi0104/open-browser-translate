@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Open Browser Translate - 网页翻译",
+    "description": "Extension name, also the Chrome Web Store title."
+  },
+  "extDescription": {
+    "message": "用你自己选的大模型就地翻译正在读的网页，先译眼前的内容。支持 OpenAI、Vercel AI Gateway、OpenAI 兼容接口和 ChatGPT 登录。",
+    "description": "Manifest description, also the Chrome Web Store summary. At most 132 characters."
+  },
+  "actionTitle": {
+    "message": "翻译设置",
+    "description": "Tooltip of the toolbar button, which opens the settings page."
+  }
+}

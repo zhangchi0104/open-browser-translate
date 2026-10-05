@@ -1,0 +1,17 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      // Vite's base path, from pages.yml; part of the cache key, since it changes every URL.
+      "env": ["SITE_BASE"],
+      // The site also renders files from outside its package; a change to any of them rebuilds it.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/docs/privacy-policy.md",
+        "$TURBO_ROOT$/store/chrome/*.png",
+        "$TURBO_ROOT$/apps/extension/src/styles/theme.css"
+      ]
+    }
+  }
+}

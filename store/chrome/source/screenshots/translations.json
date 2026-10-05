@@ -1,0 +1,14 @@
+{
+  "Web platform": "Web 平台",
+  "How browsers decide what to paint first": "浏览器如何决定先绘制什么",
+  "Before a single pixel appears, the browser has already made dozens of quiet decisions about what matters most to you.": "在第一个像素出现之前，浏览器已经悄悄做了几十个决定，判断哪些内容对你最重要。",
+  "When you open a page, the browser doesn't wait for every file to arrive. It starts parsing HTML as soon as the first bytes come in, building the document tree piece by piece while the rest of the response is still on its way.": "打开网页时，浏览器并不会等所有文件都到齐。收到最初几个字节，它就开始解析 HTML，在响应的其余部分还在路上时，一点点搭起文档树。",
+  "Stylesheets are a different story. Because a late rule could change how anything on the page looks, the browser holds back the first paint until the CSS it already knows about has loaded. This is why a slow stylesheet can leave a page blank even when the HTML arrived quickly.": "样式表则是另一回事。由于一条迟到的规则可能改变页面上任何元素的外观，浏览器会推迟首次绘制，直到已知的 CSS 全部加载完毕。这就是为什么即使 HTML 很快就到了，一个缓慢的样式表也能让页面一片空白。",
+  "The viewport comes first": "视口优先",
+  "Modern engines are careful about where they spend their effort. Content inside the viewport is laid out and painted before anything further down, and images below the fold can wait until the reader scrolls toward them.": "现代渲染引擎很在意把力气花在哪里。视口内的内容会先于下方的一切完成布局和绘制，首屏以下的图片则可以等读者滚动到附近时再加载。",
+  "The fastest work is the work you never have to do, and the second fastest is the work you do only when someone is about to look.": "最快的工作是根本不用做的工作，其次是等到有人快要看到时才去做的工作。",
+  "You can help the browser with a few hints. Mark offscreen images with loading=\"lazy\", keep critical styles small, and avoid scripts that block parsing near the top of the document.": "你可以给浏览器一些提示：为屏幕外的图片加上 loading=\"lazy\"，保持关键样式精简，并避免在文档顶部放置会阻塞解析的脚本。",
+  "Measuring what readers see": "衡量读者看到的内容",
+  "Largest Contentful Paint measures when the biggest element in the viewport finishes rendering. It is a better proxy for \"the page looks ready\" than the old load event, which waits for everything, including content nobody has scrolled to yet.": "最大内容绘制（Largest Contentful Paint）衡量视口中最大的元素何时完成渲染。比起旧的 load 事件，它更能代表“页面看起来已就绪”，因为 load 事件要等所有内容加载完，包括还没有人滚动到的部分。",
+  "Once the first frame is on screen, the browser keeps scheduling work around the reader: it fetches what is about to scroll into view, pauses timers in background tabs, and drops frames that would never be seen.": "第一帧显示出来之后，浏览器仍会围绕读者安排工作：预先获取即将滚入视口的内容，暂停后台标签页中的计时器，并丢弃永远不会被看到的帧。"
+}
