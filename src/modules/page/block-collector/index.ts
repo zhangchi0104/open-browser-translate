@@ -24,7 +24,7 @@ const EXCLUDED_SELECTOR = [
   "code", "pre", "kbd", "samp",
   "input", "textarea", "select", "option",
   "svg", "math", "canvas", "iframe",
-  "[hidden]", '[aria-hidden="true"]', '[translate="no"]',
+  '[aria-hidden="true"]', '[translate="no"]',
   ".notranslate", "open-browser-translate",
 ].join(",");
 
@@ -57,19 +57,22 @@ function parseTranslatableContent(
     return bounds.width <= 1 && bounds.height <= 1;
   };
 
-  const isExcluded = (element: Element) => {
+  /** Not rendered for the reader at all: skipped, and the text around it reads as one. */
+  const isInvisible = (element: Element) => {
     const style = styleOf(element);
-    return element.matches(EXCLUDED_SELECTOR)
-      || (element as HTMLElement).isContentEditable
+    return element.matches("[hidden]")
       || style.display === "none"
       || style.contentVisibility === "hidden"
       || style.opacity === "0"
       || isClippedHelper(element, style);
   };
+  /** Rendered but not page text to translate (code, inputs, icons, opted-out subtrees): ends the group. */
+  const isExcluded = (element: Element) => element.matches(EXCLUDED_SELECTOR)
+    || (element as HTMLElement).isContentEditable;
 
   // A scoped root still inherits exclusions from the surrounding page.
   for (let ancestor: Element | null = root; ancestor; ancestor = ancestor.parentElement) {
-    if (isExcluded(ancestor)) return [];
+    if (isExcluded(ancestor) || isInvisible(ancestor)) return [];
   }
 
   const content: TranslatableContent[] = [];
@@ -85,10 +88,14 @@ function parseTranslatableContent(
   };
 
   const visit = (element: Element) => {
+    // The selector check first: it's cheap, and excluded subtrees then skip the style lookup.
     if (isExcluded(element)) {
       flush();
       return;
     }
+    // Hidden helper text, such as a link's screen-reader-only "(opens in a new window)", sits
+    // between words the reader sees as one sentence, so it doesn't end the group.
+    if (element !== root && isInvisible(element)) return;
     if (element.tagName === "BR" || element.tagName === "HR") {
       flush();
       return;

@@ -1,7 +1,8 @@
 import type { TranslatableContent } from "../modules/page/block-collector";
 
 // Shimmering bars in a faint version of the text color, so they suit light and dark pages.
-const PLACEHOLDER_CSS = `:host { overflow-wrap: anywhere; } .text { white-space: pre-wrap; }
+const PLACEHOLDER_CSS = `:host { overflow-wrap: break-word; } .text { white-space: pre-wrap; }
+:host([data-nowrap]) { overflow-wrap: normal; } :host([data-nowrap]) .text { white-space: nowrap; }
 .skeleton { display: flex; flex-direction: column; gap: 0.4em; padding-block: 0.15em; }
 .skeleton.inline { display: inline-flex; vertical-align: middle; padding: 0; }
 .bar { display: block; height: 0.8em; border-radius: 0.3em;
@@ -37,6 +38,16 @@ function lineCount(item: TranslatableContent): number {
   return lines;
 }
 
+/** Whether `from` or an ancestor up to `block` lays its children out as a flex or grid row. */
+function inRow(from: Element | null, block: Element): boolean {
+  const view = block.ownerDocument.defaultView!;
+  for (let element = from; element; element = element.parentElement) {
+    if (/flex|grid/.test(view.getComputedStyle(element).display)) return true;
+    if (element === block) return false;
+  }
+  return false;
+}
+
 /** The element holding most of the group's text: the whole group for a link title, the paragraph for one short link. */
 function styleSource(item: TranslatableContent): Element {
   const weight = new Map<Element, number>();
@@ -52,6 +63,8 @@ function styleSource(item: TranslatableContent): Element {
 
 export function createCapturedContent() {
   const placeholders: HTMLElement[] = [];
+  // The target language, so translations render with that language's fonts and line breaking.
+  let language: string | undefined;
   const outsideAnchors = new Map<Element, HTMLElement>();
   // Each translated item's placeholder, so streaming text can update it in place.
   const placed = new Map<TranslatableContent, { placeholder: HTMLElement; text: HTMLElement; skeleton?: HTMLElement }>();
@@ -111,13 +124,17 @@ export function createCapturedContent() {
     const inline = translated
       ? lineCount(item) <= 1 || style.display.startsWith("inline")
       : style.display.startsWith("inline") || item.element.matches('button, a, [role="button"]');
-    // Insert after this text run, since one element may contain several groups.
-    let anchor: Node = last;
+    // Insert after this text run, since one element may contain several groups. A one-line
+    // translation that would land inside a link within the block goes after the link instead, so it
+    // isn't part of the link (clickable, underlined); a block that is itself a link keeps it inside.
+    const link = last.parentElement?.closest("a");
+    let anchor: Node = translated && inline && link && link !== item.element && item.element.contains(link) ? link : last;
     while (!(translated && inline) && anchor.parentElement && anchor.parentElement !== item.element && !anchor.nextSibling) {
       anchor = anchor.parentElement;
     }
     const placeholder = document.createElement("open-browser-translate-placeholder");
     placeholder.setAttribute("translate", "no");
+    if (language) placeholder.setAttribute("lang", language);
     placeholder.setAttribute("aria-label", loading ? "正在翻译" : translated ? "译文" : "译文占位，尚未翻译");
     placeholder.style.cssText = `display: ${!inline ? "block" : translated ? "inline" : "inline-block"}; white-space: normal; box-sizing: border-box; max-width: 100%;`;
     if (translated) {
@@ -158,6 +175,13 @@ export function createCapturedContent() {
       placeholder.dataset.loading = "";
       placeholder.setAttribute("aria-busy", "true");
     }
+    // A one-line translation in a flex or grid row (a nav button's label, say), as an item or inside
+    // one, would be squeezed to its narrowest width, one Chinese character per line; it stays on one
+    // line instead. Checked before inserting, so placing it reads styles once.
+    if (translated && inline && inRow(anchor.parentElement, item.element)) {
+      placeholder.dataset.nowrap = "";
+      placeholder.style.flexShrink = "0";
+    }
     anchor.parentNode?.insertBefore(placeholder, anchor.nextSibling);
     escapeClip(placeholder, item, translated);
     placeholders.push(placeholder);
@@ -166,6 +190,10 @@ export function createCapturedContent() {
 
   return {
     clear,
+    /** The language translations placed from now on are in. */
+    setLanguage(code: string) {
+      language = code;
+    },
     show(content: readonly TranslatableContent[]) {
       clear();
       this.append(content);
