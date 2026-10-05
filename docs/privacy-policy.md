@@ -78,4 +78,4 @@ If the way the extension handles data changes, this page and the "Last updated" 
 
 ## 7. Contact
 
-Questions: open-browser-translate@otakuma.dev, or visit https://github.com/zhangchi0104/open-browser-translate/issues.
+Questions: support@otakuma.dev, or visit https://github.com/zhangchi0104/open-browser-translate/issues.

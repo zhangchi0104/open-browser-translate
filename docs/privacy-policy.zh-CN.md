@@ -78,6 +78,6 @@ Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在�
 
 ## 7. 联系方式
 
-如有疑问，请联系：open-browser-translate@otakuma.dev，或访问 https://github.com/zhangchi0104/open-browser-translate/issues。
+如有疑问，请联系：support@otakuma.dev，或访问 https://github.com/zhangchi0104/open-browser-translate/issues。
 
 [English](privacy-policy.md)

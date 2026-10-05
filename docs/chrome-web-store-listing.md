@@ -13,7 +13,7 @@
   - 以后每次上传的版本号都必须比上一次高。semantic-release 会自动递增，不要手动改版本号。
 - [ ] **准备开发者账号。** 首次注册要付一次性注册费。账号设置在 **Account（帐号）** 页签：
   - **Publisher name（发布者名称）**：`Alex Zhang`，会显示在商店里每个条目的标题下方。
-  - **Contact email（联系邮箱）**：`open-browser-translate@otakuma.dev`。后台会发一封验证邮件，必须点链接完成验证，否则不能提交。
+  - **Contact email（联系邮箱）**：`support@otakuma.dev`。后台会发一封验证邮件，必须点链接完成验证，否则不能提交。
   - **Trader / non-trader（是否为经营者，EU DSA 要求）**：个人开发、不收费的开源项目通常选 **non-trader（非经营者）**。选 trader 需要公开法定名称、电话和地址。这项由你判断。
 
 ## 1. 新建条目
