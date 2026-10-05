@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 1400px; height: 560px; overflow: hidden; }
+  body { background: #535bf2; font-family: "Noto Sans", "Noto Sans CJK SC", system-ui, sans-serif; color: #fff; position: relative; }
+  .copy { position: absolute; left: 96px; top: 0; bottom: 0; width: 500px; display: flex; flex-direction: column; justify-content: center; }
+  /* A white mount keeps the indigo icon apart from the indigo background. */
+  .copy b { width: 112px; height: 112px; border-radius: 28px; background: #fff; display: grid; place-items: center; margin-bottom: 30px; }
+  .copy img { width: 120px; height: 120px; }
+  h1 { margin: 0; font-size: 54px; line-height: 1.08; font-weight: 700; letter-spacing: -0.015em; }
+  p { margin: 22px 0 0; font-size: 22px; line-height: 1.5; white-space: nowrap; color: rgba(255,255,255,.86); }
+  /* A real screenshot of the extension at work, cropped to the article. */
+  .shot { position: absolute; left: 640px; top: 64px; width: 700px; height: 560px; border-radius: 16px 16px 0 0; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(20, 22, 80, .35); background: #fbfaf7; }
+  .shot img { position: absolute; left: -280px; top: -90px; }
+</style></head>
+<body>
+  <div class="copy">
+    <b><img src="icon.svg" alt=""></b>
+    <h1>Open Browser<br>Translate</h1>
+    <p>就地翻译网页，用你自己的模型<br>Translate pages in place, with your own models</p>
+  </div>
+  <div class="shot"><img src="../screenshot-1-inline-translation.png" alt=""></div>
+</body></html>
