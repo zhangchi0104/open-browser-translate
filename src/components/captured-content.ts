@@ -42,6 +42,23 @@ function lineCount(item: TranslatableContent): number {
   return lines;
 }
 
+/** Block translations' tint padding; inline ones are padded to fill their line instead. */
+const BLOCK_PADDING = "0.15em 0.4em";
+
+/**
+ * Pads an inline translation's tint to its line's height. An inline box's background covers only
+ * the font's height, so under a tall line-height it would be a thin strip beside the full-height
+ * block translations; filled out, wrapped lines meet like a block's.
+ */
+function fillLine(placeholder: HTMLElement) {
+  const lineHeight = Number.parseFloat(placeholder.ownerDocument.defaultView!.getComputedStyle(placeholder).lineHeight);
+  // `normal` line height is about the font's own height, so there's nothing to fill.
+  if (!Number.isFinite(lineHeight)) return;
+  placeholder.style.paddingBlock = "0";
+  const fontHeight = placeholder.getClientRects()[0]?.height;
+  if (fontHeight) placeholder.style.paddingBlock = `${Math.max(0, (lineHeight - fontHeight) / 2)}px`;
+}
+
 /** Whether `from` or an ancestor up to `block` lays its children out as a flex or grid row. */
 function inRow(from: Element | null, block: Element): boolean {
   const view = block.ownerDocument.defaultView!;
@@ -117,6 +134,7 @@ export function createCapturedContent() {
     placeholder.style.display = "block";
     placeholder.style.marginInlineStart = "0";
     placeholder.style.marginBlock = translated ? "0.25em" : "6px";
+    if (translated) placeholder.style.padding = BLOCK_PADDING;
     if (!translated) {
       // Outside the clip, `inherit` would pick up the wrong element's text styles.
       const style = document.defaultView!.getComputedStyle(item.element);
@@ -162,7 +180,7 @@ export function createCapturedContent() {
       placeholder.style.backgroundColor = TRANSLATION_TINT;
       placeholder.style.borderRadius = "0.3em";
       // Inline translations wrap across lines; each line fragment gets its own rounded ends.
-      placeholder.style.padding = inline ? "0 0.25em" : "0.15em 0.4em";
+      placeholder.style.padding = inline ? "0 0.25em" : BLOCK_PADDING;
       if (inline) placeholder.style.setProperty("box-decoration-break", "clone");
     } else {
       // Untranslated previews stay boxed so they read as placeholders.
@@ -206,6 +224,7 @@ export function createCapturedContent() {
     }
     anchor.parentNode?.insertBefore(placeholder, anchor.nextSibling);
     escapeClip(placeholder, item, translated);
+    if (translated && placeholder.style.display === "inline") fillLine(placeholder);
     placeholders.push(placeholder);
     return { placeholder, text, skeleton };
   }

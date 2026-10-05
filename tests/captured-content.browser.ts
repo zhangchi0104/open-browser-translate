@@ -133,8 +133,14 @@ try {
   preview.update(badged[0]!, "此功能为测试版", false);
   const afterBadge = fixture.querySelector("#ends-in-badge > open-browser-translate-placeholder");
   assert(afterBadge !== null && afterBadge.previousElementSibling?.id === "badge", "the translation sits after the badge, outside it");
+  // Under a tall line-height, an inline translation's tint fills its line, as a block translation's does.
+  fixture.innerHTML = '<p id="tall" style="width:600px;font:16px/40px sans-serif">One short line</p>';
+  const tall = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  preview.update(tall[0]!, "短短一行", false);
+  const tallRect = fixture.querySelector("#tall > open-browser-translate-placeholder")!.getClientRects()[0]!;
+  assert(Math.abs(tallRect.height - 40) < 1, `an inline translation's tint is as tall as its line (${tallRect.height}px)`);
   preview.remove();
-  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming, inline after one-line sources, loading skeleton, flex rows, links, inline code, inline boxes";
+  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming, inline after one-line sources, loading skeleton, flex rows, links, inline code, inline boxes, tint height";
 } catch (error) {
   preview.remove();
   document.body.textContent = `FAIL: ${String(error)}`;
