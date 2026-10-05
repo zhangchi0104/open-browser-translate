@@ -101,7 +101,14 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # After the GitHub release, the Chrome zip is submitted to the Chrome Web Store
+      # for review (see .releaserc.json); skipped while CHROME_EXTENSION_ID is unset.
       - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          CHROME_API_VERSION: v2
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
+          CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
+          CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
         run: npx semantic-release
