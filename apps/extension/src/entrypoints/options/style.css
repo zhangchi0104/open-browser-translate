@@ -1,4 +1,5 @@
-@import "tailwindcss";
+/* Scans only the extension's src/, so the build doesn't depend on what else is checked out. */
+@import "tailwindcss" source("../..");
 @import "tw-animate-css";
 
 @import "../../styles/theme.css";

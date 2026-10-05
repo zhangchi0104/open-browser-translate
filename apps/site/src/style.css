@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source(".");
 
 /* The extension's own tokens, so the site reads like its settings page in both themes. */
 @import "../../extension/src/styles/theme.css";
