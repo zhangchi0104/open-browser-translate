@@ -41,7 +41,13 @@ try {
   check("below viewport", '<p style="margin-top:200vh">Below fold</p>', ["Below fold"]);
   check("standalone symbols", '<p>123 !</p><p>Text</p>', ["Text"]);
   check("separate controls", '<div><button>First</button><button>Second</button></div>', ["First", "Second"]);
-  check("excluded inline boundary", '<p>Before <code>code</code> after</p>', ["Before ", " after"]);
+  check("inline code inside a sentence", '<p>Then run <code>claude --version</code>. If <kbd>Ctrl</kbd> fails, <i>stop</i>.</p>', ["Then run claude --version. If Ctrl fails, stop."]);
+  check("inline code alone", '<p><code>npm install</code></p><p>Text</p>', ["Text"]);
+  check("block code boundary", '<p>Before <code style="display:block">code</code> after</p>', ["Before ", " after"]);
+  check("kept text inside a sentence", '<p>Install <span translate="no">Claude Code</span>, ask <span class="notranslate">Claude</span>, see <span aria-hidden="true">→</span> <math><mi>x</mi></math> and <code style="display:inline-block">npm i</code>.</p>', ["Install Claude Code, ask Claude, see → x and npm i."]);
+  check("icon inside a sentence", '<p>See <a href="#">the docs <svg width="10" height="10"><path d="M0 0h10v10z"/></svg></a> for more.</p>', ["See the docs  for more."]);
+  check("inline boxes inside a sentence", '<p>This is <span style="display:inline-block">beta</span>; read the <b><a href="#" style="display:inline-flex"><span>setup guide</span><svg width="10" height="10"></svg></a></b> first.</p>', ["This is beta; read the setup guide first."]);
+  check("inline boxes as separate items", '<nav><a href="#" style="display:inline-block">Home</a> <a href="#" style="display:inline-block">About</a> | <a href="#" style="display:inline-flex">Contact</a></nav>', ["Home", "About", "Contact"]);
   // openai.com's links end with a screen-reader-only label; the sentence still reads as one.
   check("hidden helper inside a link", '<p>Keep it short. <a href="#"><u>Cut context</u><span style="display:block;position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap">(opens in a new window)</span></a> while keeping evidence.</p>', ["Keep it short. Cut context while keeping evidence."]);
   check("display none inside a sentence", '<p>One <span style="display:none">unseen</span>sentence.</p>', ["One sentence."]);

@@ -48,6 +48,22 @@ function inRow(from: Element | null, block: Element): boolean {
   return false;
 }
 
+/**
+ * Where a one-line translation goes: after the text, or after the outermost link, kept text (code,
+ * translate="no") or inline box (a badge) around it within the block, so the translation doesn't
+ * become part of it (clickable, underlined, monospace, boxed). A block that is itself a link keeps
+ * it inside.
+ */
+function inlineAnchor(last: Text, block: Element): Node {
+  const view = block.ownerDocument.defaultView!;
+  let anchor: Node = last;
+  for (let element = last.parentElement; element && element !== block && block.contains(element); element = element.parentElement) {
+    if (element.matches('a, code, kbd, samp, math, [aria-hidden="true"], [translate="no"], .notranslate')
+      || view.getComputedStyle(element).display !== "inline") anchor = element;
+  }
+  return anchor;
+}
+
 /** The element holding most of the group's text: the whole group for a link title, the paragraph for one short link. */
 function styleSource(item: TranslatableContent): Element {
   const weight = new Map<Element, number>();
@@ -124,11 +140,8 @@ export function createCapturedContent() {
     const inline = translated
       ? lineCount(item) <= 1 || style.display.startsWith("inline")
       : style.display.startsWith("inline") || item.element.matches('button, a, [role="button"]');
-    // Insert after this text run, since one element may contain several groups. A one-line
-    // translation that would land inside a link within the block goes after the link instead, so it
-    // isn't part of the link (clickable, underlined); a block that is itself a link keeps it inside.
-    const link = last.parentElement?.closest("a");
-    let anchor: Node = translated && inline && link && link !== item.element && item.element.contains(link) ? link : last;
+    // Insert after this text run, since one element may contain several groups.
+    let anchor: Node = translated && inline ? inlineAnchor(last, item.element) : last;
     while (!(translated && inline) && anchor.parentElement && anchor.parentElement !== item.element && !anchor.nextSibling) {
       anchor = anchor.parentElement;
     }
