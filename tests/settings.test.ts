@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Schema } from "effect";
-import { defaultSettings, findConnection, migrateSettings, migrateToConnections, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, quickView, applyQuickChange, validateApiUrl, validateModel, type AISettings } from "../src/modules/shared/settings/model";
+import { consentedTo, DATA_CONSENT_VERSION, defaultSettings, findConnection, servicesReceivingPages, migrateSettings, migrateToConnections, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, quickView, applyQuickChange, validateApiUrl, validateModel, type AISettings } from "../src/modules/shared/settings/model";
 import { AiProviders } from "../src/modules/shared/settings/model";
 import { analysisModelFor, modelsFor, translationModelFor } from "../src/modules/background/ai/models";
 import { blocksIn, chatCompletion, chatRequest, decisionResponse, isDecisionRequest, requestedModel, type ChatRequest } from "./decision-mock";
@@ -279,4 +279,23 @@ test("the quick settings panel sees names and choices only, and its changes are 
   assert.deepEqual(applyQuickChange(settings, { language: "xx" }), { error: "不支持这个目标语言" });
   assert.deepEqual(applyQuickChange(settings, { analysis: { connection: "gone" } }), { error: "内容分析：选择的连接已被删除，请重新选择。" });
   assert.ok("error" in applyQuickChange(settings, { translation: { connection: AiProviders.VercelAIGateway, model: "no-slash" } }));
+});
+
+test("consent counts only for the current version of what translation sends", () => {
+  assert.equal(consentedTo(null), false);
+  assert.equal(consentedTo({ version: DATA_CONSENT_VERSION, acceptedAt: 1 }), true);
+  assert.equal(consentedTo({ version: DATA_CONSENT_VERSION - 1, acceptedAt: 1 }), false);
+});
+
+test("the consent prompt names each connection page text goes to, once", () => {
+  const settings: AISettings = {
+    ...defaultSettings,
+    connections: [...defaultSettings.connections, { id: "local", kind: AiProviders.Custom, name: "Ollama", apiKey: "", apiUrl: "http://127.0.0.1:11434/v1" }],
+    analysis: { connection: AiProviders.OpenAIApi, models: {} },
+    translation: { connection: "local", models: {} },
+  };
+  assert.deepEqual(servicesReceivingPages(quickView(settings)), ["OpenAI", "Ollama"]);
+  assert.deepEqual(servicesReceivingPages(quickView({ ...settings, translation: settings.analysis })), ["OpenAI"]);
+  // A purpose left on a removed connection names nothing for it.
+  assert.deepEqual(servicesReceivingPages(quickView({ ...settings, translation: { connection: "gone", models: {} } })), ["OpenAI"]);
 });

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Languages, Settings, X } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { consentedTo, DATA_CONSENT_VERSION, dataConsent } from "../../modules/shared/settings";
+import { DataConsent } from "./DataConsent";
 import { QuickSettings } from "./QuickSettings";
 import { createTranslationRunner, type BadgeState, type LauncherState } from "./session";
 import { useLauncherPosition } from "./use-launcher-position";
@@ -10,14 +12,18 @@ const badgeLabels: Record<BadgeState, string> = { translating: "正在翻译", d
 
 /**
  * The launcher on every page: a button that turns the page's translation on and off, a badge for how that went, the
- * settings panel, and a status line. It's a guest on someone else's page, so it stays small and
+ * settings panel, and a status line. The first translation waits for the reader to agree to send page text. It's a guest on someone else's page, so it stays small and
  * neutral, with the brand only in its glyph.
  */
 export function Launcher() {
   const [state, setState] = useState<LauncherState>({ active: false, busy: false, badge: null, status: null });
   const [panelOpen, setPanelOpen] = useState(false);
+  const [consentOpen, setConsentOpen] = useState(false);
   const runner = useRef<ReturnType<typeof createTranslationRunner> | undefined>(undefined);
-  const { position, onRight, handlers, consumeDrag } = useLauncherPosition(() => setPanelOpen(false));
+  const { position, onRight, handlers, consumeDrag } = useLauncherPosition(() => {
+    setPanelOpen(false);
+    setConsentOpen(false);
+  });
 
   useEffect(() => {
     // Progress reports often repeat what's shown; those don't re-render.
@@ -27,6 +33,21 @@ export function Launcher() {
     return () => created.dispose();
   }, []);
 
+  async function translate() {
+    // Read on every click rather than kept in state, so agreeing on one page counts on the others.
+    if (consentedTo(await dataConsent.getValue().catch(() => null))) {
+      void runner.current?.start();
+      return;
+    }
+    setPanelOpen(false);
+    setConsentOpen(true);
+  }
+  async function accept() {
+    setConsentOpen(false);
+    await dataConsent.setValue({ version: DATA_CONSENT_VERSION, acceptedAt: Date.now() }).catch(() => {});
+    void runner.current?.start();
+  }
+
   return (
     <>
       <div
@@ -34,22 +55,36 @@ export function Launcher() {
         style={{ left: position.x, top: position.y }}
         translate="no"
       >
-        <button
-          type="button"
-          className="pointer-events-auto relative grid size-11 cursor-grab touch-none place-items-center rounded-full border bg-card text-primary shadow-md transition-[background-color,transform] duration-150 ease-out outline-none select-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 active:scale-95 active:cursor-grabbing aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary/90 motion-reduce:transition-none"
-          aria-label="翻译此页"
-          aria-pressed={state.active}
-          title={state.active ? "显示原文" : "翻译此页"}
-          aria-busy={state.busy || undefined}
-          {...handlers}
-          onClick={() => {
-            if (consumeDrag()) return; // The click that ends a drag isn't a click.
-            if (state.active) runner.current?.stop();
-            else void runner.current?.start();
-          }}
-        >
-          <Languages className="size-[22px]" aria-hidden="true" />
-        </button>
+        <Popover open={consentOpen} onOpenChange={setConsentOpen}>
+          <PopoverAnchor asChild>
+            <button
+              type="button"
+              className="pointer-events-auto relative grid size-11 cursor-grab touch-none place-items-center rounded-full border bg-card text-primary shadow-md transition-[background-color,transform] duration-150 ease-out outline-none select-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 active:scale-95 active:cursor-grabbing aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary/90 motion-reduce:transition-none"
+              aria-label="翻译此页"
+              aria-pressed={state.active}
+              title={state.active ? "显示原文" : "翻译此页"}
+              aria-busy={state.busy || undefined}
+              {...handlers}
+              onClick={() => {
+                if (consumeDrag()) return; // The click that ends a drag isn't a click.
+                if (state.active) runner.current?.stop();
+                else void translate();
+              }}
+            >
+              <Languages className="size-[22px]" aria-hidden="true" />
+            </button>
+          </PopoverAnchor>
+          <PopoverContent
+            side={onRight ? "left" : "right"}
+            align="start"
+            sideOffset={12}
+            collisionPadding={16}
+            className="w-[300px] max-w-[calc(100vw-32px)] rounded-xl p-0"
+            aria-label="翻译前请确认"
+          >
+            <DataConsent onAccept={() => void accept()} onCancel={() => setConsentOpen(false)} />
+          </PopoverContent>
+        </Popover>
         {state.badge && <Badge state={state.badge} />}
         <Popover open={panelOpen} onOpenChange={setPanelOpen}>
           <PopoverTrigger asChild>

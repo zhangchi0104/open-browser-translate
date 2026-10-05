@@ -289,3 +289,27 @@ export function migrateToConnections(old: V4Settings): AISettings {
     translation: purpose(old.translation),
   };
 }
+
+// —— Consent to send page text ——
+
+/**
+ * Version of what the consent prompt discloses: that a page's text goes to the model services the
+ * reader configured. Bump it when what translation sends, or where, changes, so readers who agreed
+ * to an earlier version are asked again before the next translation.
+ */
+export const DATA_CONSENT_VERSION = 1;
+export interface DataConsent {
+  version: number;
+  /** Epoch milliseconds. */
+  acceptedAt: number;
+}
+export function consentedTo(consent: DataConsent | null): boolean {
+  return (consent?.version ?? 0) >= DATA_CONSENT_VERSION;
+}
+/** The names of the connections analysis and translation send page text to, each once. */
+export function servicesReceivingPages(view: QuickSettings): string[] {
+  const names = [view.analysis.connection, view.translation.connection]
+    .map((id) => view.connections.find((connection) => connection.id === id)?.name)
+    .filter((name): name is string => !!name);
+  return [...new Set(names)];
+}
