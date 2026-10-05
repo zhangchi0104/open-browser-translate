@@ -4,7 +4,7 @@ name: Pages
 # https://zhangchi0104.github.io/open-browser-translate/. Pull requests only build it.
 on:
   push:
-    branches: [dev]
+    branches: [main]
     paths:
       - apps/site/**
       - apps/extension/src/styles/theme.css
