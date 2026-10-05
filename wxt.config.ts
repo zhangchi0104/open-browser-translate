@@ -15,9 +15,14 @@ export default defineConfig({
   vite: () => ({ plugins: [tailwindcss()] }),
   webExt: { chromiumProfile, keepProfileChanges: true },
   manifest: ({ browser, manifestVersion }) => ({
+    // Name and description come from public/_locales; the Chrome Web Store shows them as each
+    // language's listing title and summary (at most 132 characters).
+    name: "__MSG_extName__",
+    description: "__MSG_extDescription__",
+    default_locale: "en",
     permissions: ["storage"],
     // No popup: the toolbar button opens the settings page (see background.ts).
-    action: { default_title: "翻译设置" },
+    action: { default_title: "__MSG_actionTitle__" },
     host_permissions: ["https://ai-gateway.vercel.sh/*", "https://api.openai.com/*",
       // Sign in with ChatGPT: token exchange, and reading the code from the loopback callback tab.
       "https://auth.openai.com/*", "http://127.0.0.1/*"],

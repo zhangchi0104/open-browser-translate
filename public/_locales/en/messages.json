@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Open Browser Translate",
+    "description": "Extension name, also the Chrome Web Store title."
+  },
+  "extDescription": {
+    "message": "Translate the page you're reading in place, on-screen text first, with AI models you choose: an API key, a local server or ChatGPT.",
+    "description": "Manifest description, also the Chrome Web Store summary. At most 132 characters."
+  },
+  "actionTitle": {
+    "message": "Translation settings",
+    "description": "Tooltip of the toolbar button, which opens the settings page."
+  }
+}
