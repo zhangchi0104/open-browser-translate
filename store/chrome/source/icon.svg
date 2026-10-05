@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 96x96 artwork centred in a 128x128 canvas, 16px transparent padding (Chrome Web Store icon guideline). -->
+  <rect x="16" y="16" width="96" height="96" rx="22" fill="#535bf2"/>
+  <!-- Source line, then its translation beneath it on a faint background, as the page shows them. -->
+  <text x="40" y="62" text-anchor="middle" font-family="Noto Sans, Arial, sans-serif" font-weight="700" font-size="40" fill="#ffffff">A</text>
+  <rect x="50" y="56" width="52" height="46" rx="12" fill="#ffffff"/>
+  <text x="76" y="94" text-anchor="middle" font-family="Noto Sans CJK SC, sans-serif" font-weight="700" font-size="36" fill="#535bf2">文</text>
+</svg>
