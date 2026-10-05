@@ -1,0 +1,50 @@
+@import "tailwindcss" source(".");
+
+/* The extension's own tokens, so the site reads like its settings page in both themes. */
+@import "../../extension/src/styles/theme.css";
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  ::selection {
+    background: var(--selection);
+  }
+}
+
+/* The privacy policy, rendered from docs/privacy-policy.md. */
+@layer components {
+  .policy {
+    @apply text-[15px] leading-7;
+  }
+  .policy h1 {
+    @apply mt-14 mb-2 text-[26px] leading-tight font-semibold first:mt-0;
+  }
+  .policy h2 {
+    @apply mt-10 mb-3 text-lg font-semibold;
+  }
+  .policy h3 {
+    @apply mt-6 mb-2 text-[15px] font-semibold;
+  }
+  .policy p {
+    @apply my-3;
+  }
+  .policy ul {
+    @apply my-3 list-disc space-y-1.5 pl-5 marker:text-muted-foreground;
+  }
+  .policy a {
+    @apply text-primary underline-offset-4 hover:underline;
+  }
+  .policy code {
+    @apply rounded bg-muted px-1 py-0.5 font-mono text-[13px];
+  }
+  .policy hr {
+    @apply my-14 border-border;
+  }
+  .policy h1 + p {
+    @apply text-sm text-muted-foreground;
+  }
+}

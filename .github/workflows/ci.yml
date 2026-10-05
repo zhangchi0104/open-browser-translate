@@ -41,25 +41,32 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      # Turborepo's local cache: tasks whose inputs haven't changed since a cached run are
+      # replayed, outputs included, instead of run again.
+      - uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: turbo-${{ runner.os }}-
+
       # postinstall runs `wxt prepare`, which generates the .wxt types tsc needs.
       - run: bun install --frozen-lockfile
 
-      - name: Typecheck
-        run: bun run compile
-
-      - name: Test
-        run: bun run test
-
-      - name: Zip Chrome
-        run: bun run zip
-
-      - name: Zip Firefox (with sources for AMO review)
-        run: bun run zip:firefox
+      # Typecheck and test every package, and zip the extension for Chrome and Firefox (with
+      # sources for AMO review). The site is built too; pages.yml publishes it.
+      - run: bunx turbo run compile test zip zip:firefox
+      - run: bunx turbo run build --filter=open-browser-translate-site
 
       - uses: actions/upload-artifact@v4
         with:
           name: extension-zips
-          path: .output/*.zip
+          path: apps/extension/.output/*.zip
           if-no-files-found: error
           # .output is a dot-directory, which upload-artifact skips by default.
           include-hidden-files: true

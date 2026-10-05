@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 440px; height: 280px; overflow: hidden; }
+  body { background: #535bf2; font-family: "Noto Sans", "Noto Sans CJK SC", system-ui, sans-serif; color: #fff;
+    display: flex; flex-direction: column; justify-content: center; padding: 0 40px; box-sizing: border-box; position: relative; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  /* A white mount keeps the indigo icon apart from the indigo tile; the icon's own 16/128 padding is cropped. */
+  .brand b { width: 60px; height: 60px; border-radius: 16px; background: #fff; display: grid; place-items: center; flex: none; }
+  .brand img { width: 64px; height: 64px; }
+  .brand span { font-size: 27px; font-weight: 700; line-height: 1.1; letter-spacing: -0.01em; }
+  /* A source line with its translation beneath on a faint background, as on the page. */
+  .lines { margin-top: 34px; display: grid; gap: 9px; }
+  .src { height: 12px; border-radius: 6px; background: rgba(255,255,255,.92); }
+  .dst { height: 26px; border-radius: 8px; background: rgba(255,255,255,.2); display: flex; align-items: center; padding: 0 9px; }
+  .dst i { display: block; height: 10px; border-radius: 5px; background: #fff; }
+</style></head>
+<body>
+  <div class="brand"><b><img src="icon.svg" alt=""></b><span>Open Browser<br>Translate</span></div>
+  <div class="lines">
+    <div class="src" style="width: 92%"></div>
+    <div class="dst" style="width: 78%"><i style="width: 100%"></i></div>
+    <div class="src" style="width: 70%"></div>
+    <div class="dst" style="width: 58%"><i style="width: 100%"></i></div>
+  </div>
+</body></html>

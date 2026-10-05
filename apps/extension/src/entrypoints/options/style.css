@@ -1,0 +1,17 @@
+/* Scans only the extension's src/, so the build doesn't depend on what else is checked out. */
+@import "tailwindcss" source("../..");
+@import "tw-animate-css";
+
+@import "../../styles/theme.css";
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  ::selection {
+    background: var(--selection);
+  }
+}
