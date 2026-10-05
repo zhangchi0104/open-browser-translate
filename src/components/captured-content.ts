@@ -11,6 +11,10 @@ const PLACEHOLDER_CSS = `:host { overflow-wrap: break-word; } .text { white-spac
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .bar { animation: none; } }`;
 
+// A faint indigo wash behind translations, so they stand apart from the page's own text on light
+// and dark pages alike without looking like a box.
+const TRANSLATION_TINT = "rgb(99 102 241 / 0.1)";
+
 // Text styling copied from the source so the translation reads like the original.
 const SOURCE_STYLES = [
   "font-family", "font-size", "font-weight", "font-style", "font-variant", "font-stretch", "line-height",
@@ -155,6 +159,11 @@ export function createCapturedContent() {
       // text it translates, and text decoration doesn't reach inline-block descendants.
       const source = document.defaultView!.getComputedStyle(styleSource(item));
       for (const property of SOURCE_STYLES) placeholder.style.setProperty(property, source.getPropertyValue(property));
+      placeholder.style.backgroundColor = TRANSLATION_TINT;
+      placeholder.style.borderRadius = "0.3em";
+      // Inline translations wrap across lines; each line fragment gets its own rounded ends.
+      placeholder.style.padding = inline ? "0 0.25em" : "0.15em 0.4em";
+      if (inline) placeholder.style.setProperty("box-decoration-break", "clone");
     } else {
       // Untranslated previews stay boxed so they read as placeholders.
       placeholder.style.cssText += "font: inherit; color: inherit; border: 1px solid #a3a7da; border-radius: 4px; padding: 4px 8px;";

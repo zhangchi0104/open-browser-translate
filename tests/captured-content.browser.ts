@@ -47,7 +47,7 @@ try {
   const [title, para, result, snippet] = Array.from(fixture.querySelectorAll("open-browser-translate-placeholder"), (node) => getComputedStyle(node));
   assert(title!.fontWeight === "700" && title!.fontSize === "24px" && title!.lineHeight === "30px" && title!.fontStyle === "italic", "translation keeps the heading's font");
   assert(title!.color === "rgb(10, 20, 30)" && title!.letterSpacing === "1px" && title!.textTransform === "uppercase", "translation keeps the heading's color and text styling");
-  assert(title!.borderTopWidth === "0px" && title!.paddingTop === "0px", "translations are not boxed");
+  assert(title!.borderTopWidth === "0px" && title!.backgroundColor !== "rgba(0, 0, 0, 0)", "translations get a faint background, not a border");
   assert(para!.color === "rgb(60, 60, 60)" && para!.fontSize === "15px" && !para!.textDecorationLine.includes("underline"), "mixed text follows the element holding most of the text");
   assert(result!.color === "rgb(0, 0, 200)" && result!.fontWeight === "600" && result!.textDecorationLine.includes("underline"), "a group that is all link text looks like the link");
   assert(fixture.querySelector("#snippet")!.nextElementSibling?.localName === "open-browser-translate-placeholder", "a clamped translation moves outside the clip");
