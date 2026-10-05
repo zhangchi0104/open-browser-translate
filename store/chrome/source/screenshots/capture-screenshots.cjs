@@ -54,6 +54,7 @@ function translate(body) {
 }
 
 const SITE = "fieldnotes.example";
+let completions = 0;
 const page = readFileSync(join(here, "demo-article.html"));
 
 function serve(request, response) {
@@ -68,6 +69,7 @@ function serve(request, response) {
       response.writeHead(200, { "content-type": "application/json" });
       return response.end(JSON.stringify({ object: "list", data: MODELS.map((id, index) => ({ id, object: "model", created: 1_790_000_000 - index, owned_by: "openai" })) }));
     }
+    completions++;
     const body = JSON.parse(raw);
     const system = body.messages[0].content;
     const content = system.startsWith("You answer multiple-choice decisions") ? decide(body) : translate(body);
@@ -144,11 +146,17 @@ async function main() {
 async function shoot(context, id) {
   const shot = (page, name) => page.screenshot({ path: join(out, `screenshot-${name}.png`) }).then(() => console.log(`screenshot-${name}.png`));
 
-  // 1. The article, translated in place. Scrolling through it lets the session reach every block.
+  // 3. The first click asks before any page text is sent.
   const article = await context.newPage();
   await article.goto(`https://${SITE}/2026/10/what-to-paint-first`);
   await sleep(1000);
   await article.getByRole("button", { name: "翻译此页" }).click();
+  await sleep(1000);
+  await shot(article, "3-data-consent");
+  if (completions) throw new Error(`${completions} model requests were sent before the reader agreed`);
+
+  // 1. The article, translated in place. Scrolling through it lets the session reach every block.
+  await article.getByRole("button", { name: "同意并翻译" }).click();
   for (let step = 0; step < 6; step++) { await article.mouse.wheel(0, 400); await sleep(700); }
   await article.evaluate(() => scrollTo(0, 0));
   await sleep(1500);
@@ -162,11 +170,10 @@ async function shoot(context, id) {
   await sleep(1200);
   await shot(article, "2-quick-settings");
 
-  // 3–5. The settings page: models, connections, and the cache in the dark theme.
+  // 4–5. The settings page: connections, and the cache in the dark theme.
   const settings = await context.newPage();
   await settings.goto(`chrome-extension://${id}/options.html`);
   await sleep(1500);
-  await shot(settings, "3-settings-models");
   await settings.getByRole("button", { name: "连接" }).click();
   await settings.getByRole("button", { name: "编辑" }).nth(1).click();
   await sleep(1000);
