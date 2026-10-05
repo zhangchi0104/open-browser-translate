@@ -81,7 +81,7 @@ export function missingConfiguration(settings: AISettings, signedIn: boolean, pu
 function analysisLayer({ provider, model, apiKey, apiUrl, reasoningEffort, fast }: ModelConfig): Layer.Layer<DecisionModel.DecisionModel, never, ChatGPTToken> {
   if (provider === AiProviders.OpenAISubscription) return chatgptDecisionLayer({ model, reasoningEffort, fast });
   if (provider === AiProviders.VercelAIGateway) return vercelDecisionLayer({ model, apiKey });
-  return openAIDecisionLayer({ model, apiKey, apiUrl: apiUrl || OPENAI_API_URL, reasoningEffort });
+  return openAIDecisionLayer({ model, apiKey, apiUrl, reasoningEffort });
 }
 
 function translationLayer({ provider, model, apiKey, apiUrl, reasoningEffort, fast }: ModelConfig): Layer.Layer<LanguageModel.LanguageModel, never, ChatGPTToken> {

@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { Decision, DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Schema } from "effect";
-import { defaultSettings, findConnection, migrateSettings, migrateToConnections, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, validateApiUrl, validateModel, type AISettings } from "../src/modules/shared/settings/model";
+import { defaultSettings, findConnection, migrateSettings, migrateToConnections, migrateToGatewayAnalysis, migrateToOpenAIAnalysis, quickView, applyQuickChange, validateApiUrl, validateModel, type AISettings } from "../src/modules/shared/settings/model";
 import { AiProviders } from "../src/modules/shared/settings/model";
 import { analysisModelFor, modelsFor, translationModelFor } from "../src/modules/background/ai/models";
 import { blocksIn, chatCompletion, chatRequest, decisionResponse, isDecisionRequest, requestedModel, type ChatRequest } from "./decision-mock";
@@ -258,4 +258,25 @@ test("a purpose whose connection was removed, or a custom connection without an 
   settings.connections.push({ id: "custom", kind: AiProviders.Custom, name: "自定义", apiKey: "", apiUrl: " " });
   settings.analysis = { connection: "custom", models: { custom: "model" } };
   assert.deepEqual(await Effect.runPromise(analyzePageContent([{ text: "Hi", tag: "p" }]).pipe(Effect.provide(modelsFor(settings)))), { status: "not-configured", purpose: "analysis" });
+});
+
+test("the quick settings panel sees names and choices only, and its changes are checked", () => {
+  const settings: AISettings = structuredClone(defaultSettings);
+  findConnection(settings, AiProviders.VercelAIGateway)!.apiKey = "test-gateway";
+  settings.connections.push({ id: "local", kind: AiProviders.Custom, name: "本机", apiKey: "test-local", apiUrl: "http://localhost:11434/v1" });
+  const view = JSON.stringify(quickView(settings));
+  assert.ok(!view.includes("test-gateway") && !view.includes("test-local") && !view.includes("localhost"), "the page sees no key or address");
+  assert.deepEqual(quickView(settings).connections.map(({ name }) => name), ["ChatGPT 账号", "Vercel AI Gateway", "OpenAI", "本机"]);
+  assert.deepEqual(quickView(settings).analysis, { connection: AiProviders.VercelAIGateway, model: "typesafe-ai/jev" });
+  assert.equal(quickView(settings).language, "zh-CN");
+
+  const changed = applyQuickChange(settings, { language: "en", translation: { connection: "local", model: " llama " } });
+  assert.ok(!("error" in changed));
+  assert.equal(changed.targetLanguage, "en");
+  assert.equal(changed.translation.connection, "local");
+  assert.equal(changed.translation.models.local, "llama");
+  assert.equal(settings.translation.connection, AiProviders.VercelAIGateway, "the original settings are left alone");
+  assert.deepEqual(applyQuickChange(settings, { language: "xx" }), { error: "不支持这个目标语言" });
+  assert.deepEqual(applyQuickChange(settings, { analysis: { connection: "gone" } }), { error: "内容分析：选择的连接已被删除，请重新选择。" });
+  assert.ok("error" in applyQuickChange(settings, { translation: { connection: AiProviders.VercelAIGateway, model: "no-slash" } }));
 });

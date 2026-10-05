@@ -74,6 +74,17 @@ const PageLog = Schema.Struct({
   detail: Schema.optional(Schema.String),
 });
 
+const PurposeChoice = Schema.Struct({ connection: Schema.String, model: Schema.String });
+/** The settings the page's quick settings panel shows: choices and connection names, never keys or addresses. */
+const QuickSettings = Schema.Struct({
+  language: Schema.String,
+  connections: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  analysis: PurposeChoice,
+  translation: PurposeChoice,
+});
+export type QuickSettings = typeof QuickSettings.Type;
+const QuickChoice = Schema.Struct({ connection: Schema.String, model: Schema.optional(Schema.String) });
+
 const request = <const T extends string, const F extends Schema.Struct.Fields>(type: T, fields: F) =>
   Schema.Struct({ type: Schema.Literal(type), ...fields });
 
@@ -95,6 +106,12 @@ const Requests = {
   "openai-models": request("openai-models", { apiKey: Schema.optional(Schema.String), apiUrl: Schema.optional(Schema.String) }),
   "gateway-models": request("gateway-models", {}),
   "prepare-translation": request("prepare-translation", { context: PageContext }),
+  "quick-settings": request("quick-settings", {}),
+  "update-quick-settings": request("update-quick-settings", {
+    change: Schema.Struct({ language: Schema.optional(Schema.String), analysis: Schema.optional(QuickChoice), translation: Schema.optional(QuickChoice) }),
+  }),
+  /** Models a purpose can pick on a saved connection; the background holds the key, the page never sees it. */
+  "connection-models": request("connection-models", { purpose: Purpose, connection: Schema.String }),
   "analyze-content": request("analyze-content", { mode: Mode, blocks: Batch }),
 };
 type RequestType = keyof typeof Requests;
@@ -160,7 +177,11 @@ const Replies = {
   "chatgpt-models": orFailed(Models),
   "openai-models": orFailed(Schema.Union([Models, status("no-key", {})])),
   "gateway-models": orFailed(Models),
-  "prepare-translation": orFailed(Schema.Union([status("ok", { plan: TranslationPlan }), NotConfigured])),
+  // `language` is the target language's code, for the translations' `lang`.
+  "prepare-translation": orFailed(Schema.Union([status("ok", { plan: TranslationPlan, language: Schema.String }), NotConfigured])),
+  "quick-settings": orFailed(status("ok", { settings: QuickSettings })),
+  "update-quick-settings": orFailed(Schema.Union([status("ok", { settings: QuickSettings }), status("invalid", { error: Schema.String })])),
+  "connection-models": orFailed(Schema.Union([Models, status("no-key", {})])),
   "analyze-content": PageAnalysisResult,
 };
 export type Response<K extends RequestType> = typeof Replies[K]["Type"];

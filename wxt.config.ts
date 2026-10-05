@@ -11,7 +11,7 @@ mkdirSync(chromiumProfile, { recursive: true });
 export default defineConfig({
   srcDir: "./src",
   modules: ["@wxt-dev/module-react"],
-  // Tailwind only processes stylesheets that import it; today that is the options page.
+  // Tailwind only processes stylesheets that import it: the options page and the content script UI.
   vite: () => ({ plugins: [tailwindcss()] }),
   webExt: { chromiumProfile, keepProfileChanges: true },
   manifest: ({ manifestVersion }) => ({

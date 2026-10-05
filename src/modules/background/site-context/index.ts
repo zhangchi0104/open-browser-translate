@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { TermPair } from "../../shared/protocol";
+import { DEFAULT_TARGET_LANGUAGE } from "../../shared/settings/model";
 
 /**
  * What a site's earlier translations leave behind for later batches and pages:
@@ -44,6 +45,14 @@ export function siteOf(url: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * What a site's context is kept under: its glossary and recent passages are in one language, so
+ * each target language has its own. Simplified Chinese keeps the bare site, as before.
+ */
+export function contextKeyOf(site: string | undefined, language: string): string | undefined {
+  return site && language !== DEFAULT_TARGET_LANGUAGE ? `${site} ${language}` : site;
 }
 
 export const isFresh = (context: TranslationContext, now: number) => now - context.updatedAt < CONTEXT_TTL_MS;

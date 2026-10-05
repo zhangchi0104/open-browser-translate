@@ -1,6 +1,8 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { storage } from "wxt/utils/storage";
-import { Settings, SettingsLive, type AISettings } from "../modules/shared/settings";
+import {
+  AiProviders, aiSettings, applyQuickChange, findConnection, providerOf, quickView, Settings, SettingsLive, targetLanguageOf, type AISettings,
+} from "../modules/shared/settings";
 import { analyzePageContent } from "../modules/background/content-analyzer/page-analysis";
 import { decideTranslationPlan } from "../modules/background/content-analyzer/page-plan";
 import { configuredSettings, modelAttributes, ModelsLive } from "../modules/background/ai/models";
@@ -9,13 +11,13 @@ import {
   ChatGPTTokenLive, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
 } from "../modules/background/ai/chatgpt-session";
 import { listOpenAIModels } from "../modules/background/ai/openai-models";
-import { listGatewayModels } from "../modules/background/ai/gateway-models";
+import { GATEWAY_DECISION_MODELS, listGatewayModels } from "../modules/background/ai/gateway-models";
 import { translatePageBatch } from "../modules/background/translation-dispatcher";
 import { createTranslationService } from "../modules/background/translation-service";
 import { createCache } from "../modules/background/cache-store";
 import { createIndexedDbCacheStore } from "../modules/background/cache-store/indexeddb";
 import { createContextCarryover } from "../modules/background/site-context/carryover";
-import { siteOf, type TranslationContext } from "../modules/background/site-context";
+import { contextKeyOf, siteOf, type TranslationContext } from "../modules/background/site-context";
 import { debugLog, describeError, localTracer, markFailed, pageOf, traceStore, tracingLayer } from "../modules/shared/debug-log";
 import { batchChars, createDispatcher, PURPOSE_NAMES, type Block, type ChatGPTModel, type Failed, type ModelList, type Purpose, type Sender } from "../modules/shared/protocol";
 
@@ -82,6 +84,31 @@ const catalog = (provider: string, list: () => Promise<ChatGPTModel[]>, emptyDet
     return { status: "failed" };
   });
 
+const chatgptModels = () => catalog("ChatGPT", listChatGPTModels, "接口没有返回 visibility 为 list 的模型");
+/** Models behind an OpenAI key, or a custom connection's OpenAI-compatible `apiUrl` (whose key may be empty). */
+const compatibleModels = (label: string, apiKey: string, apiUrl?: string) =>
+  catalog(label, () => listOpenAIModels(apiKey, fetch, apiUrl), "接口没有返回可生成文本的模型");
+
+/** Models `purpose` can pick on a saved connection, listed with the key the background holds. */
+function connectionModels(settings: AISettings, purpose: Purpose, id: string): Promise<ModelList | { status: "no-key" }> {
+  const connection = findConnection(settings, id);
+  switch (providerOf(settings, id)) {
+    case AiProviders.OpenAISubscription: return chatgptModels();
+    case AiProviders.VercelAIGateway:
+      // Analysis on the gateway asks its evaluation models; the language catalog is for translation.
+      return purpose === "analysis" ? Promise.resolve({ status: "ok", models: GATEWAY_DECISION_MODELS }) : catalog("Vercel AI Gateway", listGatewayModels);
+    case AiProviders.OpenAIApi: {
+      const apiKey = connection!.apiKey.trim();
+      return apiKey ? compatibleModels("OpenAI", apiKey) : Promise.resolve({ status: "no-key" });
+    }
+    case AiProviders.Custom: {
+      const apiUrl = connection!.apiUrl?.trim();
+      return apiUrl ? compatibleModels(connection!.name, connection!.apiKey.trim(), apiUrl) : Promise.resolve({ status: "no-key" });
+    }
+    default: return Promise.resolve({ status: "failed", error: "这个连接已被删除" });
+  }
+}
+
 export default defineBackground(() => {
   const contexts = createContextCarryover({
     get: () => translationContexts.getValue(),
@@ -107,22 +134,32 @@ export default defineBackground(() => {
         .then(() => ({ status: "ok" as const }), () => ({ status: "failed" as const })),
       "chatgpt-sign-in": () => startChatGPTSignIn(),
       "chatgpt-sign-out": () => signOutChatGPT().then(() => ({ status: "ok" as const })),
-      "chatgpt-models": () => catalog("ChatGPT", listChatGPTModels, "接口没有返回 visibility 为 list 的模型"),
+      "chatgpt-models": chatgptModels,
       "openai-models": async ({ apiKey = "", apiUrl }) => {
         // A custom connection may need no key; an OpenAI one does.
         if (!apiKey.trim() && !apiUrl) return { status: "no-key" as const };
-        return catalog(apiUrl ? "自定义连接" : "OpenAI", () => listOpenAIModels(apiKey.trim(), fetch, apiUrl), "接口没有返回可生成文本的模型");
+        return compatibleModels(apiUrl ? "自定义连接" : "OpenAI", apiKey.trim(), apiUrl);
       },
       "gateway-models": () => catalog("Vercel AI Gateway", listGatewayModels),
+      // The page's quick settings panel: it sees names and choices, and changes go through here.
+      "quick-settings": async () => ({ status: "ok" as const, settings: quickView(await aiSettings.getValue()) }),
+      "update-quick-settings": async ({ change }) => {
+        const next = applyQuickChange(await aiSettings.getValue(), change);
+        if ("error" in next) return { status: "invalid" as const, error: next.error };
+        await aiSettings.setValue(next);
+        return { status: "ok" as const, settings: quickView(next) };
+      },
+      "connection-models": async ({ purpose, connection }) => connectionModels(await aiSettings.getValue(), purpose, connection),
       "prepare-translation": ({ context }, sender) => traceRequest(
         "prepare-translation", sender, { "obt.sample.chars": context.sample.length }, "准备翻译失败",
         (settings) => Effect.gen(function* () {
           yield* Effect.annotateCurrentSpan(modelAttributes(settings, "analysis"));
           yield* configuredSettings();
-          void contexts.notePage(siteOf(pageUrl(sender)), context.title);
+          const language = targetLanguageOf(settings).code;
+          void contexts.notePage(contextKeyOf(siteOf(pageUrl(sender)), language), context.title);
           const plan = yield* decideTranslationPlan(context);
           yield* Effect.annotateCurrentSpan({ "obt.plan.mode": plan.mode, "obt.plan.navigation": plan.navigation, "obt.plan.fallback": plan.fallback });
-          return { status: "ok", plan } as const;
+          return { status: "ok", plan, language } as const;
         }).pipe(Effect.catchTag("ModelNotConfigured", ({ purpose }) => Effect.succeed({ status: "not-configured", purpose } as const))),
       ),
       "analyze-content": ({ mode, blocks }, sender) => traceRequest(

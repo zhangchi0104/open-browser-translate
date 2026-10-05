@@ -25,7 +25,11 @@ blocks analysis chose to translate are sent, and `translateBatch` translates
 exactly those: `Translator` sends them to the independently configured
 translation provider using Effect `LanguageModel`, and the result has one
 translation per block.
-The current target language is Simplified Chinese.
+The target language is a setting (`targetLanguage`, one of `TARGET_LANGUAGES`;
+Simplified Chinese when unset). The prompt asks for it by its own name, and
+cached translations are keyed by that name, so Simplified Chinese keeps the
+"简体中文" entries it had before languages could be chosen. Site context is kept
+per site and language (`contextKeyOf`); Simplified Chinese keeps the bare site.
 
 Translation uses schema-validated structured output with one ID per retained
 block. Missing, duplicate, unknown IDs and empty translations fail the batch.

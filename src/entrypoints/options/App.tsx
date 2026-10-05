@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { browser } from "wxt/browser";
 import { background } from "@/lib/background";
-import { PURPOSE_NAMES, type ChatGPTModel, type Purpose, type Request } from "@/modules/shared/protocol";
-import { Bug, ChevronDown, Database, ExternalLink, KeyRound, Plus, Sparkles } from "lucide-react";
+import { PURPOSE_NAMES, type Purpose } from "@/modules/shared/protocol";
+import { Bug, ChevronDown, Database, ExternalLink, KeyRound, Languages, Plus } from "lucide-react";
 import {
-  AiProviders, aiSettings, CHATGPT_CONNECTION, CONNECTION_KIND_NAMES, CONNECTION_KINDS, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL,
-  defaultModel, findConnection, providerOf, REASONING_EFFORTS, validateApiUrl, validateModel,
+  AiProviders, aiSettings, CHATGPT_CONNECTION, CONNECTION_KIND_NAMES, CONNECTION_KINDS,
+  CHATGPT_CONNECTION_NAME, connectionName, defaultModel, findConnection, normalizeApiUrl, providerOf, purposeError, REASONING_EFFORTS,
+  TARGET_LANGUAGES, targetLanguageOf, validateApiUrl,
   type AISettings, type Connection, type ConnectionKind, type ReasoningEffort, type SettingsProvider,
 } from "@/modules/shared/settings";
 import { GATEWAY_DECISION_MODELS } from "@/modules/background/ai/gateway-models";
@@ -24,11 +25,11 @@ import { cn } from "@/lib/utils";
 import { DebugLog } from "./DebugLog";
 import { CacheSettings } from "./CacheSettings";
 import { SettingsGroup, SettingsRow } from "./SettingsList";
+import { useCatalog, type LoadedCatalog } from "@/components/use-catalog";
 
 type Status = { text: string; tone?: "error" | "success" };
 const statusTones = { error: "text-destructive", success: "text-success" } as const;
 
-const CHATGPT_NAME = "ChatGPT 账号";
 const kindDescriptions: Record<ConnectionKind, string> = {
   [AiProviders.VercelAIGateway]: "一个 key 用多家公司的模型，按用量付费。",
   [AiProviders.OpenAIApi]: "OpenAI 开发者平台的 key，按用量付费。",
@@ -44,18 +45,17 @@ const purposes = {
     description: "先判断页面上哪些内容值得翻译。",
     // The gateway runs evaluation models built for decisions; OpenAI's Decisions API isn't open
     // yet, so other connections answer decisions with an ordinary model.
-    placeholder: (p: SettingsProvider | undefined) => p === AiProviders.VercelAIGateway ? DEFAULT_GATEWAY_DECISION_MODEL
-      : p === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "模型 ID",
+    placeholder: (p: SettingsProvider | undefined) => defaultModel("analysis", p) || "模型 ID",
   },
   translation: {
     title: "翻译",
-    description: "再把选出的内容译成中文。",
+    description: "再把选出的内容译成目标语言。",
     placeholder: (p: SettingsProvider | undefined) => p === AiProviders.VercelAIGateway ? "provider/model" : "模型 ID",
   },
 } as const;
 type Section = "models" | "keys" | "cache" | "debug";
 const sections = {
-  models: { title: "模型", description: "", icon: Sparkles },
+  models: { title: "语言与模型", description: "", icon: Languages },
   keys: { title: "连接", description: "至少连接一个服务，翻译才能工作。", icon: KeyRound },
   cache: { title: "翻译缓存", description: "翻译过的段落在本机保留 7 天，再次遇到时直接显示，不再消耗额度。", icon: Database },
   debug: { title: "调试日志", description: "翻译出问题时，在这里查看每次请求的步骤、耗时和错误。", icon: Bug },
@@ -86,34 +86,7 @@ function signInOutcome(state: string): Promise<SignInResult> {
   });
 }
 
-/** A connection's model catalog; `unavailable` until there is an account, key or address to ask with. */
-type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: readonly ChatGPTModel[] };
-interface LoadedCatalog { catalog: Catalog; reload: () => void }
-
 const gatewayDecisionCatalog: LoadedCatalog = { catalog: { status: "ok", models: GATEWAY_DECISION_MODELS }, reload: () => {} };
-
-/** Asks the background for a model catalog with `request`, waiting `delay` ms so typing a key doesn't fire a request per keystroke. */
-function useCatalog(request: Request<"chatgpt-models" | "openai-models" | "gateway-models"> | undefined, delay = 0): LoadedCatalog {
-  const [catalog, setCatalog] = useState<Catalog>({ status: "unavailable" });
-  const [attempt, setAttempt] = useState(0);
-  // The request is a new object each render; its JSON says when it actually changed.
-  const key = request && JSON.stringify(request);
-  useEffect(() => {
-    if (!request) return setCatalog({ status: "unavailable" });
-    let current = true;
-    setCatalog({ status: "loading" });
-    const timer = setTimeout(() => background.request(request).then(
-      (response) => {
-        if (!current) return;
-        setCatalog(response.status === "ok" ? { status: "ok", models: response.models }
-          : response.status === "no-key" ? { status: "unavailable" } : { status: "failed" });
-      },
-      () => { if (current) setCatalog({ status: "failed" }); },
-    ), delay);
-    return () => { current = false; clearTimeout(timer); };
-  }, [key, attempt, delay]);
-  return { catalog, reload: () => setAttempt((n) => n + 1) };
-}
 
 function useChatGPTEmail() {
   const [email, setEmail] = useState<string | null>();
@@ -137,7 +110,7 @@ function freshName(connections: readonly Connection[], kind: ConnectionKind) {
 /** Host permission patterns custom connections need; requested when the settings are saved. */
 function customOrigins(connections: readonly Connection[]) {
   return [...new Set(connections.flatMap((connection) =>
-    connection.kind === AiProviders.Custom && !validateApiUrl(connection.apiUrl ?? "") ? [`${new URL(connection.apiUrl!.trim()).origin}/*`] : []))];
+    connection.kind === AiProviders.Custom && !validateApiUrl(connection.apiUrl ?? "") ? [`${new URL(normalizeApiUrl(connection.apiUrl)).origin}/*`] : []))];
 }
 
 export function App() {
@@ -189,9 +162,9 @@ export function App() {
     const next = structuredClone(draft);
     for (const connection of next.connections) {
       connection.apiKey = connection.apiKey.trim();
-      connection.name = connection.name.trim() || CONNECTION_KIND_NAMES[connection.kind];
+      connection.name = connectionName(connection);
       if (connection.kind !== AiProviders.Custom) continue;
-      connection.apiUrl = connection.apiUrl?.trim() ?? "";
+      connection.apiUrl = normalizeApiUrl(connection.apiUrl);
       const error = validateApiUrl(connection.apiUrl);
       if (error) {
         setConnectionErrors({ [connection.id]: error });
@@ -203,10 +176,8 @@ export function App() {
     }
     for (const purpose of ["analysis", "translation"] as const) {
       const { connection } = next[purpose];
-      const provider = providerOf(next, connection);
-      const model = (next[purpose].models[connection] ?? defaultModel(purpose, provider)).trim();
-      next[purpose].models[connection] = model;
-      const error = provider ? validateModel(provider, model) : "选择的连接已被删除，请重新选择。";
+      next[purpose].models[connection] = (next[purpose].models[connection] ?? defaultModel(purpose, providerOf(next, connection))).trim();
+      const error = purposeError(next, purpose);
       if (error) {
         setErrors({ [purpose]: error });
         setStatus({ text: `${PURPOSE_NAMES[purpose]}：${error}`, tone: "error" });
@@ -266,10 +237,6 @@ export function App() {
 
   /** The purposes that use connection `id`. */
   const usesOf = (id: string) => draft ? (["analysis", "translation"] as const).filter((p) => draft[p].connection === id).map((p) => PURPOSE_NAMES[p]) : [];
-  const usage = (id: string) => {
-    const uses = usesOf(id);
-    return uses.length ? `正在用于${uses.join("和")}` : "暂未使用";
-  };
 
   return (
     <SidebarProvider>
@@ -303,12 +270,24 @@ export function App() {
           {sections[section].description && <p className="text-sm text-muted-foreground">{sections[section].description}</p>}
         </div>
         {/* The debug log's timelines get more room; settings keep a short line length. */}
-        <main className={cn("mx-auto w-full px-4 pt-8 sm:px-10", section === "debug" ? "max-w-[880px]" : "max-w-[640px]")}>
+        <main className={cn("mx-auto w-full px-4 pt-8 sm:px-10", section === "debug" ? "max-w-[880px]" : "max-w-[640px]", (section === "debug" || section === "cache") && "pb-12")}>
           {section === "debug" && <DebugLog />}
           {section === "cache" && <CacheSettings />}
           <form onSubmit={save} noValidate hidden={section === "debug" || section === "cache"}>
             <fieldset disabled={busy || !draft} className="min-w-0">
               <div hidden={section !== "models"} className="space-y-8">
+                <SettingsGroup>
+                  <SettingsRow label="目标语言" htmlFor="target-language">
+                    <Select value={draft ? targetLanguageOf(draft).code : ""} onValueChange={(value) => edit((next) => { next.targetLanguage = value; })}>
+                      <SelectTrigger id="target-language" className="w-full sm:w-60">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TARGET_LANGUAGES.map(({ code, name }) => <SelectItem key={code} value={code}>{name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </SettingsRow>
+                </SettingsGroup>
                 {(["analysis", "translation"] as const).map((purpose) => (
                   <ModelSection
                     key={purpose}
@@ -331,9 +310,12 @@ export function App() {
                 ))}
               </div>
 
-              <div hidden={section !== "keys"}>
-                <SettingsGroup footer="API key 和登录信息只保存在这台设备的浏览器中，不会同步到其他设备。">
-                  <ChatGPTRow email={email} usage={usage(CHATGPT_CONNECTION)} onSignIn={signIn} onSignOut={signOut} />
+              {/* The ChatGPT sign-in stands apart: there is only ever one, and it can't be edited or removed. */}
+              <div hidden={section !== "keys"} className="space-y-8">
+                <SettingsGroup title="账号">
+                  <ChatGPTRow email={email} onSignIn={signIn} onSignOut={signOut} />
+                </SettingsGroup>
+                <SettingsGroup title="API 连接" footer="API key 和登录信息只保存在这台设备的浏览器中，不会同步到其他设备。">
                   {draft?.connections.map((connection) => (
                     <ConnectionRow
                       key={connection.id}
@@ -362,7 +344,6 @@ export function App() {
               </div>
             </fieldset>
           </form>
-          {(section === "debug" || section === "cache") && <div className="h-12" />}
         </main>
       </SidebarInset>
     </SidebarProvider>
@@ -388,20 +369,19 @@ function SectionMenu({ items, section, onSelect }: { items: Section[]; section: 
   );
 }
 
-function ChatGPTRow({ email, usage, onSignIn, onSignOut }: {
+/** The ChatGPT sign-in: the signed-in account at the end of the row, beside signing out. */
+function ChatGPTRow({ email, onSignIn, onSignOut }: {
   email: string | null | undefined;
-  usage: string;
   onSignIn: () => void;
   onSignOut: () => void;
 }) {
   return (
-    <SettingsRow
-      label={CHATGPT_NAME}
-      description={email === undefined ? "正在读取登录状态…" : email ? `${email} · ${usage}` : "用 ChatGPT 套餐的额度，不需要 API key。"}
-    >
+    <SettingsRow label={CHATGPT_CONNECTION_NAME}>
+      {email === undefined && <span className="text-sm text-muted-foreground">正在读取…</span>}
+      {email && <span className="min-w-0 truncate text-sm text-muted-foreground" title={email}>{email}</span>}
       {email
         ? <Button type="button" variant="outline" size="sm" onClick={onSignOut}>退出登录</Button>
-        : <Button type="button" size="sm" onClick={onSignIn} disabled={email === undefined}>登录</Button>}
+        : email === null && <Button type="button" size="sm" onClick={onSignIn}>登录</Button>}
     </SettingsRow>
   );
 }
@@ -420,15 +400,9 @@ function ConnectionRow({ connection, uses, error, open, onToggle, onChange, onRe
   const [shown, setShown] = useState(false);
   const custom = connection.kind === AiProviders.Custom;
   const link = kindLinks[connection.kind];
-  const state = custom && !connection.apiUrl?.trim() ? "尚未填写地址"
-    : !custom && !connection.apiKey.trim() ? "尚未填写 key"
-    : uses.length ? `正在用于${uses.join("和")}` : "暂未使用";
   return (
     <div>
-      <SettingsRow
-        label={connection.name || CONNECTION_KIND_NAMES[connection.kind]}
-        description={connection.name.trim() && connection.name.trim() !== CONNECTION_KIND_NAMES[connection.kind] ? `${CONNECTION_KIND_NAMES[connection.kind]} · ${state}` : state}
-      >
+      <SettingsRow label={connectionName(connection)}>
         <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={open} aria-controls={`${id}-editor`} onClick={onToggle}>
           {open ? "收起" : "编辑"}
         </Button>
@@ -498,7 +472,7 @@ function ConnectionRow({ connection, uses, error, open, onToggle, onChange, onRe
             <Button type="button" variant="ghost" size="sm" className="-ml-3 text-destructive hover:text-destructive" disabled={uses.length > 0} onClick={onRemove}>
               删除这个连接
             </Button>
-            {uses.length > 0 && <span className="text-[12px] text-muted-foreground">正在用于{uses.join("和")}，先在「模型」中换成其他连接</span>}
+            {uses.length > 0 && <span className="text-[12px] text-muted-foreground">正在用于{uses.join("和")}，先在「语言与模型」中换成其他连接</span>}
           </div>
         </div>
       )}
@@ -573,7 +547,7 @@ function catalogRequest(purpose: Purpose, provider: SettingsProvider | undefined
       return apiKey ? { type: "openai-models", apiKey } as const : undefined;
     }
     case AiProviders.Custom: {
-      const apiUrl = connection?.apiUrl?.trim() ?? "";
+      const apiUrl = normalizeApiUrl(connection?.apiUrl);
       return validateApiUrl(apiUrl) ? undefined : { type: "openai-models", apiKey: connection?.apiKey.trim() ?? "", apiUrl } as const;
     }
   }
@@ -627,8 +601,6 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
   const advanced = reasons || offersFast;
   const advancedOpen = showAdvanced || !!effort || fast;
   const field = "w-full sm:w-60";
-  // The selects below ignore an empty value: Radix reports "" when a select's value and its items
-  // arrive in the same render (settings loading, a catalog arriving), which would wipe the choice.
   return (
     <SettingsGroup
       title={config.title}
@@ -643,16 +615,16 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
       )}
     >
       <SettingsRow label="连接" htmlFor={`${id}-connection`}>
-        <Select value={connectionId} onValueChange={(value) => value && onConnectionChange(value)}>
+        <Select value={connectionId} onValueChange={onConnectionChange}>
           <SelectTrigger id={`${id}-connection`} className={field} aria-invalid={removed}>
             <SelectValue placeholder="选择连接" />
           </SelectTrigger>
           <SelectContent>
             {removed && <SelectItem value={connectionId}>（已删除的连接）</SelectItem>}
-            <SelectItem value={CHATGPT_CONNECTION}>{CHATGPT_NAME}</SelectItem>
+            <SelectItem value={CHATGPT_CONNECTION}>{CHATGPT_CONNECTION_NAME}</SelectItem>
             {draft?.connections.map((c) => (
               <SelectItem key={c.id} value={c.id}>
-                {c.name || CONNECTION_KIND_NAMES[c.kind]}
+                {connectionName(c)}
                 {c.name !== CONNECTION_KIND_NAMES[c.kind] && <span className="ml-2 text-xs text-muted-foreground">{CONNECTION_KIND_NAMES[c.kind]}</span>}
               </SelectItem>
             ))}
@@ -662,7 +634,7 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
       {!removed && (
         <SettingsRow label="模型" htmlFor={`${id}-model`}>
           {choices ? (
-            <Select value={model} onValueChange={(value) => value && onModelChange(value)}>
+            <Select value={model} onValueChange={onModelChange}>
               <SelectTrigger id={`${id}-model`} className={field} aria-invalid={!!error || !!unlisted} aria-describedby={help ? `${id}-help` : undefined}>
                 <SelectValue placeholder="选择模型" />
               </SelectTrigger>

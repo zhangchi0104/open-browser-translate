@@ -1,3 +1,5 @@
+import { PURPOSE_NAMES, type Purpose, type QuickSettings, type Request } from "../protocol";
+
 export const enum AiProviders {
   OpenAISubscription = "OpenAISubscription",
   OpenAIApi = "OpenAIApi",
@@ -13,8 +15,8 @@ export const DEFAULT_DECISION_MODEL = "gpt-6-luna";
 export const DEFAULT_GATEWAY_DECISION_MODEL = "typesafe-ai/jev";
 
 /** Kinds of connection that take an API key; several of each can be added and named. */
-export type ConnectionKind = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.Custom;
-export const CONNECTION_KINDS = [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.Custom] as const satisfies readonly ConnectionKind[];
+export const CONNECTION_KINDS = [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.Custom] as const;
+export type ConnectionKind = typeof CONNECTION_KINDS[number];
 /** What runs a purpose's model: a kind of connection, or the ChatGPT plan. */
 export type SettingsProvider = ConnectionKind | AiProviders.OpenAISubscription;
 /** The ChatGPT sign-in is one per browser, so it is a connection with a fixed id rather than a listed one. */
@@ -36,6 +38,15 @@ export const CONNECTION_KIND_NAMES: Record<ConnectionKind, string> = {
   [AiProviders.Custom]: "自定义",
 };
 
+/** How a connection is named to the reader; one left unnamed goes by its kind. */
+export function connectionName({ name, kind }: Pick<Connection, "name" | "kind">): string {
+  return name.trim() || CONNECTION_KIND_NAMES[kind];
+}
+/** A custom connection's base URL as requests use it: trimmed, without trailing slashes. */
+export function normalizeApiUrl(url: string | undefined): string {
+  return (url ?? "").trim().replace(/\/+$/, "");
+}
+
 export function validateModel(provider: SettingsProvider, model: string): string | undefined {
   const value = model.trim();
   if (!value) return;
@@ -54,6 +65,30 @@ export function validateApiUrl(url: string): string | undefined {
   } catch {}
   return "请填写以 https:// 或 http:// 开头的地址";
 }
+/**
+ * Languages pages can be translated into, each named in itself. The name is what the prompt asks
+ * for and what cached translations are keyed by; Simplified Chinese keeps "简体中文", the key it
+ * had when it was the only language.
+ */
+export const TARGET_LANGUAGES = [
+  { code: "zh-CN", name: "简体中文" },
+  { code: "zh-TW", name: "繁體中文" },
+  { code: "en", name: "English" },
+  { code: "ja", name: "日本語" },
+  { code: "ko", name: "한국어" },
+  { code: "fr", name: "Français" },
+  { code: "de", name: "Deutsch" },
+  { code: "es", name: "Español" },
+  { code: "pt", name: "Português" },
+  { code: "ru", name: "Русский" },
+] as const;
+export type TargetLanguage = typeof TARGET_LANGUAGES[number];
+export const DEFAULT_TARGET_LANGUAGE = "zh-CN";
+/** The language settings translate into; Simplified Chinese when unset or no longer offered. */
+export function targetLanguageOf(settings: Pick<AISettings, "targetLanguage">): TargetLanguage {
+  return TARGET_LANGUAGES.find(({ code }) => code === settings.targetLanguage) ?? TARGET_LANGUAGES[0];
+}
+
 /** OpenAI reasoning effort levels; unset leaves the choice to the model. */
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
@@ -69,6 +104,8 @@ export interface PurposeSettings {
   fast?: boolean;
 }
 export interface AISettings {
+  /** A `TARGET_LANGUAGES` code; unset is Simplified Chinese. */
+  targetLanguage?: string;
   connections: Connection[];
   analysis: PurposeSettings;
   translation: PurposeSettings;
@@ -96,10 +133,59 @@ export function providerOf(settings: AISettings, id: string): SettingsProvider |
   return id === CHATGPT_CONNECTION ? AiProviders.OpenAISubscription : findConnection(settings, id)?.kind;
 }
 /** The model a purpose starts with on a connection it hasn't used yet. */
-export function defaultModel(purpose: "analysis" | "translation", provider: SettingsProvider | undefined): string {
+export function defaultModel(purpose: Purpose, provider: SettingsProvider | undefined): string {
   if (purpose !== "analysis") return "";
   return provider === AiProviders.VercelAIGateway ? DEFAULT_GATEWAY_DECISION_MODEL
     : provider === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "";
+}
+
+// —— Quick settings ——
+
+export const CHATGPT_CONNECTION_NAME = "ChatGPT 账号";
+
+/** Why a purpose can't be saved as it stands (its connection removed, or a malformed model ID), if it can't. */
+export function purposeError(settings: AISettings, purpose: Purpose): string | undefined {
+  const { connection, models } = settings[purpose];
+  const provider = providerOf(settings, connection);
+  if (!provider) return "选择的连接已被删除，请重新选择。";
+  return validateModel(provider, models[connection] ?? defaultModel(purpose, provider));
+}
+
+/** What the page's quick settings panel sees: choices and names, never keys or addresses. */
+export function quickView(settings: AISettings): QuickSettings {
+  const choice = (purpose: Purpose) => {
+    const id = settings[purpose].connection;
+    return { connection: id, model: settings[purpose].models[id] ?? defaultModel(purpose, providerOf(settings, id)) };
+  };
+  return {
+    language: targetLanguageOf(settings).code,
+    connections: [
+      { id: CHATGPT_CONNECTION, name: CHATGPT_CONNECTION_NAME },
+      ...settings.connections.map((connection) => ({ id: connection.id, name: connectionName(connection) })),
+    ],
+    analysis: choice("analysis"),
+    translation: choice("translation"),
+  };
+}
+/**
+ * The settings with a change from the quick settings panel applied, or why it can't be; a model
+ * given applies to the purpose's connection.
+ */
+export function applyQuickChange(settings: AISettings, change: Request<"update-quick-settings">["change"]): AISettings | { error: string } {
+  const next = structuredClone(settings);
+  if (change.language !== undefined) {
+    if (!TARGET_LANGUAGES.some(({ code }) => code === change.language)) return { error: "不支持这个目标语言" };
+    next.targetLanguage = change.language;
+  }
+  for (const purpose of ["analysis", "translation"] as const) {
+    const choice = change[purpose];
+    if (!choice) continue;
+    next[purpose].connection = choice.connection;
+    if (choice.model !== undefined) next[purpose].models[choice.connection] = choice.model.trim();
+    const error = purposeError(next, purpose);
+    if (error) return { error: `${PURPOSE_NAMES[purpose]}：${error}` };
+  }
+  return next;
 }
 
 // —— Migrations ——
