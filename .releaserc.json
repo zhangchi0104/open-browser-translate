@@ -42,6 +42,12 @@
           }
         ]
       }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "publishCmd": "if [ -n \"$CHROME_EXTENSION_ID\" ]; then cd apps/extension && bunx wxt submit --chrome-zip .output/open-browser-translate-${nextRelease.version}-chrome.zip; else echo 'CHROME_EXTENSION_ID is not set; skipping the Chrome Web Store.'; fi"
+      }
     ]
   ]
 }
