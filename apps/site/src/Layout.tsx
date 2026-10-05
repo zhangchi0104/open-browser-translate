@@ -14,7 +14,7 @@ export function Layout({ children }: { children: ReactNode }) {
             <span className="truncate">Open Browser Translate</span>
           </a>
           <nav className="ml-auto flex shrink-0 items-center gap-5 text-sm whitespace-nowrap text-muted-foreground">
-            <a href={PRIVACY_PATH} className="hover:text-foreground">隐私政策</a>
+            <a href={PRIVACY_PATH} className="hover:text-foreground">Privacy</a>
             <a href={REPO_URL} className="hover:text-foreground">GitHub</a>
           </nav>
         </div>
@@ -23,9 +23,9 @@ export function Layout({ children }: { children: ReactNode }) {
       <footer className="border-t">
         <div className="mx-auto flex max-w-[960px] flex-wrap gap-x-5 gap-y-2 px-4 py-6 text-[13px] text-muted-foreground sm:px-8">
           <span className="truncate">Open Browser Translate</span>
-          <a href={PRIVACY_PATH} className="hover:text-foreground">隐私政策 Privacy</a>
-          <a href={ISSUES_URL} className="hover:text-foreground">问题反馈 Support</a>
-          <a href={REPO_URL} className="hover:text-foreground">源码 Source</a>
+          <a href={PRIVACY_PATH} className="hover:text-foreground">Privacy policy</a>
+          <a href={ISSUES_URL} className="hover:text-foreground">Support</a>
+          <a href={REPO_URL} className="hover:text-foreground">Source</a>
         </div>
       </footer>
     </div>

@@ -6,7 +6,7 @@
 
 ## 0. 上传前
 
-- [ ] **填好占位符。** `docs/privacy-policy.md` 中有 `<<开发者名称>>`、`<<联系邮箱>>`、`<<支持网址>>`（英文部分对应 `<<Developer name>>`、`<<Contact email>>`、`<<Support URL>>`）。
+- [ ] **填好占位符。** 英文隐私政策 `docs/privacy-policy.md`（网站上展示的就是这一份）中有 `<<Developer name>>`、`<<Contact email>>`、`<<Support URL>>`；中文版 `docs/privacy-policy.zh-CN.md` 中对应 `<<开发者名称>>`、`<<联系邮箱>>`、`<<支持网址>>`。
 - [ ] **开启 GitHub Pages**（见第 7 节），确认 https://zhangchi0104.github.io/open-browser-translate/privacy-policy/ 能打开。
 - [ ] **准备安装包。** 这个分支合并到 `main` 后，semantic-release 会发布新版本，并把 `open-browser-translate-<版本>-chrome.zip` 附在 GitHub Release 上。上传这个 zip，商店里的版本号就和 tag 一致。本地也可以在仓库根目录运行 `bun run zip` 打包，产物在 `apps/extension/.output/`。
   - 包里应当带有：中英 `_locales`、新图标、去掉 `api.typesafe.ai` 之后的权限。
@@ -278,7 +278,7 @@ CI 的提交步骤大致如下：
 | 页面 | URL | 来源 |
 | --- | --- | --- |
 | 首页 | https://zhangchi0104.github.io/open-browser-translate/ | `apps/site/src/home.tsx` |
-| 隐私政策 | https://zhangchi0104.github.io/open-browser-translate/privacy-policy/ | `docs/privacy-policy.md`，构建时渲染。只需改这一份。 |
+| 隐私政策 | https://zhangchi0104.github.io/open-browser-translate/privacy-policy/ | `docs/privacy-policy.md`（英文），构建时渲染。中文版 `docs/privacy-policy.zh-CN.md` 只在仓库里，改政策时两份一起改。 |
 
 **第一次需要你手动开启一次：** 仓库 Settings → Pages → Build and deployment → Source 选 **GitHub Actions**。之后每次 `dev` 上的网站、隐私政策或截图有变动，都会自动重新发布。也可以在 Actions 页手动运行 "Pages" workflow。
 

@@ -5,7 +5,7 @@
 Bun workspaces run by Turborepo. Run tasks from the root (`bun run compile`, `bun run test`, `bun run zip`, `bun run dev`, `bun run site`); Turborepo runs them in each package and caches results in `.turbo`.
 
 - `apps/extension`: the browser extension (WXT + React). Its `package.json` version is the release version.
-- `apps/site`: the home page and privacy policy (Vite + React), published to GitHub Pages by `.github/workflows/pages.yml`. The policy's text is `docs/privacy-policy.md`.
+- `apps/site`: the home page and privacy policy (Vite + React), published to GitHub Pages by `.github/workflows/pages.yml`. The site shows the English policy, `docs/privacy-policy.md`; `docs/privacy-policy.zh-CN.md` is the Chinese version, kept in step by hand.
 - `store/chrome`: Chrome Web Store images and the scripts that make them. `docs/chrome-web-store-listing.md` covers the listing.
 
 ## Agent skills
