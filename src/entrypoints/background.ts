@@ -117,7 +117,8 @@ export default defineBackground(() => {
   browser.tabs.onUpdated.addListener((tabId, change) => { void handleChatGPTNavigation(tabId, change.url); });
   browser.tabs.onRemoved.addListener((tabId) => { void handleChatGPTTabClosed(tabId); });
   // The launcher only appears on web pages; the toolbar button reaches settings from anywhere.
-  browser.action.onClicked.addListener(() => { void browser.runtime.openOptionsPage(); });
+  // Manifest V2 (Firefox) calls the toolbar button `browserAction`.
+  (browser.action ?? browser.browserAction).onClicked.addListener(() => { void browser.runtime.openOptionsPage(); });
 
   const dispatcher = createDispatcher({
     trusted: (sender) => sender.id === browser.runtime.id,
