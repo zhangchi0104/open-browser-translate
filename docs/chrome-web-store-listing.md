@@ -7,8 +7,8 @@
 ## 0. 上传前
 
 - [ ] **填好占位符。** `docs/privacy-policy.md` 中有 `<<开发者名称>>`、`<<联系邮箱>>`、`<<支持网址>>`（英文部分对应 `<<Developer name>>`、`<<Contact email>>`、`<<Support URL>>`）。
-- [ ] **拿到隐私政策的公开 URL**（见第 7 节）。仓库目前是私有的，GitHub 上的文件链接和 Issues 页外人都打不开。支持网址也要能公开访问。
-- [ ] **准备安装包。** 这个分支合并到 `main` 后，semantic-release 会发布新版本，并把 `open-browser-translate-<版本>-chrome.zip` 附在 GitHub Release 上。上传这个 zip，商店里的版本号就和 tag 一致。本地也可以用 `bun run zip` 打包，产物在 `.output/`。
+- [ ] **开启 GitHub Pages**（见第 7 节），确认 https://zhangchi0104.github.io/open-browser-translate/privacy-policy/ 能打开。
+- [ ] **准备安装包。** 这个分支合并到 `main` 后，semantic-release 会发布新版本，并把 `open-browser-translate-<版本>-chrome.zip` 附在 GitHub Release 上。上传这个 zip，商店里的版本号就和 tag 一致。本地也可以在仓库根目录运行 `bun run zip` 打包，产物在 `apps/extension/.output/`。
   - 包里应当带有：中英 `_locales`、新图标、去掉 `api.typesafe.ai` 之后的权限。
   - 以后每次上传的版本号都必须比上一次高。semantic-release 会自动递增，不要手动改版本号。
 - [ ] **准备开发者账号。** 首次注册要付一次性注册费。账号设置在 **Account（帐号）** 页签：
@@ -24,7 +24,7 @@
 
 ### 2.1 标题和摘要（来自安装包，后台不能改）
 
-商店按浏览器语言显示 `_locales` 里的 `extName` 和 `extDescription`（`public/_locales/*/messages.json`）。摘要最多 132 个字符。
+商店按浏览器语言显示 `_locales` 里的 `extName` 和 `extDescription`（`apps/extension/public/_locales/*/messages.json`）。摘要最多 132 个字符。
 
 | 语言 | 标题 | 摘要 |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ Translates into Simplified Chinese by default, and into Traditional Chinese, Eng
 
 PRIVACY
 Before your first translation, the extension tells you where page text will go and asks for your consent. After that, page text is sent only when you click translate, and only to the model service you configured. API keys and sign-in details stay in your browser; they are never synced or sent anywhere else. No analytics, no ads. Private windows leave no cache or history behind.
-Privacy policy: <<隐私政策 URL>>
+Privacy policy: https://zhangchi0104.github.io/open-browser-translate/privacy-policy/
 
 You need an API key for one of the services above, or a ChatGPT plan. Your provider bills you for usage.
 ```
@@ -94,7 +94,7 @@ Open Browser Translate 在你正在阅读的网页上就地翻译：每段译文
 
 隐私
 第一次翻译前，扩展会说明网页文字将发往哪里，并征得你的同意。此后只有你点击翻译时，网页文字才会发送出去，而且只发给你设置的模型服务。API key 和登录信息只保存在你的浏览器里，不会同步，也不会发到其他任何地方。没有统计代码，没有广告。无痕窗口里翻译不留下缓存和记录。
-隐私政策：<<隐私政策 URL>>
+隐私政策：https://zhangchi0104.github.io/open-browser-translate/privacy-policy/
 
 使用前需要上面任一服务的 API key，或者一个 ChatGPT 订阅。用量费用由对应的服务商收取。
 ```
@@ -105,8 +105,8 @@ Open Browser Translate 在你正在阅读的网页上就地翻译：每段译文
 | --- | --- |
 | Category（类别） | **Productivity → Tools**（生产力 → 工具）。备选：Make Chrome Yours → Accessibility。 |
 | Language（语言） | 默认语言是 English（与 manifest 的 `default_locale: "en"` 一致）。中文（简体）的说明在页面顶部的语言下拉框里切换后填写。 |
-| Homepage URL（首页网址） | `<<首页网址>>`，可选。仓库公开后可以填仓库地址。 |
-| Support URL（支持网址） | `<<支持网址>>`。必须能公开访问。 |
+| Homepage URL（首页网址） | `https://zhangchi0104.github.io/open-browser-translate/`（`apps/site` 的首页）。 |
+| Support URL（支持网址） | `<<支持网址>>`。必须能公开访问；仓库已公开，可以用 Issues 页。 |
 | Official URL（官方网址） | 留空。只有在 Search Console 验证过所有权的网站才能填。 |
 | Mature content（成人内容） | 否。 |
 | YouTube video（宣传视频） | 留空，可选。 |
@@ -115,7 +115,7 @@ Open Browser Translate 在你正在阅读的网页上就地翻译：每段译文
 
 | 字段 | 文件 | 规格 |
 | --- | --- | --- |
-| Store icon（商店图标） | `store/chrome/icon-128.png` | 128×128 PNG，96×96 主体，四周各留 16px 透明边距。与 `public/icon/128.png` 是同一张图。 |
+| Store icon（商店图标） | `store/chrome/icon-128.png` | 128×128 PNG，96×96 主体，四周各留 16px 透明边距。与 `apps/extension/public/icon/128.png` 是同一张图。 |
 | Screenshots（屏幕截图），按顺序上传 | `store/chrome/screenshot-1-inline-translation.png` | 1280×800。网页内联翻译：译文在原文下方，导航和署名不翻译。 |
 | | `store/chrome/screenshot-2-quick-settings.png` | 1280×800。悬浮启动器和快捷设置面板（目标语言、模型）。 |
 | | `store/chrome/screenshot-3-data-consent.png` | 1280×800。第一次翻译前的告知和同意面板。 |
@@ -126,7 +126,7 @@ Open Browser Translate 在你正在阅读的网页上就地翻译：每段译文
 
 截图是中文界面，英文条目也可以用同一组（截图可以按语言分别上传，不传就共用）。宣传图不能按语言区分。
 
-截图来自真实运行的扩展：Chromium 加载 `.output/chrome-mv3`，翻译一篇虚构的英文文章。模型请求由本地模拟的 `api.openai.com` 应答，返回预先写好的译文（`store/chrome/source/screenshots/translations.json`）。重新生成的方法：
+截图来自真实运行的扩展：Chromium 加载 `apps/extension/.output/chrome-mv3`，翻译一篇虚构的英文文章。模型请求由本地模拟的 `api.openai.com` 应答，返回预先写好的译文（`store/chrome/source/screenshots/translations.json`）。重新生成的方法：
 
 ```sh
 bun run build
@@ -190,7 +190,7 @@ All JavaScript ships in the package, bundled at build time with WXT/Vite. The ex
 
 > 中文对照：全部 JavaScript 在构建时由 WXT/Vite 打包进安装包。不使用 eval、new Function、远程脚本或 Wasm。模型接口返回的是 JSON 数据，译文只通过 textContent 写入页面，从不作为 HTML 或代码执行。
 
-已核对：构建产物 `.output/chrome-mv3` 中没有 `eval(`、`new Function(`、`importScripts(`，也没有远程 `import()`。
+已核对：构建产物 `apps/extension/.output/chrome-mv3` 中没有 `eval(`、`new Function(`、`importScripts(`，也没有远程 `import()`。
 
 ### 3.4 Data usage（数据使用）
 
@@ -218,7 +218,7 @@ All JavaScript ships in the package, bundled at build time with WXT/Vite. The ex
 
 ### 3.5 Privacy policy（隐私权政策）
 
-填第 7 节得到的公开 URL。
+`https://zhangchi0104.github.io/open-browser-translate/privacy-policy/`
 
 ## 4. Distribution（分发）页签
 
@@ -259,6 +259,7 @@ CI 的提交步骤大致如下：
 
 ```yaml
 - name: Submit to Chrome Web Store
+  working-directory: apps/extension
   run: bunx wxt submit --chrome-zip .output/*-chrome.zip
   env:
     CHROME_API_VERSION: v2
@@ -270,24 +271,24 @@ CI 的提交步骤大致如下：
 
 可以先加 `--dry-run` 验证凭据，再正式提交。
 
-## 7. 隐私政策的公开 URL
+## 7. 网站和隐私政策的公开 URL
 
-商店要求隐私政策和支持网址能被任何人打开。仓库目前是私有的，所以 GitHub 上的文件链接（`github.com/.../blob/...`）和 Issues 页外人都打不开。可选的做法：
+隐私政策和首页由 `apps/site`（Vite + React）生成，经 GitHub Actions（`.github/workflows/pages.yml`）发布到 GitHub Pages：
 
-| 方案 | 得到的 URL | 说明 |
+| 页面 | URL | 来源 |
 | --- | --- | --- |
-| A. 把仓库设为公开，再开 GitHub Pages | `https://zhangchi0104.github.io/open-browser-translate/privacy-policy/` | 仓库 Settings → Pages，Source 选 "Deploy from a branch"，分支选 `main`（或 `dev`），目录选 `/docs`。`docs/privacy-policy.md` 开头的 front matter 已经设好 `permalink: /privacy-policy/`，Jekyll 会把它渲染成网页。注意 `docs/` 下的 ADR 等文档也会一起发布。仓库公开后，Issues 也可以直接当支持网址。 |
-| B. 只把仓库设为公开，不开 Pages | `https://github.com/zhangchi0104/open-browser-translate/blob/main/docs/privacy-policy.md` | 最省事，商店接受这样的链接。 |
-| C. 仓库保持私有，开 GitHub Pages | 同方案 A | 私有仓库使用 Pages 需要 GitHub Pro。发布出来的站点仍然公开，只有仓库保持私有。 |
-| D. 仓库保持私有，另建一个公开仓库或公开 Gist 存放政策 | `https://gist.github.com/<用户名>/<id>` 或新仓库的 Pages 地址 | 改政策时要记得两边同步。 |
+| 首页 | https://zhangchi0104.github.io/open-browser-translate/ | `apps/site/src/home.tsx` |
+| 隐私政策 | https://zhangchi0104.github.io/open-browser-translate/privacy-policy/ | `docs/privacy-policy.md`，构建时渲染。只需改这一份。 |
 
-拿到 URL 之后，把它填进三个地方：后台 Privacy 页签的隐私政策字段，以及两份详细说明里的 `<<隐私政策 URL>>`。
+**第一次需要你手动开启一次：** 仓库 Settings → Pages → Build and deployment → Source 选 **GitHub Actions**。之后每次 `dev` 上的网站、隐私政策或截图有变动，都会自动重新发布。也可以在 Actions 页手动运行 "Pages" workflow。
+
+本地预览：在仓库根目录运行 `bun run site`。
 
 ## 8. 已知风险和待办
 
 - **界面内的数据披露和同意（已实现）。** Chrome Web Store 2026 年的政策更新（2026-08-01 起执行）要求：数据收集要在扩展界面里显著披露，并在收集之前取得用户的明确同意。这条是根据政策公告的检索摘要整理的，确切条文以 [官方政策页面](https://developer.chrome.com/docs/webstore/program-policies) 为准。
   - 扩展的做法：第一次点击启动器时不翻译，先在旁边弹出"翻译前请确认"面板，说明本页的文字和标题会发给哪个模型服务（显示设置里所选连接的名称）。用户点"同意并翻译"之后才发送。
-  - 同意记录在 `local:dataConsent`，带有 `DATA_CONSENT_VERSION`（`src/modules/shared/settings/model.ts`）。以后发送的内容或去向有变化时，把版本号加一，用户会被重新询问。
+  - 同意记录在 `local:dataConsent`，带有 `DATA_CONSENT_VERSION`（`apps/extension/src/modules/shared/settings/model.ts`）。以后发送的内容或去向有变化时，把版本号加一，用户会被重新询问。
   - 截图 3 展示的就是这个面板。如果审核人员问起，可以引用它。
 - **Firefox 的数据披露。** `wxt.config.ts` 中 Firefox 的 `data_collection_permissions` 只声明了 `websiteContent`。如果要与这里的 Chrome 披露保持一致，可以考虑补上 `authenticationInfo` 和 `personallyIdentifyingInfo`，并改为可选或必需。
 - **扩展界面只有中文。** 英文条目的说明里已经写明"界面是简体中文"，避免用户看到界面后给差评。
