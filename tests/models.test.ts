@@ -4,7 +4,7 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChatGPTToken } from "../src/modules/background/ai/chatgpt";
 import { ModelsLive } from "../src/modules/background/ai/models";
-import { AiProviders } from "../src/modules/shared/settings/model";
+import { AiProviders, findConnection } from "../src/modules/shared/settings/model";
 import { defaultSettings, type AISettings } from "../src/modules/shared/settings/model";
 import { Settings } from "../src/modules/shared/settings/service";
 import { translateBatch } from "../src/modules/background/translation-service/translate-batch";
@@ -12,7 +12,7 @@ import { chatCompletion, chatRequest } from "./decision-mock";
 
 test("one runtime translates on whatever model the settings select when each request starts", async () => {
   let current: AISettings = structuredClone(defaultSettings);
-  current.providers.VercelAIGateway.apiKey = "test-gateway";
+  findConnection(current, AiProviders.VercelAIGateway)!.apiKey = "test-gateway";
   current.translation.models.VercelAIGateway = "vendor/first";
   const runtime = ManagedRuntime.make(ModelsLive.pipe(Layer.provideMerge(Layer.mergeAll(
     Layer.succeed(Settings, { get: Effect.sync(() => current) }),
@@ -35,7 +35,7 @@ test("one runtime translates on whatever model the settings select when each req
 
   // Switching to the ChatGPT plan while signed out sends nothing.
   current = structuredClone(current);
-  current.translation.provider = AiProviders.OpenAISubscription;
+  current.translation.connection = AiProviders.OpenAISubscription;
   current.translation.models.OpenAISubscription = "gpt-test";
   assert.deepEqual(await translate(), { status: "not-configured", purpose: "translation" });
   assert.equal(models.length, 2);

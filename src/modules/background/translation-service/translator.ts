@@ -23,6 +23,15 @@ Also return "terms": up to 10 proper nouns, product names or domain terms from t
 // Streaming requests plain text (Effect can't stream structured output), so the format is spelled out.
 const STREAM_FORMAT = `Respond with only this JSON object and nothing else, no code fences: {"translations":[{"id":0,"text":"..."}],"terms":[{"source":"...","target":"..."}]}. List the translations in id order, before "terms".`;
 
+/**
+ * Records a piece of the exchange on the current span (the batch's "translation" span), so the
+ * debug log shows what was sent and what came back. Kept locally like every trace.
+ */
+const note = (name: string, attributes: Record<string, unknown>) => Effect.currentSpan.pipe(
+  Effect.tap((span) => Effect.sync(() => span.event(name, BigInt(Date.now()) * 1_000_000n, attributes))),
+  Effect.ignore,
+);
+
 /** Checks the model's output maps one-to-one onto the requested texts. */
 function toOutput(texts: readonly string[], value: typeof Output.Type): Effect.Effect<TranslationOutput, TranslationOutputError> {
   const translations = new Map(value.translations.map(({ id, text }) => [id, text]));
@@ -57,11 +66,16 @@ export class Translator extends Context.Service<Translator, {
         if (texts.length === 0) return { translations: [], terms: [] };
         const blocks = texts.map((text, id) => ({ id, text }));
         const input = JSON.stringify(context ? { context, blocks } : { blocks });
+        const system = onPartial ? `${SYSTEM_PROMPT(targetLanguage)}\n${STREAM_FORMAT}` : SYSTEM_PROMPT(targetLanguage);
+        yield* note("obt.prompt.system", { content: system });
+        if (context) yield* note("obt.prompt.context", { content: JSON.stringify(context) });
+        // One text per block, by id.
+        yield* note("obt.source", { blocks: texts });
         if (!onPartial) {
           const response = yield* model.generateObject({
             objectName: "translations",
             schema: Output,
-            prompt: [{ role: "system", content: SYSTEM_PROMPT(targetLanguage) }, { role: "user", content: input }],
+            prompt: [{ role: "system", content: system }, { role: "user", content: input }],
           });
           return yield* toOutput(texts, response.value);
         }
@@ -71,7 +85,7 @@ export class Translator extends Context.Service<Translator, {
         let firstOutput: number | undefined;
         const sent = new Map<number, string>();
         yield* Stream.runForEach(model.streamText({
-          prompt: [{ role: "system", content: `${SYSTEM_PROMPT(targetLanguage)}\n${STREAM_FORMAT}` }, { role: "user", content: input }],
+          prompt: [{ role: "system", content: system }, { role: "user", content: input }],
         }), (part) => Effect.sync(() => {
           if (part.type !== "text-delta") return;
           text += part.delta;
@@ -93,7 +107,7 @@ export class Translator extends Context.Service<Translator, {
           Effect.mapError((error) => new TranslationOutputError({ message: `response JSON doesn't match the format: ${error.message}` })),
         );
         return yield* toOutput(texts, value);
-      }),
+      }).pipe(Effect.tap((output) => note("obt.translation", { blocks: output.translations }))),
     };
   }));
 }

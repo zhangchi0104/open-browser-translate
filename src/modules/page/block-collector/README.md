@@ -42,7 +42,10 @@ an excluded subtree. A group must contain at least one Unicode letter.
 
 Computed styles exclude `display: none`, `content-visibility: hidden`, zero
 opacity, and hidden/collapsed text. Clipped elements no larger than one CSS
-pixel in either dimension are treated as hidden helper text. This is a
+pixel in either dimension are treated as hidden helper text. Elements that
+aren't rendered (these, and `[hidden]`) are skipped without ending the group,
+so a link's screen-reader-only "(opens in a new window)" doesn't split the
+sentence around it; other excluded subtrees (code, inputs, icons) still end it. This is a
 heuristic, not a full clipping or occlusion test. Below-the-fold content remains
 eligible. Requires a browser document.
 

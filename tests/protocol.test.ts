@@ -68,6 +68,7 @@ function handlers(overrides: Partial<Handlers>): Handlers {
     "cache-stats": unexpected, "cache-clear": unexpected, "chatgpt-sign-in": unexpected, "chatgpt-sign-out": unexpected,
     "chatgpt-models": unexpected, "openai-models": unexpected, "gateway-models": unexpected,
     "prepare-translation": unexpected, "analyze-content": unexpected,
+    "quick-settings": unexpected, "update-quick-settings": unexpected, "connection-models": unexpected,
     ...overrides,
   };
 }

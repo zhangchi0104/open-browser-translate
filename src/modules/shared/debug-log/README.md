@@ -35,6 +35,10 @@ The background is the only writer of both stores. Each is a stored value
 batched updates, so concurrent requests land in order. The options page clears them with
 `debug-log-clear` and `traces-clear`.
 
-Neither store records page text or API keys, though a provider's error message
-can quote model output. Pages are stored as origin plus path, without the query
+Neither store records API keys. The log records no page text, but each
+translation span carries what was sent and returned as events: the system
+prompt (`obt.prompt.system`), the context (`obt.prompt.context`), and the batch's
+source and translated text (`obt.source`, `obt.translation`, numbered `#id`),
+each kept up to 20,000 characters. A provider's error message can also quote
+model output. Pages are stored as origin plus path, without the query
 string, and private-window tabs record no page.

@@ -1,0 +1,40 @@
+/* The launcher's styles, inside its shadow root. Only the launcher's components are scanned. */
+@import "tailwindcss" source(none);
+@import "tw-animate-css";
+@import "../../styles/theme.css";
+
+@source "../../components/launcher";
+@source "../../components/ui/button.tsx";
+@source "../../components/ui/input.tsx";
+@source "../../components/ui/label.tsx";
+@source "../../components/ui/popover.tsx";
+@source "../../components/ui/select.tsx";
+
+/*
+ * Rem units follow the host page's root font size, which pages set as they like (62.5% is common),
+ * so the launcher sizes everything in px instead.
+ */
+@theme {
+  --spacing: 4px;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+}
+:root {
+  --radius: 8px;
+}
+
+@layer base {
+  /*
+   * WXT resets the host with `:host { all: initial !important }`, which also drops the stacking
+   * context its inline z-index meant to give. Restored here, after the reset, so the launcher and
+   * everything it portals stay above positioned page content and keep its clicks.
+   */
+  :host {
+    position: relative !important;
+    z-index: 2147483647 !important;
+    color-scheme: light dark;
+    @apply text-foreground antialiased;
+  }
+}
