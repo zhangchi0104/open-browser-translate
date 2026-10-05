@@ -130,11 +130,11 @@ test("a reply or stream event the page can't decode counts as a failure", async 
 });
 
 test("unknown request types and untrusted senders get no answer", async () => {
-  const { dispatcher } = connect({ trusted: (sender) => sender.id === "extension", translate: noTranslate, handlers: handlers({ "cache-stats": () => ({ status: "ok", count: 1 }) }) });
+  const { dispatcher } = connect({ trusted: (sender) => sender.id === "extension", translate: noTranslate, handlers: handlers({ "cache-stats": () => ({ status: "ok", count: 1, bytes: 6, sites: [], analyses: 0 }) }) });
   const unanswered = () => assert.fail("no answer expected");
   assert.equal(dispatcher.onMessage({ type: "something-else" }, PAGE, unanswered), false);
   assert.equal(dispatcher.onMessage({ type: "cache-stats" }, { id: "another-extension" }, unanswered), false);
-  assert.deepEqual(await answer(dispatcher, { type: "cache-stats" }, PAGE), { status: "ok", count: 1 });
+  assert.deepEqual(await answer(dispatcher, { type: "cache-stats" }, PAGE), { status: "ok", count: 1, bytes: 6, sites: [], analyses: 0 });
 });
 
 test("a streamed batch delivers cached and growing blocks in order, then resolves once with the result", async () => {

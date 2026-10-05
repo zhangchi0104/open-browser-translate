@@ -18,12 +18,31 @@ export interface CacheEntry {
   savedAt: number;
   usedAt: number;
 }
+/** What one site has cached. */
+export interface SiteUsage {
+  origin: string;
+  count: number;
+  bytes: number;
+  usedAt: number;
+}
+/** What the cache holds, for the settings page. Only fresh entries count. */
+export interface CacheSummary {
+  count: number;
+  /** The values in UTF-8; keys and the store's own overhead aren't counted. */
+  bytes: number;
+  /** When the oldest entry was saved, so it's the next to expire. */
+  oldest?: number;
+  /** Most entries first. */
+  sites: SiteUsage[];
+}
 /** Where entries live: IndexedDB in the background, a Map in tests. */
 export interface CacheStore {
   get(keys: readonly string[]): Promise<(CacheEntry | undefined)[]>;
   put(entries: readonly CacheEntry[]): Promise<void>;
   delete(keys: readonly string[]): Promise<void>;
   count(): Promise<number>;
+  /** Calls `visit` with every entry. */
+  scan(visit: (entry: CacheEntry) => void): Promise<void>;
   /** Keys of the `limit` entries used longest ago. */
   leastRecentlyUsed(limit: number): Promise<string[]>;
   clear(): Promise<void>;
@@ -62,6 +81,26 @@ export function createCache(store: CacheStore, options: { now?: () => number; ma
       if (over > 0) await store.delete(await store.leastRecentlyUsed(over));
     },
     count: () => store.count(),
+    async summary(): Promise<CacheSummary> {
+      const time = now();
+      const encoder = new TextEncoder();
+      const sites = new Map<string, SiteUsage>();
+      const summary: CacheSummary = { count: 0, bytes: 0, sites: [] };
+      await store.scan((entry) => {
+        if (time - entry.savedAt > CACHE_TTL) return;
+        const bytes = encoder.encode(entry.value).length;
+        let site = sites.get(entry.origin);
+        if (!site) sites.set(entry.origin, site = { origin: entry.origin, count: 0, bytes: 0, usedAt: 0 });
+        site.count++;
+        site.bytes += bytes;
+        site.usedAt = Math.max(site.usedAt, entry.usedAt);
+        summary.count++;
+        summary.bytes += bytes;
+        summary.oldest = Math.min(summary.oldest ?? entry.savedAt, entry.savedAt);
+      });
+      summary.sites = [...sites.values()].sort((a, b) => b.count - a.count || b.usedAt - a.usedAt);
+      return summary;
+    },
     clear: () => store.clear(),
   };
 }
@@ -75,6 +114,7 @@ export function createMemoryCacheStore(): CacheStore {
     put: async (items) => { for (const item of items) entries.set(item.key, item); },
     delete: async (keys) => { for (const key of keys) entries.delete(key); },
     count: async () => entries.size,
+    scan: async (visit) => { for (const entry of entries.values()) visit(entry); },
     leastRecentlyUsed: async (limit) => [...entries.values()].sort((a, b) => a.usedAt - b.usedAt).slice(0, limit).map(({ key }) => key),
     clear: async () => entries.clear(),
   };

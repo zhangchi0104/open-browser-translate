@@ -129,7 +129,10 @@ export default defineBackground(() => {
       },
       "debug-log-clear": () => debugLog.clear().then(() => ({ status: "ok" as const })),
       "traces-clear": () => traceStore.clear().then(() => ({ status: "ok" as const })),
-      "cache-stats": () => translationCache.count().then((count) => ({ status: "ok" as const, count }), () => ({ status: "failed" as const })),
+      "cache-stats": () => Promise.all([translationCache.summary(), analysisCache.summary()]).then(
+        ([translations, analyses]) => ({ status: "ok" as const, ...translations, analyses: analyses.count }),
+        () => ({ status: "failed" as const }),
+      ),
       "cache-clear": () => Promise.all([translationCache.clear(), analysisCache.clear()])
         .then(() => ({ status: "ok" as const }), () => ({ status: "failed" as const })),
       "chatgpt-sign-in": () => startChatGPTSignIn(),

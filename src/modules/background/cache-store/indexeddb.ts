@@ -48,6 +48,16 @@ export function createIndexedDbCacheStore(name: string): CacheStore {
     put: (entries) => run("readwrite", async (store) => { for (const entry of entries) store.put(entry); }),
     delete: (keys) => run("readwrite", async (store) => { for (const key of keys) store.delete(key); }),
     count: () => run("readonly", (store) => done(store.count())),
+    scan: (visit) => run("readonly", (store) => new Promise<void>((resolve, reject) => {
+      const cursor = store.openCursor();
+      cursor.onsuccess = () => {
+        const current = cursor.result;
+        if (!current) return resolve();
+        visit(current.value as CacheEntry);
+        current.continue();
+      };
+      cursor.onerror = () => reject(cursor.error);
+    })),
     leastRecentlyUsed: (limit) => run("readonly", (store) => new Promise<string[]>((resolve, reject) => {
       const keys: string[] = [];
       if (limit <= 0) return resolve(keys);

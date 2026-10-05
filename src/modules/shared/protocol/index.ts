@@ -170,7 +170,14 @@ const Replies = {
   "debug-log": orFailed(Schema.Undefined),
   "debug-log-clear": orFailed(Ok),
   "traces-clear": orFailed(Ok),
-  "cache-stats": orFailed(status("ok", { count: Schema.Number })),
+  // What the translation cache holds by site; `analyses` counts analysis entries, which clearing empties too.
+  "cache-stats": orFailed(status("ok", {
+    count: Schema.Number,
+    bytes: Schema.Number,
+    oldest: Schema.optional(Schema.Number),
+    sites: Schema.Array(Schema.Struct({ origin: Schema.String, count: Schema.Number, bytes: Schema.Number, usedAt: Schema.Number })),
+    analyses: Schema.Number,
+  })),
   "cache-clear": orFailed(Ok),
   "chatgpt-sign-in": orFailed(status("started", { state: Schema.String })),
   "chatgpt-sign-out": orFailed(Ok),
