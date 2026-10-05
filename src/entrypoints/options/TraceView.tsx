@@ -206,9 +206,31 @@ function TraceRow({ trace }: { trace: Trace }) {
   );
 }
 
+// What the translator records on a batch's span: the prompt, the context, and both sides of the text.
+const eventLabels: Record<string, string> = {
+  "obt.prompt.system": "提示词",
+  "obt.prompt.context": "上下文",
+  exception: "异常",
+};
+const attributeOf = (event: OtlpSpan["events"][number] | undefined, key: string) =>
+  event?.attributes.find((attribute) => attribute.key === key)?.value;
+/** The context is stored compact; it reads better indented. */
+function readable(name: string, content: string) {
+  if (name !== "obt.prompt.context") return content;
+  try { return JSON.stringify(JSON.parse(content), null, 2); } catch { return content; }
+}
+/** A `blocks` event's texts, by id. */
+const blocksOf = (event: OtlpSpan["events"][number] | undefined) =>
+  (attributeOf(event, "blocks")?.arrayValue?.values ?? []).map(display);
+
 function SpanDetail({ span, tokens }: { span: OtlpSpan; tokens?: string }) {
+  const source = span.events.find((event) => event.name === "obt.source");
+  const translation = span.events.find((event) => event.name === "obt.translation");
+  const pairs = [...blocksOf(source).entries()];
+  const translated = blocksOf(translation);
+  const others = span.events.filter((event) => event !== source && event !== translation);
   return (
-    <div className="my-2 space-y-2 rounded-md bg-muted px-3 py-2 text-xs">
+    <div className="my-2 space-y-3 rounded-md bg-muted px-3 py-2 text-xs">
       <p className="font-mono text-muted-foreground">{span.name}{tokens && ` · ${tokens}`}</p>
       {span.status.message && <p className="whitespace-pre-wrap break-words text-destructive">{span.status.message}</p>}
       {span.attributes.length > 0 && (
@@ -221,14 +243,47 @@ function SpanDetail({ span, tokens }: { span: OtlpSpan; tokens?: string }) {
           ))}
         </dl>
       )}
-      {span.events.map((event, index) => (
-        <div key={index}>
-          <p className="font-medium">{event.name}</p>
-          <pre className="mt-1 max-h-60 overflow-auto font-mono leading-relaxed whitespace-pre-wrap break-words">
-            {event.attributes.map(({ key, value }) => `${key}: ${display(value)}`).join("\n")}
-          </pre>
+      {others.map((event, index) => {
+        const content = attributeOf(event, "content");
+        const label = eventLabels[event.name] ?? event.name;
+        // The prompt and context are long and the same from batch to batch, so they start folded.
+        const folded = event.name.startsWith("obt.prompt.");
+        return (
+          <details key={index} open={!folded} className="group">
+            <summary className="cursor-pointer font-medium select-none">{label}</summary>
+            <pre className="mt-1 max-h-72 overflow-auto rounded bg-background/60 p-2 font-mono leading-relaxed whitespace-pre-wrap break-words">
+              {content ? readable(event.name, display(content)) : event.attributes.map(({ key, value }) => `${key}: ${display(value)}`).join("\n")}
+            </pre>
+          </details>
+        );
+      })}
+      {pairs.length > 0 && (
+        <div>
+          <p className="mb-1 font-medium">原文与译文</p>
+          <div className="max-h-96 overflow-auto rounded bg-background/60">
+            <table className="w-full table-fixed border-collapse text-left leading-relaxed">
+              <thead className="sticky top-0 bg-muted text-muted-foreground">
+                <tr>
+                  <th className="w-8 px-2 py-1 font-normal">#</th>
+                  <th className="px-2 py-1 font-normal">原文</th>
+                  <th className="px-2 py-1 font-normal">译文</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pairs.map(([id, text]) => (
+                  <tr key={id} className="border-t align-top">
+                    <td className="px-2 py-1 font-mono text-muted-foreground tabular-nums">{id}</td>
+                    <td className="px-2 py-1 whitespace-pre-wrap break-words">{text}</td>
+                    <td className={cn("px-2 py-1 whitespace-pre-wrap break-words", translated[id] === undefined && "text-muted-foreground")}>
+                      {translated[id] ?? (translation ? "（缺少）" : "（未完成）")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      ))}
+      )}
     </div>
   );
 }

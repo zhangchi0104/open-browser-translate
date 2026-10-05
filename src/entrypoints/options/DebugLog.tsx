@@ -46,7 +46,7 @@ export function DebugLog() {
       </div>
       {view === "traces" ? <TraceView /> : <LogView />}
       <p className="px-1 text-[12px] leading-relaxed text-muted-foreground">
-        数据只保存在本机，保留最近 100 次请求，可导出为 OTLP JSON 交给开发者排查。记录网址路径，不记录网页正文和 API key；服务商返回的错误信息可能引用模型输出。
+        数据只保存在本机，保留最近 100 次请求，可导出为 OTLP JSON 交给开发者排查。翻译请求会记录发给模型的提示词、上下文，以及原文和译文；不记录 API key。导出前请留意其中的网页内容。
       </p>
     </div>
   );
