@@ -88,8 +88,11 @@ const Requests = {
   "chatgpt-sign-in": request("chatgpt-sign-in", {}),
   "chatgpt-sign-out": request("chatgpt-sign-out", {}),
   "chatgpt-models": request("chatgpt-models", {}),
-  /** `apiKey` is the key being edited on the options page; the saved one otherwise. */
-  "openai-models": request("openai-models", { apiKey: Schema.optional(Schema.String) }),
+  /**
+   * Models behind an OpenAI key, or behind a custom connection's OpenAI-compatible `apiUrl`; the
+   * options page sends the connection being edited, so the list follows it before it's saved.
+   */
+  "openai-models": request("openai-models", { apiKey: Schema.optional(Schema.String), apiUrl: Schema.optional(Schema.String) }),
   "gateway-models": request("gateway-models", {}),
   "prepare-translation": request("prepare-translation", { context: PageContext }),
   "analyze-content": request("analyze-content", { mode: Mode, blocks: Batch }),

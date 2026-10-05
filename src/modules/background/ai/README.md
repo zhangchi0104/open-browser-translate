@@ -40,17 +40,27 @@ Reference: https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completi
 
 ## Independent task configuration
 
-Settings store provider connections separately from task selections:
-`providers[provider].apiKey`, `analysis.{provider,models}`, and
-`translation.{provider,models}`. Model IDs are retained per task and provider.
-Analysis supports OpenAI with an API key or the ChatGPT sign-in; translation
-supports Vercel, OpenAI with an API key, or the ChatGPT sign-in.
+Settings keep a list of named connections separately from task selections:
+`connections[]` (`{ id, kind, name, apiKey, apiUrl? }`), `analysis.{connection,models}`
+and `translation.{connection,models}`. A connection's kind is the Vercel AI
+Gateway, OpenAI, or `Custom`: any OpenAI-compatible API at `apiUrl`, where the
+key may be empty for local servers. There can be several of each kind. The
+ChatGPT sign-in stays one per browser, reached through the fixed connection id
+`CHATGPT_CONNECTION`. Model IDs are retained per task and connection.
+
+Either task can use any connection. Analysis on the gateway asks its evaluation
+models (Jev and similar); on any other connection it answers decisions with an
+ordinary model (see below). Custom connections share the OpenAI client with
+their own base URL, and cached answers from them are also keyed by that URL.
+The background reaches a custom server only with host permission for its
+origin, which the settings page requests when it saves.
 
 `models.ts` turns the settings into models. `AnalysisModel` (a `DecisionModel`)
 and `TranslationModel` (a `LanguageModel`) are layers that read the `Settings`
 and `ChatGPTToken` services when they're provided, so a settings change applies
 to the next request. They fail with `ModelNotConfigured` when the purpose's
-provider isn't connected or has no model, before any request is sent. Built
+connection isn't set up (no key; for a custom one, no address), was removed, or
+has no model, before any request is sent. Built
 model layers are kept in `LayerMap`s (`ModelsLive`) keyed by everything that
 picks the model, so requests on the same settings share one HTTP client.
 
@@ -65,6 +75,11 @@ otherwise the OpenAI API key with `gpt-6-luna`.
 Settings v4 adds the Vercel AI Gateway for analysis and makes it the default,
 with `typesafe-ai/jev`. Analysis left on an OpenAI API key that was never
 filled in moves to the gateway; configured OpenAI and ChatGPT choices stay.
+
+Settings v5 turns the one key per provider into connections. Each v4 key
+becomes a connection whose id is its provider's name (`VercelAIGateway`,
+`OpenAIApi`), and the ChatGPT sign-in keeps `OpenAISubscription`, so purposes
+and their remembered models carry over unchanged.
 
 ## Content analysis on OpenAI
 

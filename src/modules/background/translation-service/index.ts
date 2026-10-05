@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { modelConfig } from "../ai/models";
+import { modelConfig, modelIdentity } from "../ai/models";
 import type { Cache } from "../cache-store";
 import { describeError } from "../../shared/debug-log/model";
 import type { Block, OnBlock, TranslationBatchResult } from "../../shared/protocol";
@@ -30,8 +30,8 @@ export type ServiceResult = Exclude<TranslationBatchResult, Ok> | (Ok & { readon
 export function createTranslationService(cache: Cache) {
   return {
     translate: (blocks: readonly Block[], request: TranslateRequest = {}) => Effect.gen(function* () {
-      const { provider, model } = modelConfig(yield* Settings.use((settings) => settings.get), "translation");
-      const scope = request.site ? { origin: request.site, parts: [TARGET_LANGUAGE, provider, model] } : undefined;
+      const config = modelConfig(yield* Settings.use((settings) => settings.get), "translation");
+      const scope = request.site ? { origin: request.site, parts: [TARGET_LANGUAGE, ...modelIdentity(config)] } : undefined;
       const texts = blocks.map(({ text }) => text);
       const hits = scope ? yield* Effect.tryPromise(() => cache.get(scope, texts)) : texts.map(() => undefined);
       hits.forEach((translation, index) => { if (translation !== undefined) request.onBlock?.(index, translation, true); });

@@ -1,16 +1,19 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
+import { browser } from "wxt/browser";
 import { background } from "@/lib/background";
 import { PURPOSE_NAMES, type ChatGPTModel, type Purpose, type Request } from "@/modules/shared/protocol";
-import { Bug, ChevronDown, Database, ExternalLink, KeyRound, Sparkles } from "lucide-react";
+import { Bug, ChevronDown, Database, ExternalLink, KeyRound, Plus, Sparkles } from "lucide-react";
 import {
-  AiProviders, aiSettings, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL, REASONING_EFFORTS, validateModel,
-  type AISettings, type SettingsProvider, type AnalysisProvider, type TranslationProvider, type KeyProvider, type ReasoningEffort,
+  AiProviders, aiSettings, CHATGPT_CONNECTION, CONNECTION_KIND_NAMES, CONNECTION_KINDS, DEFAULT_DECISION_MODEL, DEFAULT_GATEWAY_DECISION_MODEL,
+  defaultModel, findConnection, providerOf, REASONING_EFFORTS, validateApiUrl, validateModel,
+  type AISettings, type Connection, type ConnectionKind, type ReasoningEffort, type SettingsProvider,
 } from "@/modules/shared/settings";
 import { GATEWAY_DECISION_MODELS } from "@/modules/background/ai/gateway-models";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/background/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/background/ai/chatgpt-session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -25,40 +28,35 @@ import { SettingsGroup, SettingsRow } from "./SettingsList";
 type Status = { text: string; tone?: "error" | "success" };
 const statusTones = { error: "text-destructive", success: "text-success" } as const;
 
-const providerLabels: Record<SettingsProvider, string> = {
-  [AiProviders.VercelAIGateway]: "Vercel AI Gateway",
-  [AiProviders.OpenAIApi]: "OpenAI 直连",
-  [AiProviders.OpenAISubscription]: "ChatGPT 账号",
-};
-const keyLinks: Record<KeyProvider, string> = {
-  [AiProviders.VercelAIGateway]: "https://vercel.com/dashboard",
-  [AiProviders.OpenAIApi]: "https://platform.openai.com/api-keys",
-};
-const keyProviderDescriptions: Record<KeyProvider, string> = {
+const CHATGPT_NAME = "ChatGPT 账号";
+const kindDescriptions: Record<ConnectionKind, string> = {
   [AiProviders.VercelAIGateway]: "一个 key 用多家公司的模型，按用量付费。",
   [AiProviders.OpenAIApi]: "OpenAI 开发者平台的 key，按用量付费。",
+  [AiProviders.Custom]: "任何 OpenAI 兼容的接口，如 OpenRouter 或本机运行的模型。",
+};
+const kindLinks: Partial<Record<ConnectionKind, string>> = {
+  [AiProviders.VercelAIGateway]: "https://vercel.com/dashboard",
+  [AiProviders.OpenAIApi]: "https://platform.openai.com/api-keys",
 };
 const purposes = {
   analysis: {
     title: "内容分析",
     description: "先判断页面上哪些内容值得翻译。",
     // The gateway runs evaluation models built for decisions; OpenAI's Decisions API isn't open
-    // yet, so the OpenAI providers answer decisions with an ordinary model.
-    providers: [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
-    placeholder: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? DEFAULT_GATEWAY_DECISION_MODEL
+    // yet, so other connections answer decisions with an ordinary model.
+    placeholder: (p: SettingsProvider | undefined) => p === AiProviders.VercelAIGateway ? DEFAULT_GATEWAY_DECISION_MODEL
       : p === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "模型 ID",
   },
   translation: {
     title: "翻译",
     description: "再把选出的内容译成中文。",
-    providers: [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.OpenAISubscription],
-    placeholder: (p: SettingsProvider) => p === AiProviders.VercelAIGateway ? "provider/model" : "模型 ID",
+    placeholder: (p: SettingsProvider | undefined) => p === AiProviders.VercelAIGateway ? "provider/model" : "模型 ID",
   },
 } as const;
 type Section = "models" | "keys" | "cache" | "debug";
 const sections = {
   models: { title: "模型", description: "", icon: Sparkles },
-  keys: { title: "账号与密钥", description: "至少连接一个服务，翻译才能工作。", icon: KeyRound },
+  keys: { title: "连接", description: "至少连接一个服务，翻译才能工作。", icon: KeyRound },
   cache: { title: "翻译缓存", description: "翻译过的段落在本机保留 7 天，再次遇到时直接显示，不再消耗额度。", icon: Database },
   debug: { title: "调试日志", description: "翻译出问题时，在这里查看每次请求的步骤、耗时和错误。", icon: Bug },
 } as const;
@@ -88,9 +86,8 @@ function signInOutcome(state: string): Promise<SignInResult> {
   });
 }
 
-/** A provider's model catalog; `unavailable` until there is an account or key to ask with. */
+/** A connection's model catalog; `unavailable` until there is an account, key or address to ask with. */
 type Catalog = { status: "unavailable" | "loading" | "failed" } | { status: "ok"; models: readonly ChatGPTModel[] };
-type CatalogProvider = AiProviders.VercelAIGateway | AiProviders.OpenAIApi | AiProviders.OpenAISubscription;
 interface LoadedCatalog { catalog: Catalog; reload: () => void }
 
 const gatewayDecisionCatalog: LoadedCatalog = { catalog: { status: "ok", models: GATEWAY_DECISION_MODELS }, reload: () => {} };
@@ -118,46 +115,42 @@ function useCatalog(request: Request<"chatgpt-models" | "openai-models" | "gatew
   return { catalog, reload: () => setAttempt((n) => n + 1) };
 }
 
-function useChatGPT() {
+function useChatGPTEmail() {
   const [email, setEmail] = useState<string | null>();
   useEffect(() => {
     const apply = (auth: Awaited<ReturnType<typeof chatgptAuth.getValue>>) => setEmail(auth?.account ? auth.account.email : null);
     chatgptAuth.getValue().then(apply, () => setEmail(null));
     return chatgptAuth.watch(apply);
   }, []);
-  return { email, models: useCatalog(email ? { type: "chatgpt-models" } : undefined) };
+  return email;
 }
 
-// Each purpose keys its models by its own provider subset; this widens them for shared editing code.
-function modelsOf(settings: AISettings, purpose: Purpose) {
-  return settings[purpose].models as Partial<Record<SettingsProvider, string>>;
+/** A name for a new connection of `kind` that no other connection has yet. */
+function freshName(connections: readonly Connection[], kind: ConnectionKind) {
+  const base = CONNECTION_KIND_NAMES[kind];
+  const taken = new Set(connections.map((connection) => connection.name));
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? base : `${base} ${n}`;
+    if (!taken.has(name)) return name;
+  }
 }
-function setProvider(settings: AISettings, purpose: Purpose, provider: SettingsProvider) {
-  if (purpose === "analysis") settings.analysis.provider = provider as AnalysisProvider;
-  else settings.translation.provider = provider as TranslationProvider;
+/** Host permission patterns custom connections need; requested when the settings are saved. */
+function customOrigins(connections: readonly Connection[]) {
+  return [...new Set(connections.flatMap((connection) =>
+    connection.kind === AiProviders.Custom && !validateApiUrl(connection.apiUrl ?? "") ? [`${new URL(connection.apiUrl!.trim()).origin}/*`] : []))];
 }
-
-const keyProviders = [AiProviders.VercelAIGateway, AiProviders.OpenAIApi] as const satisfies readonly KeyProvider[];
 
 export function App() {
   const [draft, setDraft] = useState<AISettings>();
   const [busy, setBusy] = useState(true);
   const [dirty, setDirty] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<Purpose, string>>>({});
+  const [connectionErrors, setConnectionErrors] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<string>();
   const [section, setSection] = useState<Section>("models");
   const [status, setStatus] = useState<Status>({ text: "正在读取设置…" });
   const modelInputs = { analysis: useRef<HTMLInputElement>(null), translation: useRef<HTMLInputElement>(null) };
-  const chatgpt = useChatGPT();
-  const openaiKey = draft?.providers[AiProviders.OpenAIApi].apiKey.trim();
-  const shared = {
-    [AiProviders.OpenAISubscription]: chatgpt.models,
-    [AiProviders.OpenAIApi]: useCatalog(openaiKey ? { type: "openai-models", apiKey: openaiKey } : undefined, 600),
-  };
-  // Gateway analysis picks from the fixed evaluation models; translation loads the public language catalog.
-  const catalogs: Record<Purpose, Record<CatalogProvider, LoadedCatalog>> = {
-    analysis: { ...shared, [AiProviders.VercelAIGateway]: gatewayDecisionCatalog },
-    translation: { ...shared, [AiProviders.VercelAIGateway]: useCatalog({ type: "gateway-models" }) },
-  };
+  const email = useChatGPTEmail();
 
   useEffect(() => {
     aiSettings.getValue().then((saved) => {
@@ -180,20 +173,40 @@ export function App() {
       return next;
     });
     setErrors({});
+    setConnectionErrors({});
     setDirty(true);
     setStatus({ text: "有未保存的更改" });
+  }
+  function addConnection(kind: ConnectionKind) {
+    const id = crypto.randomUUID();
+    edit((next) => { next.connections.push({ id, kind, name: freshName(next.connections, kind), apiKey: "", ...(kind === AiProviders.Custom && { apiUrl: "" }) }); });
+    setExpanded(id);
   }
 
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!draft) return;
     const next = structuredClone(draft);
-    for (const entry of Object.values(next.providers)) entry.apiKey = entry.apiKey.trim();
+    for (const connection of next.connections) {
+      connection.apiKey = connection.apiKey.trim();
+      connection.name = connection.name.trim() || CONNECTION_KIND_NAMES[connection.kind];
+      if (connection.kind !== AiProviders.Custom) continue;
+      connection.apiUrl = connection.apiUrl?.trim() ?? "";
+      const error = validateApiUrl(connection.apiUrl);
+      if (error) {
+        setConnectionErrors({ [connection.id]: error });
+        setExpanded(connection.id);
+        setStatus({ text: `${connection.name}：${error}`, tone: "error" });
+        setSection("keys");
+        return;
+      }
+    }
     for (const purpose of ["analysis", "translation"] as const) {
-      const provider = next[purpose].provider;
-      const model = (modelsOf(next, purpose)[provider] ?? "").trim();
-      modelsOf(next, purpose)[provider] = model;
-      const error = validateModel(provider, model);
+      const { connection } = next[purpose];
+      const provider = providerOf(next, connection);
+      const model = (next[purpose].models[connection] ?? defaultModel(purpose, provider)).trim();
+      next[purpose].models[connection] = model;
+      const error = provider ? validateModel(provider, model) : "选择的连接已被删除，请重新选择。";
       if (error) {
         setErrors({ [purpose]: error });
         setStatus({ text: `${PURPOSE_NAMES[purpose]}：${error}`, tone: "error" });
@@ -203,13 +216,19 @@ export function App() {
         return;
       }
     }
+    // Asked before anything is awaited, while the click still counts as the user's: the background
+    // can only reach a custom connection's server with permission for its origin.
+    const origins = customOrigins(next.connections);
+    const permitted = origins.length ? browser.permissions.request({ origins }).catch(() => false) : Promise.resolve(true);
     setDraft(next);
     setBusy(true);
     setStatus({ text: "正在保存…" });
     try {
       await aiSettings.setValue(structuredClone(next));
       setDirty(false);
-      setStatus({ text: "设置已保存", tone: "success" });
+      setStatus(await permitted
+        ? { text: "设置已保存", tone: "success" }
+        : { text: "设置已保存，但没有获得访问自定义接口的权限，使用时会连接失败。", tone: "error" });
     } catch {
       setStatus({ text: "保存失败，请重试。", tone: "error" });
     } finally {
@@ -245,11 +264,12 @@ export function App() {
     }
   }
 
-  /** Which purposes use `provider`, in a phrase for its row. */
-  function usage(provider: SettingsProvider) {
-    const uses = draft ? (["analysis", "translation"] as const).filter((p) => draft[p].provider === provider).map((p) => PURPOSE_NAMES[p]) : [];
+  /** The purposes that use connection `id`. */
+  const usesOf = (id: string) => draft ? (["analysis", "translation"] as const).filter((p) => draft[p].connection === id).map((p) => PURPOSE_NAMES[p]) : [];
+  const usage = (id: string) => {
+    const uses = usesOf(id);
     return uses.length ? `正在用于${uses.join("和")}` : "暂未使用";
-  }
+  };
 
   return (
     <SidebarProvider>
@@ -284,7 +304,6 @@ export function App() {
         </div>
         {/* The debug log's timelines get more room; settings keep a short line length. */}
         <main className={cn("mx-auto w-full px-4 pt-8 sm:px-10", section === "debug" ? "max-w-[880px]" : "max-w-[640px]")}>
-
           {section === "debug" && <DebugLog />}
           {section === "cache" && <CacheSettings />}
           <form onSubmit={save} noValidate hidden={section === "debug" || section === "cache"}>
@@ -295,11 +314,11 @@ export function App() {
                     key={purpose}
                     purpose={purpose}
                     draft={draft}
-                    catalogs={catalogs[purpose]}
+                    email={email}
                     error={errors[purpose]}
                     inputRef={modelInputs[purpose]}
-                    onProviderChange={(provider) => edit((next) => setProvider(next, purpose, provider))}
-                    onModelChange={(model) => edit((next) => { modelsOf(next, purpose)[next[purpose].provider] = model; })}
+                    onConnectionChange={(connection) => edit((next) => { next[purpose].connection = connection; })}
+                    onModelChange={(model) => edit((next) => { next[purpose].models[next[purpose].connection] = model; })}
                     onEffortChange={(effort) => edit((next) => {
                       if (effort) next[purpose].reasoningEffort = effort;
                       else delete next[purpose].reasoningEffort;
@@ -314,16 +333,23 @@ export function App() {
 
               <div hidden={section !== "keys"}>
                 <SettingsGroup footer="API key 和登录信息只保存在这台设备的浏览器中，不会同步到其他设备。">
-                  <ChatGPTRow email={chatgpt.email} usage={usage(AiProviders.OpenAISubscription)} onSignIn={signIn} onSignOut={signOut} />
-                  {keyProviders.map((provider) => (
-                    <KeyRow
-                      key={provider}
-                      provider={provider}
-                      apiKey={draft?.providers[provider].apiKey ?? ""}
-                      usage={usage(provider)}
-                      onChange={(value) => edit((next) => { next.providers[provider].apiKey = value; })}
+                  <ChatGPTRow email={email} usage={usage(CHATGPT_CONNECTION)} onSignIn={signIn} onSignOut={signOut} />
+                  {draft?.connections.map((connection) => (
+                    <ConnectionRow
+                      key={connection.id}
+                      connection={connection}
+                      uses={usesOf(connection.id)}
+                      error={connectionErrors[connection.id]}
+                      open={expanded === connection.id}
+                      onToggle={() => setExpanded(expanded === connection.id ? undefined : connection.id)}
+                      onChange={(change) => edit((next) => { change(findConnection(next, connection.id)!); })}
+                      onRemove={() => edit((next) => {
+                        next.connections = next.connections.filter((entry) => entry.id !== connection.id);
+                        for (const purpose of ["analysis", "translation"] as const) delete next[purpose].models[connection.id];
+                      })}
                     />
                   ))}
+                  <AddConnection onAdd={addConnection} />
                 </SettingsGroup>
               </div>
 
@@ -370,7 +396,7 @@ function ChatGPTRow({ email, usage, onSignIn, onSignOut }: {
 }) {
   return (
     <SettingsRow
-      label={providerLabels[AiProviders.OpenAISubscription]}
+      label={CHATGPT_NAME}
       description={email === undefined ? "正在读取登录状态…" : email ? `${email} · ${usage}` : "用 ChatGPT 套餐的额度，不需要 API key。"}
     >
       {email
@@ -380,68 +406,154 @@ function ChatGPTRow({ email, usage, onSignIn, onSignOut }: {
   );
 }
 
-/** A key provider: its key on the right; until there is one, what it is and where to get a key. */
-function KeyRow({ provider, apiKey, usage, onChange }: {
-  provider: KeyProvider;
-  apiKey: string;
-  usage: string;
-  onChange: (value: string) => void;
+/** A connection in the list: its name and state, opening in place to edit. */
+function ConnectionRow({ connection, uses, error, open, onToggle, onChange, onRemove }: {
+  connection: Connection;
+  uses: string[];
+  error: string | undefined;
+  open: boolean;
+  onToggle: () => void;
+  onChange: (change: (connection: Connection) => void) => void;
+  onRemove: () => void;
 }) {
   const id = useId();
   const [shown, setShown] = useState(false);
+  const custom = connection.kind === AiProviders.Custom;
+  const link = kindLinks[connection.kind];
+  const state = custom && !connection.apiUrl?.trim() ? "尚未填写地址"
+    : !custom && !connection.apiKey.trim() ? "尚未填写 key"
+    : uses.length ? `正在用于${uses.join("和")}` : "暂未使用";
   return (
-    <SettingsRow
-      label={providerLabels[provider]}
-      htmlFor={id}
-      descriptionId={`${id}-help`}
-      description={apiKey.trim() ? usage : <>
-        {keyProviderDescriptions[provider]}
-        <a href={keyLinks[provider]} target="_blank" rel="noopener noreferrer" className="ml-1 inline-flex items-center gap-0.5 text-primary underline-offset-3 hover:underline">
-          获取 key<ExternalLink className="size-3" aria-hidden="true" />
-        </a>
-      </>}
-    >
-      <div className="relative w-full sm:w-60">
-        <Input
-          id={id}
-          type={shown ? "text" : "password"}
-          autoComplete="off"
-          spellCheck={false}
-          autoCapitalize="off"
-          placeholder="API key"
-          aria-describedby={`${id}-help`}
-          className="pr-12"
-          value={apiKey}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        {apiKey && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="absolute top-1/2 right-1 h-7 -translate-y-1/2 px-2 text-[12px] text-muted-foreground"
-            aria-pressed={shown}
-            aria-label={shown ? "隐藏 API key" : "显示 API key"}
-            onClick={() => setShown(!shown)}
-          >
-            {shown ? "隐藏" : "显示"}
-          </Button>
-        )}
-      </div>
-    </SettingsRow>
+    <div>
+      <SettingsRow
+        label={connection.name || CONNECTION_KIND_NAMES[connection.kind]}
+        description={connection.name.trim() && connection.name.trim() !== CONNECTION_KIND_NAMES[connection.kind] ? `${CONNECTION_KIND_NAMES[connection.kind]} · ${state}` : state}
+      >
+        <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={open} aria-controls={`${id}-editor`} onClick={onToggle}>
+          {open ? "收起" : "编辑"}
+        </Button>
+      </SettingsRow>
+      {open && (
+        <div id={`${id}-editor`} className="space-y-4 px-4 pb-4">
+          <div className="space-y-1.5">
+            <Label htmlFor={`${id}-name`} className="text-[13px] font-normal text-muted-foreground">名称</Label>
+            <Input id={`${id}-name`} value={connection.name} placeholder={CONNECTION_KIND_NAMES[connection.kind]} onChange={(event) => onChange((c) => { c.name = event.target.value; })} />
+          </div>
+          {custom && (
+            <div className="space-y-1.5">
+              <Label htmlFor={`${id}-url`} className="text-[13px] font-normal text-muted-foreground">接口地址</Label>
+              <Input
+                id={`${id}-url`}
+                type="url"
+                spellCheck={false}
+                autoCapitalize="off"
+                placeholder="https://openrouter.ai/api/v1"
+                aria-invalid={!!error}
+                aria-describedby={`${id}-url-help`}
+                value={connection.apiUrl ?? ""}
+                onChange={(event) => onChange((c) => { c.apiUrl = event.target.value; })}
+              />
+              <p id={`${id}-url-help`} className={cn("text-[12px]", error ? "text-destructive" : "text-muted-foreground")}>
+                {error ?? "OpenAI 兼容接口的地址，通常以 /v1 结尾。保存时会请求访问这个网站的权限。"}
+              </p>
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <div className="flex items-baseline justify-between gap-3">
+              <Label htmlFor={`${id}-key`} className="text-[13px] font-normal text-muted-foreground">API key{custom && "（可选）"}</Label>
+              {link && (
+                <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-[12px] text-primary underline-offset-3 hover:underline">
+                  获取 key<ExternalLink className="size-3" aria-hidden="true" />
+                </a>
+              )}
+            </div>
+            <div className="relative">
+              <Input
+                id={`${id}-key`}
+                type={shown ? "text" : "password"}
+                autoComplete="off"
+                spellCheck={false}
+                autoCapitalize="off"
+                placeholder={custom ? "本机运行的模型通常不需要" : "粘贴 API key"}
+                className="pr-12"
+                value={connection.apiKey}
+                onChange={(event) => onChange((c) => { c.apiKey = event.target.value; })}
+              />
+              {connection.apiKey && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute top-1/2 right-1 h-7 -translate-y-1/2 px-2 text-[12px] text-muted-foreground"
+                  aria-pressed={shown}
+                  aria-label={shown ? "隐藏 API key" : "显示 API key"}
+                  onClick={() => setShown(!shown)}
+                >
+                  {shown ? "隐藏" : "显示"}
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Button type="button" variant="ghost" size="sm" className="-ml-3 text-destructive hover:text-destructive" disabled={uses.length > 0} onClick={onRemove}>
+              删除这个连接
+            </Button>
+            {uses.length > 0 && <span className="text-[12px] text-muted-foreground">正在用于{uses.join("和")}，先在「模型」中换成其他连接</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The last row of the list: adds a connection of the chosen kind, which then opens to fill in. */
+function AddConnection({ onAdd }: { onAdd: (kind: ConnectionKind) => void }) {
+  const [choosing, setChoosing] = useState(false);
+  if (!choosing) {
+    return (
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-primary outline-none hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        onClick={() => setChoosing(true)}
+      >
+        <Plus className="size-4" aria-hidden="true" />
+        添加连接
+      </button>
+    );
+  }
+  return (
+    <div role="group" aria-label="选择连接类型" className="space-y-1 px-2 py-2">
+      {CONNECTION_KINDS.map((kind, index) => (
+        <button
+          key={kind}
+          type="button"
+          autoFocus={index === 0}
+          className="flex w-full flex-col items-start rounded-md px-2 py-2 text-left outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          onClick={() => { setChoosing(false); onAdd(kind); }}
+        >
+          <span className="text-sm">{kind === AiProviders.Custom ? "自定义（OpenAI 兼容）" : CONNECTION_KIND_NAMES[kind]}</span>
+          <span className="text-[12px] text-muted-foreground">{kindDescriptions[kind]}</span>
+        </button>
+      ))}
+      <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setChoosing(false)}>取消</Button>
+    </div>
   );
 }
 
 // Shown under a model only when there's something to act on; a loaded list speaks for itself.
-const catalogHelp: Record<CatalogProvider, { unavailable: string; source: string }> = {
+const catalogHelp: Record<SettingsProvider, { unavailable: string; source: string }> = {
   [AiProviders.VercelAIGateway]: { unavailable: "", source: "Vercel AI Gateway " },
   [AiProviders.OpenAISubscription]: {
-    unavailable: "在「账号与密钥」中登录 ChatGPT 后可从列表选择模型，也可以直接填写模型 ID。",
+    unavailable: "在「连接」中登录 ChatGPT 后可从列表选择模型，也可以直接填写模型 ID。",
     source: "当前 ChatGPT 账号",
   },
   [AiProviders.OpenAIApi]: {
-    unavailable: "在「账号与密钥」中填写 OpenAI API key 后可从列表选择模型，也可以直接填写模型 ID。",
+    unavailable: "在「连接」中给这个连接填写 API key 后可从列表选择模型，也可以直接填写模型 ID。",
     source: "这个 API key",
+  },
+  [AiProviders.Custom]: {
+    unavailable: "在「连接」中填写接口地址后可从列表选择模型，也可以直接填写模型 ID。",
+    source: "这个接口",
   },
 };
 
@@ -450,36 +562,62 @@ const effortLabels: Record<ReasoningEffort, string> = {
 };
 const DEFAULT_EFFORT = "default";
 
-function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderChange, onModelChange, onEffortChange, onFastChange }: {
+/** Where the model list for a purpose on `connection` comes from, if it can be asked for yet. */
+function catalogRequest(purpose: Purpose, provider: SettingsProvider | undefined, connection: Connection | undefined, email: string | null | undefined) {
+  switch (provider) {
+    case AiProviders.OpenAISubscription: return email ? { type: "chatgpt-models" } as const : undefined;
+    // The gateway's language catalog is public; analysis there uses the fixed evaluation models.
+    case AiProviders.VercelAIGateway: return purpose === "translation" ? { type: "gateway-models" } as const : undefined;
+    case AiProviders.OpenAIApi: {
+      const apiKey = connection?.apiKey.trim();
+      return apiKey ? { type: "openai-models", apiKey } as const : undefined;
+    }
+    case AiProviders.Custom: {
+      const apiUrl = connection?.apiUrl?.trim() ?? "";
+      return validateApiUrl(apiUrl) ? undefined : { type: "openai-models", apiKey: connection?.apiKey.trim() ?? "", apiUrl } as const;
+    }
+  }
+}
+
+function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChange, onModelChange, onEffortChange, onFastChange }: {
   purpose: Purpose;
   draft: AISettings | undefined;
-  catalogs: Record<CatalogProvider, LoadedCatalog>;
+  email: string | null | undefined;
   error: string | undefined;
   inputRef: RefObject<HTMLInputElement | null>;
-  onProviderChange: (provider: SettingsProvider) => void;
+  onConnectionChange: (connection: string) => void;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: ReasoningEffort | undefined) => void;
   onFastChange: (fast: boolean) => void;
 }) {
   const id = useId();
   const config = purposes[purpose];
-  const provider = draft?.[purpose].provider ?? config.providers[0];
-  const model = (draft && modelsOf(draft, purpose)[provider]) ?? "";
-  const { catalog, reload } = catalogs[provider as CatalogProvider] ?? {};
-  const text = catalogHelp[provider as CatalogProvider];
-  // A list to pick from replaces the free-text field once the provider's catalog has loaded.
-  const choices = catalog?.status === "ok" && catalog.models.length ? catalog.models : undefined;
-  const unlisted = choices && model && !choices.some((m) => m.slug === model);
+  const connectionId = draft?.[purpose].connection ?? "";
+  const connection = draft && findConnection(draft, connectionId);
+  const provider = draft && providerOf(draft, connectionId);
+  // A purpose can still point at a connection removed in this draft; it must be changed before saving.
+  const removed = !!draft && !provider;
+  const model = draft?.[purpose].models[connectionId] ?? defaultModel(purpose, provider);
   // Gateway analysis offers the fixed evaluation models (Jev and similar) instead of a loaded catalog.
   const evaluation = purpose === "analysis" && provider === AiProviders.VercelAIGateway;
-  const help = error ?? (!catalog || (choices && !unlisted) ? undefined
+  const request = catalogRequest(purpose, provider, connection, email);
+  const keyed = provider === AiProviders.OpenAIApi || provider === AiProviders.Custom;
+  const loaded = useCatalog(request, keyed ? 600 : 0);
+  const { catalog, reload } = evaluation ? gatewayDecisionCatalog : loaded;
+  const text = provider && catalogHelp[provider];
+  // A list to pick from replaces the free-text field once the connection's catalog has loaded.
+  const choices = catalog.status === "ok" && catalog.models.length ? catalog.models : undefined;
+  const unlisted = choices && model && !choices.some((m) => m.slug === model);
+  // Empty text (the gateway needs nothing to list its models) shows no footnote.
+  const help = (error ?? (removed ? "这个连接已被删除，请选择其他连接。"
+    : !text || (choices && !unlisted) ? undefined
     : unlisted ? (evaluation ? `模型 ${model} 不是可选的评估模型，请重新选择。` : `模型 ${model} 不在${text.source}的模型列表中，请重新选择。`)
     : catalog.status === "ok" ? `${text.source}没有返回可用模型，可直接填写模型 ID。`
     : catalog.status === "loading" ? "正在读取可用模型…"
     : catalog.status === "failed" ? "无法读取模型列表，可直接填写模型 ID，或稍后重试。"
-    : text.unavailable);
+    : text.unavailable)) || undefined;
   // The gateway's evaluation models answer decisions without reasoning, so there is nothing to tune.
-  const reasons = !evaluation;
+  const reasons = !evaluation && !removed;
   const effort = draft?.[purpose].reasoningEffort;
   // Fast mode is a ChatGPT plan option (the service tier Codex uses when signed in with ChatGPT).
   const offersFast = provider === AiProviders.OpenAISubscription;
@@ -489,60 +627,71 @@ function ModelSection({ purpose, draft, catalogs, error, inputRef, onProviderCha
   const advanced = reasons || offersFast;
   const advancedOpen = showAdvanced || !!effort || fast;
   const field = "w-full sm:w-60";
+  // The selects below ignore an empty value: Radix reports "" when a select's value and its items
+  // arrive in the same render (settings loading, a catalog arriving), which would wipe the choice.
   return (
     <SettingsGroup
       title={config.title}
       description={config.description}
       footer={help && (
-        <p id={`${id}-help`} className={cn(error || unlisted ? "text-destructive" : undefined)}>
+        <p id={`${id}-help`} className={cn(error || unlisted || removed ? "text-destructive" : undefined)}>
           {help}
-          {catalog?.status === "failed" && (
+          {catalog.status === "failed" && (
             <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-[12px]" onClick={reload}>重试</Button>
           )}
         </p>
       )}
     >
-      <SettingsRow label="服务" htmlFor={`${id}-provider`}>
-        <Select value={provider} onValueChange={(value) => onProviderChange(value as SettingsProvider)}>
-          <SelectTrigger id={`${id}-provider`} className={field}>
-            <SelectValue />
+      <SettingsRow label="连接" htmlFor={`${id}-connection`}>
+        <Select value={connectionId} onValueChange={(value) => value && onConnectionChange(value)}>
+          <SelectTrigger id={`${id}-connection`} className={field} aria-invalid={removed}>
+            <SelectValue placeholder="选择连接" />
           </SelectTrigger>
           <SelectContent>
-            {config.providers.map((p) => <SelectItem key={p} value={p}>{providerLabels[p]}</SelectItem>)}
+            {removed && <SelectItem value={connectionId}>（已删除的连接）</SelectItem>}
+            <SelectItem value={CHATGPT_CONNECTION}>{CHATGPT_NAME}</SelectItem>
+            {draft?.connections.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.name || CONNECTION_KIND_NAMES[c.kind]}
+                {c.name !== CONNECTION_KIND_NAMES[c.kind] && <span className="ml-2 text-xs text-muted-foreground">{CONNECTION_KIND_NAMES[c.kind]}</span>}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </SettingsRow>
-      <SettingsRow label="模型" htmlFor={`${id}-model`}>
-        {choices ? (
-          <Select value={model} onValueChange={onModelChange}>
-            <SelectTrigger id={`${id}-model`} className={field} aria-invalid={!!error || !!unlisted} aria-describedby={help ? `${id}-help` : undefined}>
-              <SelectValue placeholder="选择模型" />
-            </SelectTrigger>
-            <SelectContent>
-              {unlisted && <SelectItem value={model}>{model}（不在列表中）</SelectItem>}
-              {choices.map((m) => (
-                <SelectItem key={m.slug} value={m.slug}>
-                  {m.displayName}
-                  {m.displayName !== m.slug && <span className="ml-2 font-mono text-xs text-muted-foreground">{m.slug}</span>}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <Input
-            ref={inputRef}
-            id={`${id}-model`}
-            className={field}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={config.placeholder(provider)}
-            aria-invalid={!!error}
-            aria-describedby={help ? `${id}-help` : undefined}
-            value={model}
-            onChange={(event) => onModelChange(event.target.value)}
-          />
-        )}
-      </SettingsRow>
+      {!removed && (
+        <SettingsRow label="模型" htmlFor={`${id}-model`}>
+          {choices ? (
+            <Select value={model} onValueChange={(value) => value && onModelChange(value)}>
+              <SelectTrigger id={`${id}-model`} className={field} aria-invalid={!!error || !!unlisted} aria-describedby={help ? `${id}-help` : undefined}>
+                <SelectValue placeholder="选择模型" />
+              </SelectTrigger>
+              <SelectContent>
+                {unlisted && <SelectItem value={model}>{model}（不在列表中）</SelectItem>}
+                {choices.map((m) => (
+                  <SelectItem key={m.slug} value={m.slug}>
+                    {m.displayName}
+                    {m.displayName !== m.slug && <span className="ml-2 font-mono text-xs text-muted-foreground">{m.slug}</span>}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              ref={inputRef}
+              id={`${id}-model`}
+              className={field}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={config.placeholder(provider)}
+              aria-invalid={!!error}
+              aria-describedby={help ? `${id}-help` : undefined}
+              value={model}
+              onChange={(event) => onModelChange(event.target.value)}
+            />
+          )}
+        </SettingsRow>
+      )}
       {advanced && !advancedOpen && (
         <button
           type="button"

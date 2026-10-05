@@ -1,6 +1,6 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { storage } from "wxt/utils/storage";
-import { AiProviders, aiSettings, Settings, SettingsLive, type AISettings } from "../modules/shared/settings";
+import { Settings, SettingsLive, type AISettings } from "../modules/shared/settings";
 import { analyzePageContent } from "../modules/background/content-analyzer/page-analysis";
 import { decideTranslationPlan } from "../modules/background/content-analyzer/page-plan";
 import { configuredSettings, modelAttributes, ModelsLive } from "../modules/background/ai/models";
@@ -108,10 +108,10 @@ export default defineBackground(() => {
       "chatgpt-sign-in": () => startChatGPTSignIn(),
       "chatgpt-sign-out": () => signOutChatGPT().then(() => ({ status: "ok" as const })),
       "chatgpt-models": () => catalog("ChatGPT", listChatGPTModels, "接口没有返回 visibility 为 list 的模型"),
-      // The options page sends the key being edited, so the list follows it before it's saved.
-      "openai-models": async ({ apiKey: edited }) => {
-        const apiKey = edited?.trim() || (await aiSettings.getValue()).providers[AiProviders.OpenAIApi].apiKey.trim();
-        return apiKey ? catalog("OpenAI", () => listOpenAIModels(apiKey), "接口没有返回可生成文本的模型") : { status: "no-key" as const };
+      "openai-models": async ({ apiKey = "", apiUrl }) => {
+        // A custom connection may need no key; an OpenAI one does.
+        if (!apiKey.trim() && !apiUrl) return { status: "no-key" as const };
+        return catalog(apiUrl ? "自定义连接" : "OpenAI", () => listOpenAIModels(apiKey.trim(), fetch, apiUrl), "接口没有返回可生成文本的模型");
       },
       "gateway-models": () => catalog("Vercel AI Gateway", listGatewayModels),
       "prepare-translation": ({ context }, sender) => traceRequest(

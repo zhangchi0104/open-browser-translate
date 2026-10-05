@@ -5,7 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { modelsFor } from "../src/modules/background/ai/models";
 import { translatePageBatch, type BatchStores } from "../src/modules/background/translation-dispatcher";
 import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
-import { defaultSettings } from "../src/modules/shared/settings/model";
+import { AiProviders, defaultSettings, findConnection } from "../src/modules/shared/settings/model";
 import { createCache, createMemoryCacheStore } from "../src/modules/background/cache-store";
 import { createTranslationService } from "../src/modules/background/translation-service";
 import type { TranslationContext } from "../src/modules/background/site-context";
@@ -13,7 +13,7 @@ import { createContextCarryover } from "../src/modules/background/site-context/c
 import { chatCompletion, chatCompletionStream, chatRequest, translationInput } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
-settings.providers.VercelAIGateway.apiKey = "test-gateway";
+findConnection(settings, AiProviders.VercelAIGateway)!.apiKey = "test-gateway";
 settings.translation.models.VercelAIGateway = "test/translator";
 
 const PAGE = "https://docs.example.com/guide?q=1";

@@ -3,16 +3,16 @@ import { test } from "node:test";
 import { Effect } from "effect";
 import { modelsFor } from "../src/modules/background/ai/models";
 import { FetchHttpClient } from "effect/unstable/http";
-import { defaultSettings } from "../src/modules/shared/settings/model";
+import { defaultSettings, findConnection } from "../src/modules/shared/settings/model";
 import { AiProviders } from "../src/modules/shared/settings/model";
 import { decideTranslationPlan } from "../src/modules/background/content-analyzer/page-plan";
 import { translateBatch } from "../src/modules/background/translation-service/translate-batch";
 import { blocksIn, chatCompletion, chatCompletionStream, chatRequest, decisionResponse, isDecisionRequest, translationInput, type ChatRequest } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
-settings.analysis.provider = AiProviders.OpenAIApi;
-settings.providers.VercelAIGateway.apiKey = "test-placeholder";
-settings.providers.OpenAIApi.apiKey = "test-openai";
+settings.analysis.connection = AiProviders.OpenAIApi;
+findConnection(settings, AiProviders.VercelAIGateway)!.apiKey = "test-placeholder";
+findConnection(settings, AiProviders.OpenAIApi)!.apiKey = "test-openai";
 settings.translation.models.VercelAIGateway = "test/translator";
 function mockFetch(output: unknown, requests: string[], bodies: ChatRequest[] = []): typeof globalThis.fetch {
   return async (input, init) => {

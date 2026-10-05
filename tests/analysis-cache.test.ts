@@ -6,12 +6,12 @@ import { modelsFor } from "../src/modules/background/ai/models";
 import { createCache, createMemoryCacheStore } from "../src/modules/background/cache-store";
 import { analyzePageContent } from "../src/modules/background/content-analyzer/page-analysis";
 import type { Mode } from "../src/modules/shared/protocol";
-import { AiProviders, defaultSettings } from "../src/modules/shared/settings/model";
+import { AiProviders, defaultSettings, findConnection } from "../src/modules/shared/settings/model";
 import { blocksIn, chatRequest, decisionResponse } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
-settings.analysis.provider = AiProviders.OpenAIApi;
-settings.providers.OpenAIApi.apiKey = "test-openai";
+settings.analysis.connection = AiProviders.OpenAIApi;
+findConnection(settings, AiProviders.OpenAIApi)!.apiKey = "test-openai";
 const SITE = "https://docs.example.com";
 
 /** An analysis model that calls "Home" navigation and anything else content, recording what it was asked. */
