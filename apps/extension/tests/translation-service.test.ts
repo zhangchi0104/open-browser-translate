@@ -4,7 +4,6 @@ import { Effect } from "effect";
 import { modelsFor } from "../src/modules/background/ai/models";
 import { FetchHttpClient } from "effect/unstable/http";
 import { defaultSettings, findConnection, targetLanguageOf } from "../src/modules/shared/settings/model";
-import { contextKeyOf } from "../src/modules/background/site-context";
 import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
 import { AiProviders } from "../src/modules/shared/settings/model";
 import { decideTranslationPlan } from "../src/modules/background/content-analyzer/page-plan";
@@ -60,7 +59,7 @@ test("missing translation configuration makes no provider request", async () => 
 test("site context rides along in the translation prompt and terms come back", async () => {
   const bodies: ChatRequest[] = [];
   const fetch = mockFetch({ translations: [{ id: 0, text: "Effect 运行时" }], terms: [{ source: "Effect", target: "Effect" }] }, [], bodies);
-  const context = { pages: ["Effect docs"], glossary: [{ source: "runtime", target: "运行时" }], recent: [{ source: "Fibers", target: "纤程" }] };
+  const context = { glossary: [{ source: "runtime", target: "运行时" }], recent: [{ source: "Fibers", target: "纤程" }] };
   const result = await Effect.runPromise(translateBatch([{ text: "Effect runtime", tag: "p" }], { context }).pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch)));
   assert.deepEqual(result, { status: "ok", translations: ["Effect 运行时"], terms: [{ source: "Effect", target: "Effect" }] });
   const chat = bodies.find((body) => !isDecisionRequest(body))!;
@@ -149,8 +148,4 @@ test("the target language reaches the prompt; unset or unknown means Simplified 
   await Effect.runPromise(translateBatch([{ text: "Hello", tag: "p" }]).pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch)));
   assert.match(JSON.stringify(bodies.at(-1)!.messages), /into 简体中文/);
   assert.equal(targetLanguageOf({ targetLanguage: "xx" }).code, "zh-CN");
-  // Each language keeps its own site context; Simplified Chinese keeps the bare site it always had.
-  assert.equal(contextKeyOf("https://example.com", "zh-CN"), "https://example.com");
-  assert.equal(contextKeyOf("https://example.com", "ja"), "https://example.com ja");
-  assert.equal(contextKeyOf(undefined, "ja"), undefined);
 });

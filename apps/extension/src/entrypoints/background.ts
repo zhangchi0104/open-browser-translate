@@ -17,7 +17,7 @@ import { createTranslationService } from "../modules/background/translation-serv
 import { createCache } from "../modules/background/cache-store";
 import { createIndexedDbCacheStore } from "../modules/background/cache-store/indexeddb";
 import { createContextCarryover } from "../modules/background/site-context/carryover";
-import { contextKeyOf, siteOf, type TranslationContext } from "../modules/background/site-context";
+import { siteOf, type TranslationContext } from "../modules/background/site-context";
 import { debugLog, describeError, localTracer, markFailed, pageOf, traceStore, tracingLayer } from "../modules/shared/debug-log";
 import { batchChars, createDispatcher, PURPOSE_NAMES, type Block, type ChatGPTModel, type Failed, type ModelList, type Purpose, type Sender } from "../modules/shared/protocol";
 
@@ -160,7 +160,6 @@ export default defineBackground(() => {
           yield* Effect.annotateCurrentSpan(modelAttributes(settings, "analysis"));
           yield* configuredSettings();
           const language = targetLanguageOf(settings).code;
-          void contexts.notePage(contextKeyOf(siteOf(pageUrl(sender)), language), context.title);
           const plan = yield* decideTranslationPlan(context);
           yield* Effect.annotateCurrentSpan({ "obt.plan.mode": plan.mode, "obt.plan.navigation": plan.navigation, "obt.plan.fallback": plan.fallback });
           return { status: "ok", plan, language } as const;

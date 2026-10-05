@@ -154,10 +154,10 @@ Translate the web page the user is reading, in place, into a language the user c
 **`storage`**
 
 ```text
-Keeps the user's settings (target language, model connections with their API keys, chosen models), the ChatGPT sign-in tokens, the floating button's position, whether the user agreed to send page text, per-site translation context (recent page titles and term translations) and a local debug log in chrome.storage.local on the user's device. Nothing is synced or sent to the developer.
+Keeps the user's settings (target language, model connections with their API keys, chosen models), the ChatGPT sign-in tokens, the floating button's position, whether the user agreed to send page text, per-site translation context (term translations and a few recent passages) and a local debug log in chrome.storage.local on the user's device. Nothing is synced or sent to the developer.
 ```
 
-> 中文对照：在用户设备的 chrome.storage.local 中保存设置（目标语言、模型连接及其 API key、所选模型）、ChatGPT 登录令牌、悬浮按钮位置、用户是否同意发送网页文字、每个站点的翻译上下文（最近的页面标题和术语译法）以及本地调试日志。不同步，也不发送给开发者。
+> 中文对照：在用户设备的 chrome.storage.local 中保存设置（目标语言、模型连接及其 API key、所选模型）、ChatGPT 登录令牌、悬浮按钮位置、用户是否同意发送网页文字、每个站点的翻译上下文（术语译法和最近几段译文）以及本地调试日志。不同步，也不发送给开发者。
 
 **Host permission justification（主机权限理由）**
 
@@ -204,7 +204,7 @@ All JavaScript ships in the package, bundled at build time with WXT/Vite. The ex
 | Authentication information（身份验证信息） | ✅ | API key、ChatGPT 的访问/刷新/ID 令牌。保存在本机，只发给对应的服务用于鉴权。 |
 | Personal communications（个人通讯） | ☐ | 翻译邮件页面时，邮件文字属于"网站内容"。 |
 | Location（位置） | ☐ | |
-| Web history（网络浏览记录） | ✅ | 同一站点最近翻译过的页面标题保存在本机（最多 5 个），并作为上下文随后续翻译请求发给模型；调试追踪在本机记录页面的站点和路径。 |
+| Web history（网络浏览记录） | ✅ | 调试追踪在本机记录页面的站点和路径；翻译上下文按站点（pixiv 小说按系列）保存在本机。 |
 | User activity（用户活动） | ☐ | 不记录点击、键盘输入或滚动行为。滚动只用来决定先翻译哪些段落，不保存。 |
 | Website content（网站内容） | ✅ | 用户点击翻译后，页面文字和页面标题、描述等上下文发给用户配置的模型服务。 |
 
