@@ -177,7 +177,9 @@ export function createCapturedContent() {
       // text it translates, and text decoration doesn't reach inline-block descendants.
       const source = document.defaultView!.getComputedStyle(styleSource(item));
       for (const property of SOURCE_STYLES) placeholder.style.setProperty(property, source.getPropertyValue(property));
-      placeholder.style.backgroundColor = TRANSLATION_TINT;
+      // The skeleton shows alone; the tint comes with the text, and the padding is already in place
+      // so the text arriving doesn't move anything.
+      if (!loading) placeholder.style.backgroundColor = TRANSLATION_TINT;
       placeholder.style.borderRadius = "0.3em";
       // Inline translations wrap across lines; each line fragment gets its own rounded ends.
       placeholder.style.padding = inline ? "0 0.25em" : BLOCK_PADDING;
@@ -262,6 +264,7 @@ export function createCapturedContent() {
         entry.skeleton.remove();
         entry.skeleton = undefined;
         delete entry.placeholder.dataset.loading;
+        entry.placeholder.style.backgroundColor = TRANSLATION_TINT;
         entry.placeholder.removeAttribute("aria-busy");
         entry.placeholder.setAttribute("aria-label", "译文");
       }

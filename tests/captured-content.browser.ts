@@ -97,9 +97,11 @@ try {
   assert(getComputedStyle(shortSkeleton).display === "inline", "a one-line source's skeleton sits on its line");
   assert(getComputedStyle(paraSkeleton).display === "block" && paraSkeleton.getBoundingClientRect().height > 20, "a paragraph's skeleton is a block of a few lines");
   assert(shortSkeleton.getBoundingClientRect().width > 10, "the skeleton takes up space");
+  assert(getComputedStyle(paraSkeleton).backgroundColor === "rgba(0, 0, 0, 0)", "a skeleton has no tint behind it");
   preview.update(waiting[0]!, "短", true);
   assert(fixture.querySelectorAll("#short open-browser-translate-placeholder").length === 1, "the first text replaces the skeleton in the same placeholder");
   assert(!("loading" in shortSkeleton.dataset) && !shortSkeleton.hasAttribute("aria-busy"), "and it stops reading as loading");
+  assert(getComputedStyle(shortSkeleton).backgroundColor !== "rgba(0, 0, 0, 0)", "the tint comes with the text");
   preview.discard([waiting[1]!]);
   assert(fixture.querySelector("#para open-browser-translate-placeholder") === null, "a block that won't be translated loses its skeleton");
 
