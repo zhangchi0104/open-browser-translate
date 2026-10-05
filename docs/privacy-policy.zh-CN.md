@@ -2,7 +2,7 @@
 
 最后更新：2026-10-05
 
-Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在你阅读网页时，把网页文字就地翻译成你选择的语言，翻译由你自己配置的大模型服务完成。本扩展由 <<开发者名称>> 开发和维护。
+Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在你阅读网页时，把网页文字就地翻译成你选择的语言，翻译由你自己配置的大模型服务完成。本扩展由 Alex Zhang 开发和维护。
 
 **简短版本：** 本扩展没有自己的服务器，开发者收不到你的任何数据。只有在你点击翻译之后，网页文字才会发送出去，而且只发给你在设置里选择的模型服务。API key、登录信息、缓存和日志都只保存在你这台设备的浏览器里。
 
@@ -78,6 +78,6 @@ Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在�
 
 ## 7. 联系方式
 
-如有疑问，请联系：<<联系邮箱>>，或访问 <<支持网址>>。
+如有疑问，请联系：open-browser-translate@otakuma.dev，或访问 https://github.com/zhangchi0104/open-browser-translate/issues。
 
 [English](privacy-policy.md)

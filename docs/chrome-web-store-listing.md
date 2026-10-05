@@ -2,18 +2,18 @@
 
 第一版必须在 [Chrome 开发者后台](https://chrome.google.com/webstore/devconsole) 手动创建条目：Chrome Web Store API v2 不能创建新条目。之后的版本由 CI 通过 `wxt submit` 提交。
 
-这份清单按后台的页签顺序排列，写明每个字段填什么。`<<尖括号>>` 是要你自己填的占位符。素材都在 `store/chrome/`。
+这份清单按后台的页签顺序排列，写明每个字段填什么。素材都在 `store/chrome/`。
 
 ## 0. 上传前
 
-- [ ] **填好占位符。** 英文隐私政策 `docs/privacy-policy.md`（网站上展示的就是这一份）中有 `<<Developer name>>`、`<<Contact email>>`、`<<Support URL>>`；中文版 `docs/privacy-policy.zh-CN.md` 中对应 `<<开发者名称>>`、`<<联系邮箱>>`、`<<支持网址>>`。
+- [x] **填好占位符。** 隐私政策（`docs/privacy-policy.md` 和 `docs/privacy-policy.zh-CN.md`）里的开发者名称、联系邮箱和支持网址都已填好。
 - [ ] **开启 GitHub Pages**（见第 7 节），确认 https://zhangchi0104.github.io/open-browser-translate/privacy-policy/ 能打开。
 - [ ] **准备安装包。** 这个分支合并到 `main` 后，semantic-release 会发布新版本，并把 `open-browser-translate-<版本>-chrome.zip` 附在 GitHub Release 上。上传这个 zip，商店里的版本号就和 tag 一致。本地也可以在仓库根目录运行 `bun run zip` 打包，产物在 `apps/extension/.output/`。
   - 包里应当带有：中英 `_locales`、新图标、去掉 `api.typesafe.ai` 之后的权限。
   - 以后每次上传的版本号都必须比上一次高。semantic-release 会自动递增，不要手动改版本号。
 - [ ] **准备开发者账号。** 首次注册要付一次性注册费。账号设置在 **Account（帐号）** 页签：
-  - **Publisher name（发布者名称）**：`<<开发者名称>>`，会显示在商店里每个条目的标题下方。
-  - **Contact email（联系邮箱）**：`<<联系邮箱>>`。后台会发一封验证邮件，必须点链接完成验证，否则不能提交。
+  - **Publisher name（发布者名称）**：`Alex Zhang`，会显示在商店里每个条目的标题下方。
+  - **Contact email（联系邮箱）**：`open-browser-translate@otakuma.dev`。后台会发一封验证邮件，必须点链接完成验证，否则不能提交。
   - **Trader / non-trader（是否为经营者，EU DSA 要求）**：个人开发、不收费的开源项目通常选 **non-trader（非经营者）**。选 trader 需要公开法定名称、电话和地址。这项由你判断。
 
 ## 1. 新建条目
@@ -106,7 +106,7 @@ Open Browser Translate 在你正在阅读的网页上就地翻译：每段译文
 | Category（类别） | **Productivity → Tools**（生产力 → 工具）。备选：Make Chrome Yours → Accessibility。 |
 | Language（语言） | 默认语言是 English（与 manifest 的 `default_locale: "en"` 一致）。中文（简体）的说明在页面顶部的语言下拉框里切换后填写。 |
 | Homepage URL（首页网址） | `https://zhangchi0104.github.io/open-browser-translate/`（`apps/site` 的首页）。 |
-| Support URL（支持网址） | `<<支持网址>>`。必须能公开访问；仓库已公开，可以用 Issues 页。 |
+| Support URL（支持网址） | `https://github.com/zhangchi0104/open-browser-translate/issues`（仓库的 Issues 页）。 |
 | Official URL（官方网址） | 留空。只有在 Search Console 验证过所有权的网站才能填。 |
 | Mature content（成人内容） | 否。 |
 | YouTube video（宣传视频） | 留空，可选。 |

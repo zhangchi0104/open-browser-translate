@@ -2,7 +2,7 @@
 
 Last updated: 2026-10-05 · [中文版](https://github.com/zhangchi0104/open-browser-translate/blob/dev/docs/privacy-policy.zh-CN.md)
 
-Open Browser Translate ("the extension") is a browser extension. It translates the web page you are reading in place, into a language you choose, using an AI model service you set up yourself. It is developed and maintained by <<Developer name>>.
+Open Browser Translate ("the extension") is a browser extension. It translates the web page you are reading in place, into a language you choose, using an AI model service you set up yourself. It is developed and maintained by Alex Zhang.
 
 **In short:** the extension has no servers of its own, and its developer receives none of your data. Page text is sent only after you start a translation, and only to the model service you chose in the settings. API keys, sign-in details, caches and logs stay in the browser on your device.
 
@@ -78,4 +78,4 @@ If the way the extension handles data changes, this page and the "Last updated" 
 
 ## 7. Contact
 
-Questions: <<Contact email>>, or visit <<Support URL>>.
+Questions: open-browser-translate@otakuma.dev, or visit https://github.com/zhangchi0104/open-browser-translate/issues.
