@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { describeError } from "../../shared/debug-log/model";
 import type { Block, OnBlock, Surroundings, TranslationBatchResult } from "../../shared/protocol";
-import { contextKeyOf, siteOf } from "../site-context";
+import { contextScopeOf, siteOf } from "../site-context";
 import { Settings } from "../../shared/settings/service";
 import { targetLanguageOf } from "../../shared/settings/model";
 import type { ContextCarryover } from "../site-context/carryover";
@@ -14,7 +14,7 @@ export interface BatchStores {
 }
 
 /**
- * Translates one batch of a page's blocks: takes a snapshot of the site's context, sends it with
+ * Translates one batch of a page's blocks: takes a snapshot of the site's (or the page's work's) context, sends it with
  * the batch's surroundings to the translation service, and folds what the model newly translated
  * back into the context for later batches and pages. The cache is the service's business
  * (ADR-0002); the dispatcher keeps no queue (ADR-0001), so concurrent batches each see the
@@ -33,18 +33,19 @@ export function translatePageBatch(
 ) {
   return Effect.gen(function* () {
     const site = siteOf(pageUrl);
+    const { work, ...around } = surroundings;
     // Contexts are per target language; the cache keys its own entries by language.
-    const contextKey = contextKeyOf(site, targetLanguageOf(yield* Settings.use((settings) => settings.get)).code);
+    const scope = contextScopeOf(pageUrl, targetLanguageOf(yield* Settings.use((settings) => settings.get)).code, work);
     const texts = blocks.map(({ text }) => text);
-    const siteContext = yield* Effect.tryPromise(() => stores.contexts.contextFor(contextKey, texts));
-    const context = siteContext || surroundings.brief || surroundings.preceding ? { ...siteContext, ...surroundings } : undefined;
+    const siteContext = yield* Effect.tryPromise(() => stores.contexts.contextFor(scope, texts));
+    const context = siteContext || around.brief || around.preceding ? { ...siteContext, ...around } : undefined;
     const result = yield* stores.translation.translate(blocks, { site, context, onBlock });
     if (result.status !== "ok") return result;
     const { cached, ...reply } = result;
     yield* Effect.annotateCurrentSpan({ "obt.terms": reply.terms.length });
     const fresh = blocks.flatMap(({ text }, index) => cached[index] ? [] : [{ source: text, target: reply.translations[index]! }]);
     // Not awaited: the reader shouldn't wait on storage to see the translation.
-    void stores.contexts.record(contextKey, fresh, reply.terms);
+    void stores.contexts.record(scope, fresh, reply.terms);
     return reply satisfies TranslationBatchResult;
   }).pipe(
     Effect.catch((error) => Effect.succeed<TranslationBatchResult>({ status: "failed", error: describeError(error) })),

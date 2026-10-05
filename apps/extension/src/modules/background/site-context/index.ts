@@ -3,22 +3,21 @@ import { TermPair } from "../../shared/protocol";
 import { DEFAULT_TARGET_LANGUAGE } from "../../shared/settings/model";
 
 /**
- * What a site's earlier translations leave behind for later batches and pages:
- * recent page titles (the topic), the glossary the model chose, and the last
- * few translated passages (the voice).
+ * What a site's (or a work's) earlier translations leave behind for later batches: the glossary
+ * the model chose, which follows the reader across pages, and the last few translated passages
+ * (the voice), which only stay with the page or work they came from (`recentFrom`).
  */
 export const TranslationContext = Schema.Struct({
-  pages: Schema.Array(Schema.String),
   glossary: Schema.Array(TermPair),
   recent: Schema.Array(TermPair),
+  recentFrom: Schema.optional(Schema.String),
   updatedAt: Schema.Number,
 });
 export type TranslationContext = typeof TranslationContext.Type;
 
 /** The slice of a context sent with one batch. */
-export type PromptContext = Omit<TranslationContext, "updatedAt">;
+export type PromptContext = Pick<TranslationContext, "glossary" | "recent">;
 
-const MAX_PAGES = 5;
 export const MAX_GLOSSARY = 60;
 export const MAX_RECENT = 3;
 // Only glossary terms that occur in the batch are sent, at most this many.
@@ -26,11 +25,10 @@ const MAX_PROMPT_TERMS = 20;
 const MAX_TERMS_PER_BATCH = 10;
 const MAX_TERM_LENGTH = 80;
 const MAX_RECENT_LENGTH = 300;
-const MAX_TITLE_LENGTH = 200;
 // A site not translated for a week starts fresh.
 export const CONTEXT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-export const emptyContext = (now: number): TranslationContext => ({ pages: [], glossary: [], recent: [], updatedAt: now });
+export const emptyContext = (now: number): TranslationContext => ({ glossary: [], recent: [], updatedAt: now });
 
 /**
  * The site a page belongs to: its origin, for http and https pages only. Site context and cached
@@ -48,30 +46,47 @@ export function siteOf(url: string | undefined): string | undefined {
 }
 
 /**
- * What a site's context is kept under: its glossary and recent passages are in one language, so
- * each target language has its own. Simplified Chinese keeps the bare site, as before.
+ * Where a batch's context is kept (`key`) and where its recent passages belong (`passages`).
+ * A site's pages share one context, so the glossary follows the reader around the site, but
+ * recent passages stay with their page: another page on the site may be another story entirely.
+ * A work (see `workOf` in the page modules: a pixiv novel series, say) gets a context of its own,
+ * kept apart from the rest of the site, and its passages carry from one chapter to the next.
+ * Glossaries and passages are in one language, so each target language has its own context;
+ * Simplified Chinese keeps the bare key, as before.
  */
-export function contextKeyOf(site: string | undefined, language: string): string | undefined {
-  return site && language !== DEFAULT_TARGET_LANGUAGE ? `${site} ${language}` : site;
+export interface ContextScope {
+  readonly key: string;
+  readonly passages: string;
+}
+
+export function contextScopeOf(pageUrl: string | undefined, language: string, work?: string): ContextScope | undefined {
+  const site = siteOf(pageUrl);
+  if (!site) return undefined;
+  const scoped = work ? `${site}/${work}` : site;
+  const key = language !== DEFAULT_TARGET_LANGUAGE ? `${scoped} ${language}` : scoped;
+  if (work) return { key, passages: key };
+  // Only to tell pages apart: the page's address isn't kept.
+  const { pathname, search } = new URL(pageUrl!);
+  return { key, passages: fnv1a(`${pathname}${search}`) };
+}
+
+function fnv1a(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
+  return (hash >>> 0).toString(36);
 }
 
 export const isFresh = (context: TranslationContext, now: number) => now - context.updatedAt < CONTEXT_TTL_MS;
 
-/** Records a page the reader started translating; the newest titles describe the topic. */
-export function notePage(context: TranslationContext, title: string, now: number): TranslationContext {
-  const trimmed = title.trim().slice(0, MAX_TITLE_LENGTH);
-  if (!trimmed) return { ...context, updatedAt: now };
-  const pages = context.pages.filter((page) => page !== trimmed).concat(trimmed).slice(-MAX_PAGES);
-  return { ...context, pages, updatedAt: now };
-}
-
 /**
- * Folds one translated batch into the context. Terms are kept only when their
- * source actually appears in the batch, so a model (or page text posing as
- * instructions) cannot plant glossary entries for text it never saw.
+ * Folds one translated batch from `passages` (a `ContextScope`'s) into the context. Terms are kept
+ * only when their source actually appears in the batch, so a model (or page text posing as
+ * instructions) cannot plant glossary entries for text it never saw. Recent passages from
+ * elsewhere give way to the batch's.
  */
 export function recordBatch(
   context: TranslationContext,
+  passages: string,
   segments: readonly TermPair[],
   terms: readonly TermPair[],
   now: number,
@@ -89,20 +104,22 @@ export function recordBatch(
     .filter(({ source }) => !replaced.has(source.toLowerCase()))
     .concat(accepted)
     .slice(-MAX_GLOSSARY);
-  const recent = context.recent
+  const recent = recentIn(context, passages)
     .concat(segments
       .filter(({ source, target }) => source.trim() && target.trim())
       .map(({ source, target }) => ({ source: source.slice(0, MAX_RECENT_LENGTH), target: target.slice(0, MAX_RECENT_LENGTH) })))
     .slice(-MAX_RECENT);
-  return { pages: context.pages, glossary, recent, updatedAt: now };
+  return { glossary, recent, recentFrom: passages, updatedAt: now };
 }
 
-/** Picks the part of a context worth sending with a batch of texts. */
-export function promptContext(context: TranslationContext, texts: readonly string[]): PromptContext | undefined {
+const recentIn = (context: TranslationContext, passages: string) => context.recentFrom === passages ? context.recent : [];
+
+/** Picks the part of a context worth sending with a batch of texts from `passages`. */
+export function promptContext(context: TranslationContext, passages: string, texts: readonly string[]): PromptContext | undefined {
   const batchText = texts.join("\n").toLowerCase();
   const glossary = context.glossary
     .filter(({ source }) => batchText.includes(source.toLowerCase()))
     .slice(-MAX_PROMPT_TERMS);
-  const prompt = { pages: context.pages, glossary, recent: context.recent };
-  return prompt.pages.length || prompt.glossary.length || prompt.recent.length ? prompt : undefined;
+  const recent = recentIn(context, passages);
+  return glossary.length || recent.length ? { glossary, recent } : undefined;
 }

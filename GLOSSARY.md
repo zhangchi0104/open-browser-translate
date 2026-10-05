@@ -11,7 +11,7 @@ A piece of page text translated as one unit, such as a paragraph, heading or lin
 _Avoid_: group, source group, segment (a segment is one text node inside a block)
 
 **Site**:
-The origin of an http or https page. Cached translations and site context belong to a site. A page with no site (private windows, browser pages) keeps neither.
+The origin of an http or https page. Cached translations and site context belong to a site (site context to a work, where the page has one). A page with no site (private windows, browser pages) keeps neither.
 _Avoid_: origin, context key, domain
 
 **Session**:
@@ -42,8 +42,12 @@ A decision taken without a confident model answer: a plan that defaults to `all`
 Up to eight blocks sent together for analysis or translation.
 _Avoid_: chunk
 
+**Work**:
+A story or other writing a site publishes across pages, such as a pixiv novel series (or a one-shot novel). A page in a work keeps its site context with the work, apart from the rest of the site.
+_Avoid_: series (pixiv's word for one kind of work), scope
+
 **Site context**:
-What earlier translations on a site leave for later batches: recent page titles, the glossary, and recent passages.
+What earlier translations on a site (or in a work) leave for later batches: the glossary, which follows the reader across pages, and recent passages, which stay with their page or work.
 _Avoid_: carryover (that's how it travels, not what it is), translation context
 
 **Page brief**:

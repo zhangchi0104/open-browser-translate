@@ -13,7 +13,7 @@ export const MAX_BATCH_CHARS = 200_000;
 /** What the page may send about itself for planning. */
 export const PAGE_CONTEXT_LIMITS = { title: 1000, sample: 12_000, pagination: 20, paginationLabel: 100 } as const;
 /** What the page may send with a batch about where it sits. */
-export const SURROUNDINGS_LIMITS = { brief: 500, preceding: 600 } as const;
+export const SURROUNDINGS_LIMITS = { brief: 500, preceding: 600, work: 100 } as const;
 
 /** A source phrase and how it was rendered in the target language. */
 export const TermPair = Schema.Struct({ source: Schema.String, target: Schema.String });
@@ -198,11 +198,13 @@ export type Response<K extends RequestType> = typeof Replies[K]["Type"];
 export const STREAM_PORT = "translate-stream";
 /**
  * What the page sends with a batch so it's translated in place: the page brief (what the page
- * is about) and the preceding text (the source just before the batch's first block).
+ * is about), the preceding text (the source just before the batch's first block), and the work
+ * the page belongs to, when its site has works (a path such as `novel/series/123`; see `workOf`).
  */
 const Surroundings = Schema.Struct({
   brief: Schema.optional(Schema.String.check(Schema.isMaxLength(SURROUNDINGS_LIMITS.brief))),
   preceding: Schema.optional(Schema.String.check(Schema.isMaxLength(SURROUNDINGS_LIMITS.preceding))),
+  work: Schema.optional(Schema.String.check(Schema.isMaxLength(SURROUNDINGS_LIMITS.work), Schema.isPattern(/^[a-z0-9-]+(\/[a-z0-9-]+)*$/))),
 });
 export type Surroundings = typeof Surroundings.Type;
 const StreamRequest = Schema.Struct({ blocks: Batch, ...Surroundings.fields });
@@ -271,8 +273,8 @@ export function createClient(runtime: {
           else finish(event.success.result);
         });
         port.onDisconnect.addListener(() => finish({ status: "failed", error: `与后台的连接中断：${runtime.lastError?.message ?? "未知原因"}` }));
-        const { brief, preceding } = surroundings;
-        port.postMessage({ blocks: blocks.map(({ text, tag }) => ({ text, tag })), ...(brief && { brief }), ...(preceding && { preceding }) });
+        const { brief, preceding, work } = surroundings;
+        port.postMessage({ blocks: blocks.map(({ text, tag }) => ({ text, tag })), ...(brief && { brief }), ...(preceding && { preceding }), ...(work && { work }) });
       });
     },
   };
