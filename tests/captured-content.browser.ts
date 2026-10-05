@@ -119,8 +119,22 @@ try {
   preview.update(linked[0]!, "阅读指南", false);
   const afterLink = fixture.querySelector("#ends-in-link > open-browser-translate-placeholder");
   assert(afterLink !== null && afterLink.previousElementSibling?.id === "guide" && !fixture.querySelector("#guide open-browser-translate-placeholder"), "the translation sits after the link, outside it");
+  // A one-line block ending in inline code: the translation follows the code rather than joining it.
+  fixture.innerHTML = '<p id="ends-in-code" style="width:600px;font:16px/24px sans-serif">Then run <code id="command">claude --version</code></p>';
+  const coded = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  assert(coded.length === 1 && coded[0]!.text === "Then run claude --version", "the sentence and its code are one group");
+  preview.update(coded[0]!, "然后运行 claude --version", false);
+  const afterCode = fixture.querySelector("#ends-in-code > open-browser-translate-placeholder");
+  assert(afterCode !== null && afterCode.previousElementSibling?.id === "command", "the translation sits after the code, outside it");
+  // A one-line block ending in an inline box (a badge): the translation follows the box rather than joining it.
+  fixture.innerHTML = '<p id="ends-in-badge" style="width:600px;font:16px/24px sans-serif">This feature is <span id="badge" style="display:inline-block;padding:0 4px;border:1px solid"><b>beta</b></span></p>';
+  const badged = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  assert(badged.length === 1, "the sentence and its badge are one group");
+  preview.update(badged[0]!, "此功能为测试版", false);
+  const afterBadge = fixture.querySelector("#ends-in-badge > open-browser-translate-placeholder");
+  assert(afterBadge !== null && afterBadge.previousElementSibling?.id === "badge", "the translation sits after the badge, outside it");
   preview.remove();
-  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming, inline after one-line sources, loading skeleton, flex rows, links";
+  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming, inline after one-line sources, loading skeleton, flex rows, links, inline code, inline boxes";
 } catch (error) {
   preview.remove();
   document.body.textContent = `FAIL: ${String(error)}`;

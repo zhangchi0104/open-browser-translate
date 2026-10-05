@@ -27,6 +27,13 @@ const EXCLUDED_SELECTOR = [
   '[aria-hidden="true"]', '[translate="no"]',
   ".notranslate", "open-browser-translate",
 ].join(",");
+// Within a sentence, these excluded elements don't end it. Kept text (a command, a formula, a
+// brand name marked translate="no", a decorative arrow) is sent with the sentence but not
+// translated; text-free graphics (icons) are skipped.
+const KEPT_INLINE_SELECTOR = 'code, kbd, samp, math, [aria-hidden="true"], [translate="no"], .notranslate';
+const GRAPHIC_INLINE_SELECTOR = "svg, canvas";
+const OWN_UI_SELECTOR = "open-browser-translate, open-browser-translate-placeholder";
+const hasLetter = (text: string | null) => /\p{L}/u.test(text ?? "");
 
 function parseTranslatableContent(
   root: Element = document.body,
@@ -78,18 +85,55 @@ function parseTranslatableContent(
   const content: TranslatableContent[] = [];
   let segments: TranslatableContent["segments"] = [];
   let owner = root;
+  // Inside an inline box that joined a sentence: its contents are part of that sentence too.
+  let inlineBoxDepth = 0;
+  // Kept text (inline code and the like): it doesn't make a group worth translating on its own.
+  const keptText = new Set<Text>();
 
   const flush = () => {
     const text = segments.map((segment) => segment.text).join("");
-    if (/\p{L}/u.test(text)) {
+    if (hasLetter(segments.filter(({ node }) => !keptText.has(node)).map((segment) => segment.text).join(""))) {
       content.push({ element: owner, tag: owner.tagName.toLowerCase(), text, segments });
     }
     segments = [];
   };
 
+  /**
+   * Whether words sit right before or after the element in its block, so an inline box (a badge,
+   * a link styled inline-flex) reads as part of that sentence rather than as an item of its own (a
+   * nav entry among others).
+   */
+  const besideWords = (element: Element) => (["previousSibling", "nextSibling"] as const).some((direction) => {
+    for (let at = element; ; at = at.parentElement!) {
+      let node = at[direction];
+      while (node && (node.nodeType === 8 || (node.nodeType === 3 && !/\S/.test(node.textContent!)))) node = node[direction];
+      if (node) {
+        return hasLetter(node.textContent)
+          && (node.nodeType === 3 || (node.nodeType === 1 && styleOf(node as Element).display === "inline"));
+      }
+      const parent = at.parentElement;
+      if (!parent || parent === owner || styleOf(parent).display !== "inline") return false;
+    }
+  });
+
   const visit = (element: Element) => {
     // The selector check first: it's cheap, and excluded subtrees then skip the style lookup.
     if (isExcluded(element)) {
+      // In running text, inline code, icons and the like stay part of the sentence around them
+      // (`run <code>claude --version</code>.`), so it is translated whole; code blocks, inputs and
+      // other excluded subtrees end the group.
+      if (element !== root && !element.matches(OWN_UI_SELECTOR) && !(element as HTMLElement).isContentEditable
+        && (inlineBoxDepth > 0 || /^(inline|math$)/.test(styleOf(element).display))) {
+        if (isInvisible(element) || element.matches(GRAPHIC_INLINE_SELECTOR)) return;
+        if (element.matches(KEPT_INLINE_SELECTOR)) {
+          const walker = document.createTreeWalker(element, 4 /* NodeFilter.SHOW_TEXT */);
+          for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+            keptText.add(node);
+            segments.push({ node, text: node.data });
+          }
+          return;
+        }
+      }
       flush();
       return;
     }
@@ -102,13 +146,16 @@ function parseTranslatableContent(
     }
 
     const style = styleOf(element);
-    const isBoundary = (style.display !== "inline" && style.display !== "contents")
+    const joinsInlineBox = inlineBoxDepth === 0 && style.display.startsWith("inline") && style.display !== "inline"
+      && besideWords(element);
+    const isBoundary = (inlineBoxDepth === 0 && !joinsInlineBox && style.display !== "inline" && style.display !== "contents")
       || element.matches('button, [role="button"]');
     const previousOwner = owner;
     if (isBoundary) {
       flush();
       owner = element;
     }
+    if (joinsInlineBox) inlineBoxDepth++;
 
     for (const child of element.childNodes) {
       if (child.nodeType === 1) {
@@ -124,6 +171,7 @@ function parseTranslatableContent(
       }
     }
 
+    if (joinsInlineBox) inlineBoxDepth--;
     if (isBoundary) {
       flush();
       owner = previousOwner;

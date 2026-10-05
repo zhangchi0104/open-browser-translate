@@ -22,7 +22,9 @@ Tests can substitute an implementation with `Layer.succeed(DomParser, ...)`.
 
 Returns text groups in DOM order without modifying the page. Inline descendants
 such as emphasis and links stay together; block layout boundaries, buttons,
-line breaks, and excluded subtrees end a group. For example,
+line breaks, and excluded subtrees end a group. An inline box (`inline-block`,
+`inline-flex`: a badge, a styled link) joins the group when words sit right
+before or after it; otherwise, like nav entries, it is a group of its own. For example,
 `<p>These are results for <b>translation</b> <i>text</i></p>` becomes one item
 with `text: "These are results for translation text"`.
 
@@ -45,7 +47,11 @@ opacity, and hidden/collapsed text. Clipped elements no larger than one CSS
 pixel in either dimension are treated as hidden helper text. Elements that
 aren't rendered (these, and `[hidden]`) are skipped without ending the group,
 so a link's screen-reader-only "(opens in a new window)" doesn't split the
-sentence around it; other excluded subtrees (code, inputs, icons) still end it. This is a
+sentence around it. Inline excluded elements don't split it either: inline
+`code`/`kbd`/`samp`/`math`, `aria-hidden`, `translate="no"` and `.notranslate`
+text is kept in the group's text and segments (for the model to keep as is),
+inline `svg`/`canvas` are skipped. A group of only such kept text isn't
+returned. Code blocks, inputs, and other block-level exclusions end the group. This is a
 heuristic, not a full clipping or occlusion test. Below-the-fold content remains
 eligible. Requires a browser document.
 
