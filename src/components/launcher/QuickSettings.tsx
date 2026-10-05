@@ -151,9 +151,8 @@ function ModelControl({ id, model, catalog, disabled, onChange }: {
         <SelectContent>
           {unlisted && <SelectItem value={model}>{model}（不在列表中）</SelectItem>}
           {catalog.models.map(({ slug, displayName }) => (
-            <SelectItem key={slug} value={slug}>
+            <SelectItem key={slug} value={slug} description={displayName !== slug && slug}>
               {displayName}
-              {displayName !== slug && <span className="ml-1 font-mono text-xs text-muted-foreground">{slug}</span>}
             </SelectItem>
           ))}
         </SelectContent>

@@ -11,6 +11,10 @@ const PLACEHOLDER_CSS = `:host { overflow-wrap: break-word; } .text { white-spac
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .bar { animation: none; } }`;
 
+// A faint indigo wash behind translations, so they stand apart from the page's own text on light
+// and dark pages alike without looking like a box.
+const TRANSLATION_TINT = "rgb(99 102 241 / 0.1)";
+
 // Text styling copied from the source so the translation reads like the original.
 const SOURCE_STYLES = [
   "font-family", "font-size", "font-weight", "font-style", "font-variant", "font-stretch", "line-height",
@@ -38,6 +42,23 @@ function lineCount(item: TranslatableContent): number {
   return lines;
 }
 
+/** Block translations' tint padding; inline ones are padded to fill their line instead. */
+const BLOCK_PADDING = "0.15em 0.4em";
+
+/**
+ * Pads an inline translation's tint to its line's height. An inline box's background covers only
+ * the font's height, so under a tall line-height it would be a thin strip beside the full-height
+ * block translations; filled out, wrapped lines meet like a block's.
+ */
+function fillLine(placeholder: HTMLElement) {
+  const lineHeight = Number.parseFloat(placeholder.ownerDocument.defaultView!.getComputedStyle(placeholder).lineHeight);
+  // `normal` line height is about the font's own height, so there's nothing to fill.
+  if (!Number.isFinite(lineHeight)) return;
+  placeholder.style.paddingBlock = "0";
+  const fontHeight = placeholder.getClientRects()[0]?.height;
+  if (fontHeight) placeholder.style.paddingBlock = `${Math.max(0, (lineHeight - fontHeight) / 2)}px`;
+}
+
 /** Whether `from` or an ancestor up to `block` lays its children out as a flex or grid row. */
 function inRow(from: Element | null, block: Element): boolean {
   const view = block.ownerDocument.defaultView!;
@@ -46,6 +67,22 @@ function inRow(from: Element | null, block: Element): boolean {
     if (element === block) return false;
   }
   return false;
+}
+
+/**
+ * Where a one-line translation goes: after the text, or after the outermost link, kept text (code,
+ * translate="no") or inline box (a badge) around it within the block, so the translation doesn't
+ * become part of it (clickable, underlined, monospace, boxed). A block that is itself a link keeps
+ * it inside.
+ */
+function inlineAnchor(last: Text, block: Element): Node {
+  const view = block.ownerDocument.defaultView!;
+  let anchor: Node = last;
+  for (let element = last.parentElement; element && element !== block && block.contains(element); element = element.parentElement) {
+    if (element.matches('a, code, kbd, samp, math, [aria-hidden="true"], [translate="no"], .notranslate')
+      || view.getComputedStyle(element).display !== "inline") anchor = element;
+  }
+  return anchor;
 }
 
 /** The element holding most of the group's text: the whole group for a link title, the paragraph for one short link. */
@@ -97,6 +134,7 @@ export function createCapturedContent() {
     placeholder.style.display = "block";
     placeholder.style.marginInlineStart = "0";
     placeholder.style.marginBlock = translated ? "0.25em" : "6px";
+    if (translated) placeholder.style.padding = BLOCK_PADDING;
     if (!translated) {
       // Outside the clip, `inherit` would pick up the wrong element's text styles.
       const style = document.defaultView!.getComputedStyle(item.element);
@@ -124,11 +162,8 @@ export function createCapturedContent() {
     const inline = translated
       ? lineCount(item) <= 1 || style.display.startsWith("inline")
       : style.display.startsWith("inline") || item.element.matches('button, a, [role="button"]');
-    // Insert after this text run, since one element may contain several groups. A one-line
-    // translation that would land inside a link within the block goes after the link instead, so it
-    // isn't part of the link (clickable, underlined); a block that is itself a link keeps it inside.
-    const link = last.parentElement?.closest("a");
-    let anchor: Node = translated && inline && link && link !== item.element && item.element.contains(link) ? link : last;
+    // Insert after this text run, since one element may contain several groups.
+    let anchor: Node = translated && inline ? inlineAnchor(last, item.element) : last;
     while (!(translated && inline) && anchor.parentElement && anchor.parentElement !== item.element && !anchor.nextSibling) {
       anchor = anchor.parentElement;
     }
@@ -142,6 +177,13 @@ export function createCapturedContent() {
       // text it translates, and text decoration doesn't reach inline-block descendants.
       const source = document.defaultView!.getComputedStyle(styleSource(item));
       for (const property of SOURCE_STYLES) placeholder.style.setProperty(property, source.getPropertyValue(property));
+      // The skeleton shows alone; the tint comes with the text, and the padding is already in place
+      // so the text arriving doesn't move anything.
+      if (!loading) placeholder.style.backgroundColor = TRANSLATION_TINT;
+      placeholder.style.borderRadius = "0.3em";
+      // Inline translations wrap across lines; each line fragment gets its own rounded ends.
+      placeholder.style.padding = inline ? "0 0.25em" : BLOCK_PADDING;
+      if (inline) placeholder.style.setProperty("box-decoration-break", "clone");
     } else {
       // Untranslated previews stay boxed so they read as placeholders.
       placeholder.style.cssText += "font: inherit; color: inherit; border: 1px solid #a3a7da; border-radius: 4px; padding: 4px 8px;";
@@ -184,6 +226,7 @@ export function createCapturedContent() {
     }
     anchor.parentNode?.insertBefore(placeholder, anchor.nextSibling);
     escapeClip(placeholder, item, translated);
+    if (translated && placeholder.style.display === "inline") fillLine(placeholder);
     placeholders.push(placeholder);
     return { placeholder, text, skeleton };
   }
@@ -221,6 +264,7 @@ export function createCapturedContent() {
         entry.skeleton.remove();
         entry.skeleton = undefined;
         delete entry.placeholder.dataset.loading;
+        entry.placeholder.style.backgroundColor = TRANSLATION_TINT;
         entry.placeholder.removeAttribute("aria-busy");
         entry.placeholder.setAttribute("aria-label", "译文");
       }

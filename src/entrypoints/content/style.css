@@ -34,6 +34,11 @@
   :host {
     position: relative !important;
     z-index: 2147483647 !important;
+    /*
+     * The launcher mounts in a bare div, not an <html> that Tailwind's base font would reach, and
+     * the reset clears it on the host; without this it falls back to the browser's serif default.
+     */
+    font-family: var(--default-font-family) !important;
     color-scheme: light dark;
     @apply text-foreground antialiased;
   }

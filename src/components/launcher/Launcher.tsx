@@ -9,12 +9,12 @@ import { useLauncherPosition } from "./use-launcher-position";
 const badgeLabels: Record<BadgeState, string> = { translating: "正在翻译", done: "翻译完成", failed: "翻译失败" };
 
 /**
- * The launcher on every page: a button that translates the page, a badge for how that went, the
+ * The launcher on every page: a button that turns the page's translation on and off, a badge for how that went, the
  * settings panel, and a status line. It's a guest on someone else's page, so it stays small and
  * neutral, with the brand only in its glyph.
  */
 export function Launcher() {
-  const [state, setState] = useState<LauncherState>({ busy: false, badge: null, status: null });
+  const [state, setState] = useState<LauncherState>({ active: false, busy: false, badge: null, status: null });
   const [panelOpen, setPanelOpen] = useState(false);
   const runner = useRef<ReturnType<typeof createTranslationRunner> | undefined>(undefined);
   const { position, onRight, handlers, consumeDrag } = useLauncherPosition(() => setPanelOpen(false));
@@ -36,20 +36,20 @@ export function Launcher() {
       >
         <button
           type="button"
-          className="pointer-events-auto relative grid size-11 cursor-grab touch-none place-items-center rounded-full border bg-card text-primary shadow-md transition-[background-color,transform] duration-150 ease-out outline-none select-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 active:scale-95 active:cursor-grabbing disabled:cursor-progress motion-reduce:transition-none"
-          aria-label="Open Browser Translate"
-          title="Open Browser Translate"
-          disabled={state.busy}
+          className="pointer-events-auto relative grid size-11 cursor-grab touch-none place-items-center rounded-full border bg-card text-primary shadow-md transition-[background-color,transform] duration-150 ease-out outline-none select-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 active:scale-95 active:cursor-grabbing aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary/90 motion-reduce:transition-none"
+          aria-label="翻译此页"
+          aria-pressed={state.active}
+          title={state.active ? "显示原文" : "翻译此页"}
           aria-busy={state.busy || undefined}
           {...handlers}
           onClick={() => {
             if (consumeDrag()) return; // The click that ends a drag isn't a click.
-            void runner.current?.start();
+            if (state.active) runner.current?.stop();
+            else void runner.current?.start();
           }}
         >
           <Languages className="size-[22px]" aria-hidden="true" />
         </button>
-        {/* A sibling of the button, so the button's disabled state doesn't fade it. */}
         {state.badge && <Badge state={state.badge} />}
         <Popover open={panelOpen} onOpenChange={setPanelOpen}>
           <PopoverTrigger asChild>

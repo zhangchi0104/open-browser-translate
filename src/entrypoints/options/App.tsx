@@ -641,9 +641,8 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
               <SelectContent>
                 {unlisted && <SelectItem value={model}>{model}（不在列表中）</SelectItem>}
                 {choices.map((m) => (
-                  <SelectItem key={m.slug} value={m.slug}>
+                  <SelectItem key={m.slug} value={m.slug} description={m.displayName !== m.slug && m.slug}>
                     {m.displayName}
-                    {m.displayName !== m.slug && <span className="ml-2 font-mono text-xs text-muted-foreground">{m.slug}</span>}
                   </SelectItem>
                 ))}
               </SelectContent>

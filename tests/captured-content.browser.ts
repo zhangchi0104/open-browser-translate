@@ -47,7 +47,7 @@ try {
   const [title, para, result, snippet] = Array.from(fixture.querySelectorAll("open-browser-translate-placeholder"), (node) => getComputedStyle(node));
   assert(title!.fontWeight === "700" && title!.fontSize === "24px" && title!.lineHeight === "30px" && title!.fontStyle === "italic", "translation keeps the heading's font");
   assert(title!.color === "rgb(10, 20, 30)" && title!.letterSpacing === "1px" && title!.textTransform === "uppercase", "translation keeps the heading's color and text styling");
-  assert(title!.borderTopWidth === "0px" && title!.paddingTop === "0px", "translations are not boxed");
+  assert(title!.borderTopWidth === "0px" && title!.backgroundColor !== "rgba(0, 0, 0, 0)", "translations get a faint background, not a border");
   assert(para!.color === "rgb(60, 60, 60)" && para!.fontSize === "15px" && !para!.textDecorationLine.includes("underline"), "mixed text follows the element holding most of the text");
   assert(result!.color === "rgb(0, 0, 200)" && result!.fontWeight === "600" && result!.textDecorationLine.includes("underline"), "a group that is all link text looks like the link");
   assert(fixture.querySelector("#snippet")!.nextElementSibling?.localName === "open-browser-translate-placeholder", "a clamped translation moves outside the clip");
@@ -97,9 +97,11 @@ try {
   assert(getComputedStyle(shortSkeleton).display === "inline", "a one-line source's skeleton sits on its line");
   assert(getComputedStyle(paraSkeleton).display === "block" && paraSkeleton.getBoundingClientRect().height > 20, "a paragraph's skeleton is a block of a few lines");
   assert(shortSkeleton.getBoundingClientRect().width > 10, "the skeleton takes up space");
+  assert(getComputedStyle(paraSkeleton).backgroundColor === "rgba(0, 0, 0, 0)", "a skeleton has no tint behind it");
   preview.update(waiting[0]!, "短", true);
   assert(fixture.querySelectorAll("#short open-browser-translate-placeholder").length === 1, "the first text replaces the skeleton in the same placeholder");
   assert(!("loading" in shortSkeleton.dataset) && !shortSkeleton.hasAttribute("aria-busy"), "and it stops reading as loading");
+  assert(getComputedStyle(shortSkeleton).backgroundColor !== "rgba(0, 0, 0, 0)", "the tint comes with the text");
   preview.discard([waiting[1]!]);
   assert(fixture.querySelector("#para open-browser-translate-placeholder") === null, "a block that won't be translated loses its skeleton");
 
@@ -119,8 +121,28 @@ try {
   preview.update(linked[0]!, "阅读指南", false);
   const afterLink = fixture.querySelector("#ends-in-link > open-browser-translate-placeholder");
   assert(afterLink !== null && afterLink.previousElementSibling?.id === "guide" && !fixture.querySelector("#guide open-browser-translate-placeholder"), "the translation sits after the link, outside it");
+  // A one-line block ending in inline code: the translation follows the code rather than joining it.
+  fixture.innerHTML = '<p id="ends-in-code" style="width:600px;font:16px/24px sans-serif">Then run <code id="command">claude --version</code></p>';
+  const coded = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  assert(coded.length === 1 && coded[0]!.text === "Then run claude --version", "the sentence and its code are one group");
+  preview.update(coded[0]!, "然后运行 claude --version", false);
+  const afterCode = fixture.querySelector("#ends-in-code > open-browser-translate-placeholder");
+  assert(afterCode !== null && afterCode.previousElementSibling?.id === "command", "the translation sits after the code, outside it");
+  // A one-line block ending in an inline box (a badge): the translation follows the box rather than joining it.
+  fixture.innerHTML = '<p id="ends-in-badge" style="width:600px;font:16px/24px sans-serif">This feature is <span id="badge" style="display:inline-block;padding:0 4px;border:1px solid"><b>beta</b></span></p>';
+  const badged = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  assert(badged.length === 1, "the sentence and its badge are one group");
+  preview.update(badged[0]!, "此功能为测试版", false);
+  const afterBadge = fixture.querySelector("#ends-in-badge > open-browser-translate-placeholder");
+  assert(afterBadge !== null && afterBadge.previousElementSibling?.id === "badge", "the translation sits after the badge, outside it");
+  // Under a tall line-height, an inline translation's tint fills its line, as a block translation's does.
+  fixture.innerHTML = '<p id="tall" style="width:600px;font:16px/40px sans-serif">One short line</p>';
+  const tall = Effect.runSync(DomParser.use((parser) => parser.parseTranslatableContent(fixture)).pipe(Effect.provide(DomParser.Live)));
+  preview.update(tall[0]!, "短短一行", false);
+  const tallRect = fixture.querySelector("#tall > open-browser-translate-placeholder")!.getClientRects()[0]!;
+  assert(Math.abs(tallRect.height - 40) < 1, `an inline translation's tint is as tall as its line (${tallRect.height}px)`);
   preview.remove();
-  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming, inline after one-line sources, loading skeleton, flex rows, links";
+  document.body.textContent = "PASS: clipped placeholders, multiple groups, normal placement, recapture, cleanup, source styles, streaming, inline after one-line sources, loading skeleton, flex rows, links, inline code, inline boxes, tint height";
 } catch (error) {
   preview.remove();
   document.body.textContent = `FAIL: ${String(error)}`;

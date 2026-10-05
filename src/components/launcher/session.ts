@@ -11,6 +11,8 @@ export type BadgeState = "translating" | "done" | "failed";
 
 /** What the launcher shows about the current session; `status` null hides the status line. */
 export interface LauncherState {
+  /** A session is running: the page shows translations, and the launcher's next click turns them off. */
+  active: boolean;
   busy: boolean;
   badge: BadgeState | null;
   status: string | null;
@@ -36,7 +38,8 @@ const notConfiguredText = (purpose: Purpose) => `请在设置中填写${PURPOSE_
 
 /**
  * Runs translation sessions on the page and reports what the launcher should show. Each `start`
- * begins a new session and stops the previous one; `dispose` stops it and removes the translations.
+ * begins a new session and stops the previous one; `stop` and `dispose` stop it and remove the
+ * translations.
  */
 export function createTranslationRunner(report: (change: Partial<LauncherState>) => void) {
   const capturedContent = createCapturedContent();
@@ -61,7 +64,7 @@ export function createTranslationRunner(report: (change: Partial<LauncherState>)
     // The badge once the session ends here: a session only ends on its own when it can't go on
     // (nothing to translate, a model not configured, preparing failed, or an error).
     let outcome: BadgeState | null = "failed";
-    report({ busy: true, badge: "translating", status: "正在捕获页面内容…" });
+    report({ active: true, busy: true, badge: "translating", status: "正在捕获页面内容…" });
     try {
       capturedContent.clear();
       const content = parseContent();
@@ -163,13 +166,21 @@ export function createTranslationRunner(report: (change: Partial<LauncherState>)
     } finally {
       if (id === session) {
         stopSession();
-        if (!disposed) report({ busy: false, badge: outcome });
+        if (!disposed) report({ active: false, busy: false, badge: outcome });
       }
     }
   }
 
   return {
     start,
+    /** Ends the session and puts the page back as it was. */
+    stop() {
+      session++;
+      stopSession();
+      stopSession = () => {};
+      capturedContent.clear();
+      report({ active: false, busy: false, badge: null, status: null });
+    },
     dispose() {
       disposed = true;
       stopSession();
