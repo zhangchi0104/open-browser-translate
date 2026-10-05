@@ -62,7 +62,7 @@ LANGUAGES
 Translates into Simplified Chinese by default, and into Traditional Chinese, English, Japanese, Korean, French, German, Spanish, Portuguese or Russian. Switch languages from the button's quick settings. The extension's own interface is in Simplified Chinese.
 
 PRIVACY
-Page text is sent only after you click translate, and only to the model service you configured. API keys and sign-in details stay in your browser; they are never synced or sent anywhere else. No analytics, no ads. Private windows leave no cache or history behind.
+Before your first translation, the extension tells you where page text will go and asks for your consent. After that, page text is sent only when you click translate, and only to the model service you configured. API keys and sign-in details stay in your browser; they are never synced or sent anywhere else. No analytics, no ads. Private windows leave no cache or history behind.
 Privacy policy: <<隐私政策 URL>>
 
 You need an API key for one of the services above, or a ChatGPT plan. Your provider bills you for usage.
@@ -93,7 +93,7 @@ Open Browser Translate 在你正在阅读的网页上就地翻译：每段译文
 默认翻译成简体中文，也可以翻译成繁体中文、英语、日语、韩语、法语、德语、西班牙语、葡萄牙语或俄语，在悬浮按钮的快捷设置里切换。扩展自身的界面是简体中文。
 
 隐私
-只有你点击翻译之后，网页文字才会发送出去，而且只发给你设置的模型服务。API key 和登录信息只保存在你的浏览器里，不会同步，也不会发到其他任何地方。没有统计代码，没有广告。无痕窗口里翻译不留下缓存和记录。
+第一次翻译前，扩展会说明网页文字将发往哪里，并征得你的同意。此后只有你点击翻译时，网页文字才会发送出去，而且只发给你设置的模型服务。API key 和登录信息只保存在你的浏览器里，不会同步，也不会发到其他任何地方。没有统计代码，没有广告。无痕窗口里翻译不留下缓存和记录。
 隐私政策：<<隐私政策 URL>>
 
 使用前需要上面任一服务的 API key，或者一个 ChatGPT 订阅。用量费用由对应的服务商收取。
@@ -118,7 +118,7 @@ Open Browser Translate 在你正在阅读的网页上就地翻译：每段译文
 | Store icon（商店图标） | `store/chrome/icon-128.png` | 128×128 PNG，96×96 主体，四周各留 16px 透明边距。与 `public/icon/128.png` 是同一张图。 |
 | Screenshots（屏幕截图），按顺序上传 | `store/chrome/screenshot-1-inline-translation.png` | 1280×800。网页内联翻译：译文在原文下方，导航和署名不翻译。 |
 | | `store/chrome/screenshot-2-quick-settings.png` | 1280×800。悬浮启动器和快捷设置面板（目标语言、模型）。 |
-| | `store/chrome/screenshot-3-settings-models.png` | 1280×800。设置页"语言与模型"。 |
+| | `store/chrome/screenshot-3-data-consent.png` | 1280×800。第一次翻译前的告知和同意面板。 |
 | | `store/chrome/screenshot-4-settings-connections.png` | 1280×800。设置页"连接"：ChatGPT 登录和 API 连接。 |
 | | `store/chrome/screenshot-5-settings-cache-dark.png` | 1280×800。设置页"翻译缓存"，深色主题。 |
 | Small promo tile（小型宣传图，必填） | `store/chrome/promo-small-440x280.png` | 440×280，不透明。 |
@@ -154,10 +154,10 @@ Translate the web page the user is reading, in place, into a language the user c
 **`storage`**
 
 ```text
-Keeps the user's settings (target language, model connections with their API keys, chosen models), the ChatGPT sign-in tokens, the floating button's position, per-site translation context (recent page titles and term translations) and a local debug log in chrome.storage.local on the user's device. Nothing is synced or sent to the developer.
+Keeps the user's settings (target language, model connections with their API keys, chosen models), the ChatGPT sign-in tokens, the floating button's position, whether the user agreed to send page text, per-site translation context (recent page titles and term translations) and a local debug log in chrome.storage.local on the user's device. Nothing is synced or sent to the developer.
 ```
 
-> 中文对照：在用户设备的 chrome.storage.local 中保存设置（目标语言、模型连接及其 API key、所选模型）、ChatGPT 登录令牌、悬浮按钮位置、每个站点的翻译上下文（最近的页面标题和术语译法）以及本地调试日志。不同步，也不发送给开发者。
+> 中文对照：在用户设备的 chrome.storage.local 中保存设置（目标语言、模型连接及其 API key、所选模型）、ChatGPT 登录令牌、悬浮按钮位置、用户是否同意发送网页文字、每个站点的翻译上下文（最近的页面标题和术语译法）以及本地调试日志。不同步，也不发送给开发者。
 
 **Host permission justification（主机权限理由）**
 
@@ -285,8 +285,9 @@ CI 的提交步骤大致如下：
 
 ## 8. 已知风险和待办
 
-- **界面内的数据披露和同意。** Chrome Web Store 2026 年的政策更新（2026-08-01 起执行）要求：所有数据收集都要在扩展界面里显著披露，并在收集之前取得用户的明确同意，只写在隐私政策或商店说明里不够。这条是根据政策公告的检索摘要整理的，确切条文需要以 [官方政策页面](https://developer.chrome.com/docs/webstore/program-policies) 为准。
-  - 扩展现在只在用户点击翻译后才发送页面文字，但界面里没有说明"页面文字会发给你配置的模型服务"，也没有确认步骤。
-  - 建议加一个首次使用时的说明和"同意"按钮，例如在第一次点击翻译时，或者添加第一个连接时显示。这会有一定概率影响审核结果。
+- **界面内的数据披露和同意（已实现）。** Chrome Web Store 2026 年的政策更新（2026-08-01 起执行）要求：数据收集要在扩展界面里显著披露，并在收集之前取得用户的明确同意。这条是根据政策公告的检索摘要整理的，确切条文以 [官方政策页面](https://developer.chrome.com/docs/webstore/program-policies) 为准。
+  - 扩展的做法：第一次点击启动器时不翻译，先在旁边弹出"翻译前请确认"面板，说明本页的文字和标题会发给哪个模型服务（显示设置里所选连接的名称）。用户点"同意并翻译"之后才发送。
+  - 同意记录在 `local:dataConsent`，带有 `DATA_CONSENT_VERSION`（`src/modules/shared/settings/model.ts`）。以后发送的内容或去向有变化时，把版本号加一，用户会被重新询问。
+  - 截图 3 展示的就是这个面板。如果审核人员问起，可以引用它。
 - **Firefox 的数据披露。** `wxt.config.ts` 中 Firefox 的 `data_collection_permissions` 只声明了 `websiteContent`。如果要与这里的 Chrome 披露保持一致，可以考虑补上 `authenticationInfo` 和 `personallyIdentifyingInfo`，并改为可选或必需。
 - **扩展界面只有中文。** 英文条目的说明里已经写明"界面是简体中文"，避免用户看到界面后给差评。

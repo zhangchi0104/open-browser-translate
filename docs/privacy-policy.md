@@ -21,7 +21,9 @@ Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在�
 - 帮助模型理解上下文的内容：页面标题、页面的 meta 描述、第一个主标题、正文开头的一小段样本、分页链接的文字，以及当前文字块前面的一段原文。
 - 同一站点之前翻译留下的上下文：最近翻译过的几个页面的标题、模型选定的术语译法，以及最近的几段原文和译文。
 
-本扩展不会把网页的网址、Cookie、表单输入、密码框内容或浏览历史发送给模型服务。你不点击翻译，本扩展就不发送任何网页内容。
+第一次翻译之前，本扩展会在页面上弹出说明，告诉你网页文字将发给哪个模型服务。你点"同意并翻译"之后才会发送。此后每次都要你点击翻译才会发送；你不点击，本扩展就不发送任何网页内容。
+
+本扩展不会把网页的网址、Cookie、表单输入、密码框内容或浏览历史发送给模型服务。
 
 ### 1.2 凭据和账号信息
 
@@ -38,7 +40,7 @@ Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在�
 - **内容分析缓存**：保存每个文字块属于哪类内容（正文、导航等），保留期限和数量上限与翻译缓存相同。
 - **站点上下文**：每个站点最近翻译过的页面标题、术语表和最近几段译文。一周没有再翻译的站点会被清除，最多保留 50 个站点。
 - **调试日志和请求追踪**：最近 500 条日志和 100 次请求的记录。请求追踪包含发给模型的提示词、上下文、原文和译文，以及页面地址（只记录站点和路径，不记录查询参数），不记录 API key。你可以在设置页的"调试日志"中查看、导出或清空这些记录。导出由你手动操作，本扩展不会自动上传。
-- 你的设置，以及悬浮启动器在页面上的位置。
+- 你的设置、悬浮启动器在页面上的位置，以及你是否同意过发送网页文字。
 
 在无痕窗口中翻译时，本扩展不写入缓存，不保存站点上下文，也不在日志中记录页面地址。
 
@@ -103,7 +105,9 @@ After you click the floating launcher on a page to translate it, the extension s
 - Context that helps the model understand the page: the page title, its meta description, its first main heading, a short sample of its opening text, the labels of its pagination links, and the original text just before the blocks being translated.
 - Context left by earlier translations on the same site: the titles of a few recently translated pages, the renderings the model chose for terms, and a few recent passages with their translations.
 
-The extension does not send the page's URL, cookies, form input, password fields or browsing history to model services. Until you click translate, it sends no page content at all.
+Before the first translation, the extension shows a notice on the page saying which model service the page text will go to, and sends nothing until you choose "同意并翻译" (agree and translate). After that, page text is still sent only when you click translate; until you do, the extension sends no page content at all.
+
+The extension does not send the page's URL, cookies, form input, password fields or browsing history to model services.
 
 ### 1.2 Credentials and account information
 
@@ -120,7 +124,7 @@ The following data stays in your browser and never leaves your device:
 - **Content analysis cache**: which kind of content each block is (main text, navigation and so on). It has the same retention and limit as the translation cache.
 - **Site context**: for each site, the titles of recently translated pages, the glossary and the latest translated passages. A site not translated for a week is cleared, and at most 50 sites are kept.
 - **Debug log and request traces**: the newest 500 log entries and 100 requests. Traces include the prompts, context, original text and translations sent to and returned by the model, and the page address (site and path only, without the query string). They do not include API keys. You can view, export or clear them under "Debug log" (调试日志) in the settings. Exporting is something you do by hand; the extension never uploads them.
-- Your settings, and where the floating launcher sits on the page.
+- Your settings, where the floating launcher sits on the page, and whether you agreed to send page text.
 
 In private (incognito) windows, the extension writes no cache, keeps no site context, and records no page address in its logs.
 
