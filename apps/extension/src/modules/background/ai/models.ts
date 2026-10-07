@@ -1,12 +1,13 @@
 import { Data, Effect, Layer, LayerMap, Redacted } from "effect";
 import type { DecisionModel, LanguageModel } from "effect/unstable/ai";
 import { Settings } from "../../shared/settings/service";
-import { AiProviders, defaultModel, findConnection, providerOf, type AISettings, type ReasoningEffort, type SettingsProvider } from "../../shared/settings/model";
+import { AiProviders, decisionModels, defaultModel, findConnection, providerOf, type AISettings, type ReasoningEffort, type SettingsProvider } from "../../shared/settings/model";
 import type { Purpose } from "../../shared/protocol";
 import { openAICompatibleLayer, vercelLayer } from "./vercel";
 import { OPENAI_API_URL } from "./openai-models";
 import { ChatGPTToken, chatgptLayer } from "./chatgpt";
-import { chatgptDecisionLayer, openAIDecisionLayer } from "./openai-decisions";
+import { chatgptDecisionLayer, compatibleDecisionLayer } from "./structured-decisions";
+import { openAIDecisionLayer } from "./openai-decisions";
 import { vercelDecisionLayer } from "./gateway-decisions";
 
 // Analysis and translation each run on the model the settings select when a request starts.
@@ -34,12 +35,14 @@ export function modelConfig(settings: AISettings, purpose: Purpose): ModelConfig
   const { connection: id, models, reasoningEffort, fast } = settings[purpose];
   const connection = findConnection(settings, id);
   const provider = providerOf(settings, id);
+  // Decision models don't reason, so the effort set for this purpose doesn't apply to them.
+  const reasons = !decisionModels(purpose, provider);
   return {
     provider,
     model: models[id] ?? defaultModel(purpose, provider),
     apiKey: Redacted.make(connection?.apiKey.trim() ?? ""),
     ...(connection?.kind === AiProviders.Custom && { apiUrl: connection.apiUrl?.trim().replace(/\/+$/, "") ?? "" }),
-    ...(reasoningEffort && { reasoningEffort }),
+    ...(reasoningEffort && reasons && { reasoningEffort }),
     ...(fast && { fast }),
   };
 }
@@ -77,11 +80,13 @@ export function missingConfiguration(settings: AISettings, signedIn: boolean, pu
   }
 }
 
-// Only called for configured purposes, so `provider` is set; OpenAI and custom connections share a client.
+// Only called for configured purposes, so `provider` is set. An OpenAI key asks the Decisions API;
+// the ChatGPT plan and custom APIs simulate it on a language model.
 function analysisLayer({ provider, model, apiKey, apiUrl, reasoningEffort, fast }: ModelConfig): Layer.Layer<DecisionModel.DecisionModel, never, ChatGPTToken> {
   if (provider === AiProviders.OpenAISubscription) return chatgptDecisionLayer({ model, reasoningEffort, fast });
   if (provider === AiProviders.VercelAIGateway) return vercelDecisionLayer({ model, apiKey });
-  return openAIDecisionLayer({ model, apiKey, apiUrl, reasoningEffort });
+  if (provider === AiProviders.OpenAIApi) return openAIDecisionLayer({ model, apiKey });
+  return compatibleDecisionLayer({ model, apiKey, apiUrl: apiUrl!, reasoningEffort });
 }
 
 function translationLayer({ provider, model, apiKey, apiUrl, reasoningEffort, fast }: ModelConfig): Layer.Layer<LanguageModel.LanguageModel, never, ChatGPTToken> {

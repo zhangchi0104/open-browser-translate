@@ -1,11 +1,12 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { Effect, Layer, Redacted } from "effect";
+import { Effect, Layer, Redacted, Schema } from "effect";
 import { AiError, Decision, DecisionModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
 import { AI, openAIDecisionLayer } from "../src/modules/background/ai";
-import { toProviderAnswer } from "../src/modules/background/ai/openai-decisions";
-import { blocksIn, chatRequest, decisionResponse, isDecisionRequest } from "./decision-mock";
+import { toProviderAnswer } from "../src/modules/background/ai/structured-decisions";
+import { fromAnswer } from "../src/modules/background/ai/openai-decisions";
+import { blocksIn, decisionsRequest, decisionsResponse } from "./decision-mock";
 import { ContentAnalyzer } from "../src/modules/background/content-analyzer";
 import { TRANSLATION_PRIORITY, type ContentRole } from "../src/modules/shared/protocol";
 import type { TranslatableContent } from "../src/modules/page/block-collector";
@@ -68,28 +69,61 @@ test("empty and oversized input do not call AI; batches preserve order", async (
   }).pipe(Effect.provide(layer)));
 });
 
-test("OpenAI decision adapter sends one structured-output request and decodes answers", async () => {
+test("OpenAI decision adapter asks the Decisions API one choice question per block", async () => {
   let calls = 0;
   const fetchMock: typeof globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     calls++;
-    assert.equal(String(input), "https://api.openai.com/v1/chat/completions");
+    assert.equal(String(input), "https://api.openai.com/v1/decisions");
+    assert.equal(init?.method, "POST");
     assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-placeholder");
-    const request = chatRequest(init);
+    const request = decisionsRequest(init);
     assert.equal(request.model, "gpt-6-luna");
-    assert.ok(isDecisionRequest(request));
-    return decisionResponse(request, (key, input, options) => {
+    assert.deepEqual(request.questions.map(({ type, name }) => [type, name]), [["choice", "0"]]);
+    assert.ok(request.questions[0]!.choices!.every(({ description }) => description), "each role is described");
+    return decisionsResponse(init, (key, input, options) => {
       assert.equal(key, "0");
       assert.equal(blocksIn(input)[0]!.text, "Article body");
       assert.deepEqual(options, labels);
       return "content";
     });
   };
-  const layer = ContentAnalyzer.Live.pipe(Layer.provide(openAIDecisionLayer({ apiKey: Redacted.make("test-placeholder") })));
+  const layer = ContentAnalyzer.Live.pipe(Layer.provide(openAIDecisionLayer({ apiKey: Redacted.make("test-placeholder"), model: "gpt-6-luna" })));
   const result = await Effect.runPromise(ContentAnalyzer.use((service) => service.analyze([content("Article body")])).pipe(Effect.provide(layer), Effect.provideService(FetchHttpClient.Fetch, fetchMock)));
   assert.equal(calls, 1);
   assert.equal(result[0]?.role, "content");
   assert.equal(result[0]?.confidence, 1);
   assert.equal(result[0]?.fallbackReason, undefined);
+});
+
+test("Decisions API answers become DecisionModel answers; refusals and mismatched types fail", () => {
+  const classify = Decision.classify({ instructions: "Pick", criteria: { a: "A", b: "B" } });
+  assert.deepEqual(fromAnswer("x", classify, { type: "choice", name: "x", choice: "a", confidence: 0.9, probabilities: [{ value: "a", probability: 0.7 }, { value: "b", probability: 0.2999 }] }),
+    { _tag: "Classify", label: "a", probabilities: { a: 0.7 / 0.9999, b: 0.2999 / 0.9999 }, confidence: 0.9 });
+  const rate = Decision.rate({ instructions: "Rate", criteria: ["low", "mid", "high"] });
+  assert.deepEqual(fromAnswer("x", rate, { type: "score", name: "x", score: 1.1, confidence: 0.55, probabilities: [
+    { value: 0, label: "low", probability: 0.1 }, { value: 1, label: "mid", probability: 0.7 }, { value: 2, label: "high", probability: 0.2 },
+  ] }), { _tag: "Rate", rating: 1.1, probabilities: { low: 0.1, mid: 0.7, high: 0.2 }, confidence: 0.55 });
+  const probability = Decision.probability({ instructions: "Is it?", criteria: { false: "No", true: "Yes" } });
+  assert.deepEqual(fromAnswer("x", probability, { type: "predicate", name: "x", probability: 0.92 }), { _tag: "Probability", probability: 0.92 });
+
+  const refused = fromAnswer("x", classify, { type: "refusal", name: "x" });
+  assert.ok(AiError.isAiError(refused) && refused.reason._tag === "ContentPolicyError");
+  assert.ok(AiError.isAiError(fromAnswer("x", classify, { type: "predicate", name: "x", probability: 1 })));
+  assert.ok(AiError.isAiError(fromAnswer("x", classify, undefined)));
+});
+
+test("Decisions API errors stay typed: a bad key, a rate limit, a malformed body", async () => {
+  const definition = Decision.make({ input: Schema.String, decisions: { relevant: Decision.probability({ instructions: "Is it?", criteria: { false: "No", true: "Yes" } }) } });
+  const decide = (response: Response) => Effect.runPromise(DecisionModel.decide(definition, { input: "Hello" }).pipe(
+    Effect.provide(openAIDecisionLayer({ apiKey: Redacted.make("test-placeholder"), model: "gpt-6-luna" })),
+    Effect.provideService(FetchHttpClient.Fetch, async () => response.clone()),
+    Effect.flip,
+  ));
+  const unauthorized = await decide(Response.json({ error: { message: "Incorrect API key provided", type: "invalid_request_error", code: "invalid_api_key" } }, { status: 401 }));
+  assert.equal(unauthorized.reason._tag, "AuthenticationError");
+  assert.match(unauthorized.message, /Incorrect API key provided/);
+  assert.equal((await decide(Response.json({ error: { message: "Slow down" } }, { status: 429 }))).reason._tag, "RateLimitError");
+  assert.equal((await decide(Response.json({ answers: "nope" }))).reason._tag, "InvalidOutputError");
 });
 
 test("model-reported weights are normalized into valid decision answers", () => {

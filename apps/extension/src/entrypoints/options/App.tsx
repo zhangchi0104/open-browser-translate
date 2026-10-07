@@ -5,11 +5,10 @@ import { PURPOSE_NAMES, type Purpose } from "@/modules/shared/protocol";
 import { Bug, ChevronDown, Database, ExternalLink, KeyRound, Languages, Plus } from "lucide-react";
 import {
   AiProviders, aiSettings, CHATGPT_CONNECTION, CONNECTION_KIND_NAMES, CONNECTION_KINDS,
-  CHATGPT_CONNECTION_NAME, connectionName, defaultModel, findConnection, normalizeApiUrl, providerOf, purposeError, REASONING_EFFORTS,
+  CHATGPT_CONNECTION_NAME, connectionName, decisionModels, defaultModel, findConnection, normalizeApiUrl, providerOf, purposeError, REASONING_EFFORTS,
   TARGET_LANGUAGES, targetLanguageOf, validateApiUrl,
   type AISettings, type Connection, type ConnectionKind, type ReasoningEffort, type SettingsProvider,
 } from "@/modules/shared/settings";
-import { GATEWAY_DECISION_MODELS } from "@/modules/background/ai/gateway-models";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/background/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/background/ai/chatgpt-session";
 import { Button } from "@/components/ui/button";
@@ -43,8 +42,8 @@ const purposes = {
   analysis: {
     title: "内容分析",
     description: "先判断页面上哪些内容值得翻译。",
-    // The gateway runs evaluation models built for decisions; OpenAI's Decisions API isn't open
-    // yet, so other connections answer decisions with an ordinary model.
+    // The gateway's evaluation models and OpenAI's Decisions API are built for decisions; the
+    // ChatGPT plan and custom APIs answer them with an ordinary model.
     placeholder: (p: SettingsProvider | undefined) => defaultModel("analysis", p) || "模型 ID",
   },
   translation: {
@@ -86,7 +85,6 @@ function signInOutcome(state: string): Promise<SignInResult> {
   });
 }
 
-const gatewayDecisionCatalog: LoadedCatalog = { catalog: { status: "ok", models: GATEWAY_DECISION_MODELS }, reload: () => {} };
 
 function useChatGPTEmail() {
   const [email, setEmail] = useState<string | null>();
@@ -536,12 +534,12 @@ const effortLabels: Record<ReasoningEffort, string> = {
 };
 const DEFAULT_EFFORT = "default";
 
-/** Where the model list for a purpose on `connection` comes from, if it can be asked for yet. */
-function catalogRequest(purpose: Purpose, provider: SettingsProvider | undefined, connection: Connection | undefined, email: string | null | undefined) {
+/** Where the model list on `connection` comes from, if it can be asked for yet. */
+function catalogRequest(provider: SettingsProvider | undefined, connection: Connection | undefined, email: string | null | undefined) {
   switch (provider) {
     case AiProviders.OpenAISubscription: return email ? { type: "chatgpt-models" } as const : undefined;
-    // The gateway's language catalog is public; analysis there uses the fixed evaluation models.
-    case AiProviders.VercelAIGateway: return purpose === "translation" ? { type: "gateway-models" } as const : undefined;
+    // The gateway's language catalog is public.
+    case AiProviders.VercelAIGateway: return { type: "gateway-models" } as const;
     case AiProviders.OpenAIApi: {
       const apiKey = connection?.apiKey.trim();
       return apiKey ? { type: "openai-models", apiKey } as const : undefined;
@@ -572,12 +570,12 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
   // A purpose can still point at a connection removed in this draft; it must be changed before saving.
   const removed = !!draft && !provider;
   const model = draft?.[purpose].models[connectionId] ?? defaultModel(purpose, provider);
-  // Gateway analysis offers the fixed evaluation models (Jev and similar) instead of a loaded catalog.
-  const evaluation = purpose === "analysis" && provider === AiProviders.VercelAIGateway;
-  const request = catalogRequest(purpose, provider, connection, email);
+  // Analysis on the gateway or an OpenAI key offers its fixed decision models instead of a loaded catalog.
+  const fixed = decisionModels(purpose, provider);
+  const evaluation = !!fixed;
   const keyed = provider === AiProviders.OpenAIApi || provider === AiProviders.Custom;
-  const loaded = useCatalog(request, keyed ? 600 : 0);
-  const { catalog, reload } = evaluation ? gatewayDecisionCatalog : loaded;
+  const loaded = useCatalog(fixed ? undefined : catalogRequest(provider, connection, email), keyed ? 600 : 0);
+  const { catalog, reload }: LoadedCatalog = fixed ? { catalog: { status: "ok", models: fixed }, reload: () => {} } : loaded;
   const text = provider && catalogHelp[provider];
   // A list to pick from replaces the free-text field once the connection's catalog has loaded.
   const choices = catalog.status === "ok" && catalog.models.length ? catalog.models : undefined;
@@ -585,12 +583,12 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
   // Empty text (the gateway needs nothing to list its models) shows no footnote.
   const help = (error ?? (removed ? "这个连接已被删除，请选择其他连接。"
     : !text || (choices && !unlisted) ? undefined
-    : unlisted ? (evaluation ? `模型 ${model} 不是可选的评估模型，请重新选择。` : `模型 ${model} 不在${text.source}的模型列表中，请重新选择。`)
+    : unlisted ? (evaluation ? `模型 ${model} 不能用于内容分析，请重新选择。` : `模型 ${model} 不在${text.source}的模型列表中，请重新选择。`)
     : catalog.status === "ok" ? `${text.source}没有返回可用模型，可直接填写模型 ID。`
     : catalog.status === "loading" ? "正在读取可用模型…"
     : catalog.status === "failed" ? "无法读取模型列表，可直接填写模型 ID，或稍后重试。"
     : text.unavailable)) || undefined;
-  // The gateway's evaluation models answer decisions without reasoning, so there is nothing to tune.
+  // Decision models answer without reasoning, so there is nothing to tune.
   const reasons = !evaluation && !removed;
   const effort = draft?.[purpose].reasoningEffort;
   // Fast mode is a ChatGPT plan option (the service tier Codex uses when signed in with ChatGPT).

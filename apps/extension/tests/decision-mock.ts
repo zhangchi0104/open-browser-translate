@@ -1,4 +1,4 @@
-// Mocked model requests and responses: OpenAI-compatible decisions and Chat Completions.
+// Mocked model requests and responses: OpenAI's Decisions API, decisions simulated on Chat Completions, and Chat Completions.
 import { Schema } from "effect";
 
 /** The parts of a Chat Completions request the tests look at; other fields are dropped. */
@@ -71,4 +71,48 @@ export function chatCompletionStream(model: string, content: string) {
   const pieces = content.match(/[\s\S]{1,7}/g) ?? [];
   const body = chunk({ role: "assistant", content: "" }) + pieces.map((piece) => chunk({ content: piece })).join("") + chunk({}, "stop") + "data: [DONE]\n\n";
   return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
+// Answers a mocked request to OpenAI's Decisions API (`POST /v1/decisions`).
+const DecisionsRequest = Schema.Struct({
+  model: Schema.String,
+  input: Schema.String,
+  questions: Schema.Array(Schema.Struct({
+    type: Schema.Literals(["predicate", "choice", "score"]),
+    name: Schema.String,
+    instructions: Schema.String,
+    choices: Schema.optional(Schema.Array(Schema.Struct({ value: Schema.String, description: Schema.optional(Schema.String) }))),
+    levels: Schema.optional(Schema.Array(Schema.Struct({ label: Schema.String }))),
+  })),
+});
+export type DecisionsRequest = typeof DecisionsRequest.Type;
+const decodeDecisionsRequest = Schema.decodeUnknownSync(Schema.fromJsonString(DecisionsRequest));
+
+export const isDecisionsCall = (input: RequestInfo | URL) => String(input) === "https://api.openai.com/v1/decisions";
+
+/** The Decisions API request a mocked fetch received. */
+export const decisionsRequest = (init?: RequestInit): DecisionsRequest => decodeDecisionsRequest(String(init?.body));
+
+/**
+ * `pick` returns the option to put all probability on, given the question name, the decoded input
+ * and the options: choice values, level labels, or "false" and "true" for a predicate.
+ */
+export function decisionsResponse(init: RequestInit | undefined, pick: (key: string, input: unknown, labels: string[]) => string) {
+  const body = decisionsRequest(init);
+  // Structured input arrives as JSON text; a plain string input arrives as is.
+  const input: unknown = (() => { try { return JSON.parse(body.input); } catch { return body.input; } })();
+  const answers = body.questions.map((question) => {
+    if (question.type === "predicate") {
+      return { type: "predicate", name: question.name, probability: pick(question.name, input, ["false", "true"]) === "true" ? 1 : 0 };
+    }
+    if (question.type === "choice") {
+      const labels = question.choices!.map(({ value }) => value);
+      const choice = pick(question.name, input, labels);
+      return { type: "choice", name: question.name, choice, confidence: 1, probabilities: labels.map((value) => ({ value, probability: value === choice ? 1 : 0 })) };
+    }
+    const labels = question.levels!.map(({ label }) => label);
+    const level = labels.indexOf(pick(question.name, input, labels));
+    return { type: "score", name: question.name, score: level, confidence: 1, probabilities: labels.map((label, value) => ({ value, label, probability: value === level ? 1 : 0 })) };
+  });
+  return Response.json({ model: body.model, answers, usage: { input_tokens: 10, output_tokens: 0 } });
 }

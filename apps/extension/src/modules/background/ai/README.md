@@ -1,7 +1,7 @@
 # AI providers
 
 `openAIDecisionLayer` provides Effect's `DecisionModel` (exported here as `AI`)
-for typed decisions. `vercelLayer` provides `LanguageModel` for text generation through
+for typed decisions on OpenAI's Decisions API. `vercelLayer` provides `LanguageModel` for text generation through
 Vercel AI Gateway's OpenAI-compatible Chat Completions endpoint.
 
 ```ts
@@ -49,8 +49,8 @@ ChatGPT sign-in stays one per browser, reached through the fixed connection id
 `CHATGPT_CONNECTION`. Model IDs are retained per task and connection.
 
 Either task can use any connection. Analysis on the gateway asks its evaluation
-models (Jev and similar); on any other connection it answers decisions with an
-ordinary model (see below). Custom connections share the OpenAI client with
+models (Jev and similar), and on an OpenAI key the Decisions API; on the ChatGPT
+plan or a custom connection it answers decisions with an ordinary model (see below). Custom connections share the OpenAI client with
 their own base URL, and cached answers from them are also keyed by that URL.
 The background reaches a custom server only with host permission for its
 origin, which the settings page requests when it saves.
@@ -81,26 +81,53 @@ becomes a connection whose id is its provider's name (`VercelAIGateway`,
 `OpenAIApi`), and the ChatGPT sign-in keeps `OpenAISubscription`, so purposes
 and their remembered models carry over unchanged.
 
+Settings v6 resets the analysis model remembered for every OpenAI connection to
+`gpt-6-luna`, the only model the Decisions API runs.
+
 ## Content analysis on OpenAI
 
-OpenAI announced a Decisions API (DevDay, 2026-09-29), but it is in limited
-preview with no published endpoint or request format, so `openai-decisions.ts`
-does not call it. Instead `languageModelDecisionLayer` answers any
-`DecisionModel` definition with one structured-output request on the current
-`LanguageModel`: the model returns a probability for every option of every
-decision, which are normalized to sum to 1. Classify labels are the most likely
-option, and `confidence` is that option's probability. Model-reported
-probabilities are less calibrated than Jev's, so the 0.8 thresholds may need
-tuning against live pages.
+`openAIDecisionLayer` (`openai-decisions.ts`) sends `DecisionModel` decisions to
+OpenAI's Decisions API, `POST /v1/decisions`, in public beta since October 2026:
+https://developers.openai.com/api/docs/guides/decisions. The request and
+response shapes follow openai-node's `src/resources/decisions.ts`; there is no
+Effect adapter yet. All of a request's decisions go as one `questions` array,
+each named by its decision key, with the state as `input` (JSON text unless it is
+already a string):
 
-`openAIDecisionLayer` runs it on OpenAI's Chat Completions API with an API key;
-`chatgptDecisionLayer` runs it on the ChatGPT plan through `chatgpt.ts`. When the
-Decisions API is documented, replace the request in `openai-decisions.ts`; the
-rest of the extension depends only on `DecisionModel`.
+- `Classify` → a `choice` question; each label is a choice value, its criterion
+  the description.
+- `Rate` → a `score` question; the levels in order. Per-level probabilities come
+  back by index and are mapped to the level names.
+- `Probability` → a `predicate` question. Predicates have no options, so the true
+  and false criteria are appended to the instructions.
+
+Distributions are renormalized like Jev's (see below). A `refusal` answer fails
+the request with `ContentPolicyError`; HTTP errors map to `AiError` reasons by
+status (401 → `AuthenticationError`, 429 → `RateLimitError`, ...). The API takes
+no reasoning effort or service tier, so those settings don't apply here, and
+`gpt-6-luna` is the only model.
+
+`decisionModels(purpose, provider)` in `shared/settings/model.ts` owns the fixed
+decision models: the gateway's evaluation models and the Decisions API's. It
+supplies the default model, the lists the options page and the quick panel
+offer, the check that rejects any other model when settings are saved, and
+whether the purpose's reasoning effort applies (`modelConfig` drops it for
+decision models).
+
+The endpoint takes an API key, so the ChatGPT plan can't use it, and
+OpenAI-compatible servers don't have it. There `languageModelDecisionLayer`
+(`structured-decisions.ts`) answers any `DecisionModel` definition with one
+structured-output request on the current `LanguageModel`: the model returns a
+probability for every option of every decision, which are normalized to sum to 1.
+Classify labels are the most likely option, and `confidence` is that option's
+probability. Model-reported probabilities are less calibrated than a decision
+model's, so the 0.8 thresholds may need tuning against live pages.
+`chatgptDecisionLayer` runs it on the ChatGPT plan through `chatgpt.ts`, and
+`compatibleDecisionLayer` on a custom connection.
 
 ## Content analysis on the Vercel AI Gateway
 
-The default until the Decisions API opens. The gateway lists models of type
+The default analysis connection. The gateway lists models of type
 `evaluation` (`typesafe-ai/jev`, `convaiinnovations/laya`, `liquid/d1`) that take
 typed questions and return probabilities without generating text.
 `vercelDecisionLayer` (`gateway-decisions.ts`) sends `DecisionModel` decisions to
@@ -109,9 +136,10 @@ them through the TypeSafe-compatible System One API at
 is involved. It mirrors `@effect/ai-typesafe`'s adapter but renormalizes each
 distribution: Jev rounds its probabilities, so they can sum to 0.9998, while
 `DecisionModel` accepts only 1e-6 off. Sums within 0.05 of 1 are rescaled
-(omitted labels count as 0); anything further off still fails. The options page offers the evaluation models hard-coded in
-`GATEWAY_DECISION_MODELS` (`gateway-models.ts`) for gateway analysis, and loads the
-gateway's language models for gateway translation (`gateway-models.ts`).
+(omitted labels count as 0); anything further off still fails
+(`distribution.ts`, shared with the Decisions API). Gateway analysis offers the
+evaluation models from `decisionModels`; gateway translation loads the gateway's
+language models (`gateway-models.ts`).
 
 ## ChatGPT subscription (Sign in with ChatGPT)
 

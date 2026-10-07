@@ -1,4 +1,4 @@
-import { PURPOSE_NAMES, type Purpose, type QuickSettings, type Request } from "../protocol";
+import { PURPOSE_NAMES, type ChatGPTModel, type Purpose, type QuickSettings, type Request } from "../protocol";
 
 export const enum AiProviders {
   OpenAISubscription = "OpenAISubscription",
@@ -9,7 +9,7 @@ export const enum AiProviders {
   Custom = "Custom",
 }
 
-/** Default OpenAI model for content analysis. */
+/** The Decisions API's model, which content analysis on an OpenAI key runs. */
 export const DEFAULT_DECISION_MODEL = "gpt-6-luna";
 /** Default Vercel AI Gateway evaluation model for content analysis; it answers decisions natively. */
 export const DEFAULT_GATEWAY_DECISION_MODEL = "typesafe-ai/jev";
@@ -132,11 +132,24 @@ export function findConnection(settings: AISettings, id: string): Connection | u
 export function providerOf(settings: AISettings, id: string): SettingsProvider | undefined {
   return id === CHATGPT_CONNECTION ? AiProviders.OpenAISubscription : findConnection(settings, id)?.kind;
 }
+// Providers that answer decisions with models built for them: the gateway's evaluation models,
+// through its System One API, and OpenAI's Decisions API. These don't reason.
+const DECISION_MODELS: Partial<Record<SettingsProvider, ChatGPTModel[]>> = {
+  [AiProviders.VercelAIGateway]: [
+    { slug: DEFAULT_GATEWAY_DECISION_MODEL, displayName: "Jev" },
+    { slug: "convaiinnovations/laya", displayName: "Laya" },
+    { slug: "convaiinnovations/laya-free", displayName: "Laya (Free)" },
+    { slug: "liquid/d1", displayName: "Liquid d1" },
+  ],
+  [AiProviders.OpenAIApi]: [{ slug: DEFAULT_DECISION_MODEL, displayName: "GPT-6 Luna" }],
+};
+/** The only models `purpose` can run on `provider`, when that provider answers it with dedicated decision models. */
+export function decisionModels(purpose: Purpose, provider: SettingsProvider | undefined): ChatGPTModel[] | undefined {
+  return purpose === "analysis" && provider ? DECISION_MODELS[provider] : undefined;
+}
 /** The model a purpose starts with on a connection it hasn't used yet. */
 export function defaultModel(purpose: Purpose, provider: SettingsProvider | undefined): string {
-  if (purpose !== "analysis") return "";
-  return provider === AiProviders.VercelAIGateway ? DEFAULT_GATEWAY_DECISION_MODEL
-    : provider === AiProviders.OpenAIApi ? DEFAULT_DECISION_MODEL : "";
+  return decisionModels(purpose, provider)?.[0]?.slug ?? "";
 }
 
 // —— Quick settings ——
@@ -148,7 +161,10 @@ export function purposeError(settings: AISettings, purpose: Purpose): string | u
   const { connection, models } = settings[purpose];
   const provider = providerOf(settings, connection);
   if (!provider) return "选择的连接已被删除，请重新选择。";
-  return validateModel(provider, models[connection] ?? defaultModel(purpose, provider));
+  const model = (models[connection] ?? defaultModel(purpose, provider)).trim();
+  const fixed = decisionModels(purpose, provider);
+  if (fixed && !fixed.some(({ slug }) => slug === model)) return `模型 ${model} 不能用于内容分析，请重新选择。`;
+  return validateModel(provider, model);
 }
 
 /** What the page's quick settings panel sees: choices and names, never keys or addresses. */
@@ -288,6 +304,20 @@ export function migrateToConnections(old: V4Settings): AISettings {
     analysis: purpose(old.analysis),
     translation: purpose(old.translation),
   };
+}
+
+/**
+ * Version 6 sends analysis on an OpenAI key to the Decisions API, which runs only its own
+ * models, so a language model remembered for analysis there gives way to the default.
+ */
+export function migrateToDecisionsApi(old: AISettings): AISettings {
+  const next = structuredClone(old);
+  for (const connection of next.connections) {
+    if (connection.kind === AiProviders.OpenAIApi && next.analysis.models[connection.id] !== undefined) {
+      next.analysis.models[connection.id] = DEFAULT_DECISION_MODEL;
+    }
+  }
+  return next;
 }
 
 // —— Consent to send page text ——
