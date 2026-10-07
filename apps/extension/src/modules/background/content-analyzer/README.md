@@ -3,7 +3,7 @@
 `AI` re-exports Effect 4's `DecisionModel` service. By default
 `vercelDecisionLayer({ apiKey })` provides it with the Vercel AI Gateway's Jev
 evaluation model (`typesafe-ai/jev`); `openAIDecisionLayer({ apiKey })` provides it
-on an OpenAI model, `gpt-6-luna` by default (see `../ai/README.md`). API keys are
+on OpenAI's Decisions API with `gpt-6-luna` (see `../ai/README.md`). API keys are
 supplied as `Redacted<string>` at runtime.
 
 ```ts

@@ -1,7 +1,7 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { storage } from "wxt/utils/storage";
 import {
-  AiProviders, aiSettings, applyQuickChange, findConnection, providerOf, quickView, Settings, SettingsLive, targetLanguageOf, type AISettings,
+  AiProviders, aiSettings, applyQuickChange, decisionModels, findConnection, providerOf, quickView, Settings, SettingsLive, targetLanguageOf, type AISettings,
 } from "../modules/shared/settings";
 import { analyzePageContent } from "../modules/background/content-analyzer/page-analysis";
 import { decideTranslationPlan } from "../modules/background/content-analyzer/page-plan";
@@ -11,7 +11,7 @@ import {
   ChatGPTTokenLive, handleChatGPTNavigation, handleChatGPTTabClosed, listChatGPTModels, signOutChatGPT, startChatGPTSignIn,
 } from "../modules/background/ai/chatgpt-session";
 import { listOpenAIModels } from "../modules/background/ai/openai-models";
-import { GATEWAY_DECISION_MODELS, listGatewayModels } from "../modules/background/ai/gateway-models";
+import { listGatewayModels } from "../modules/background/ai/gateway-models";
 import { translatePageBatch } from "../modules/background/translation-dispatcher";
 import { createTranslationService } from "../modules/background/translation-service";
 import { createCache } from "../modules/background/cache-store";
@@ -92,11 +92,12 @@ const compatibleModels = (label: string, apiKey: string, apiUrl?: string) =>
 /** Models `purpose` can pick on a saved connection, listed with the key the background holds. */
 function connectionModels(settings: AISettings, purpose: Purpose, id: string): Promise<ModelList | { status: "no-key" }> {
   const connection = findConnection(settings, id);
-  switch (providerOf(settings, id)) {
+  const provider = providerOf(settings, id);
+  const fixed = decisionModels(purpose, provider);
+  if (fixed) return Promise.resolve({ status: "ok", models: fixed });
+  switch (provider) {
     case AiProviders.OpenAISubscription: return chatgptModels();
-    case AiProviders.VercelAIGateway:
-      // Analysis on the gateway asks its evaluation models; the language catalog is for translation.
-      return purpose === "analysis" ? Promise.resolve({ status: "ok", models: GATEWAY_DECISION_MODELS }) : catalog("Vercel AI Gateway", listGatewayModels);
+    case AiProviders.VercelAIGateway: return catalog("Vercel AI Gateway", listGatewayModels);
     case AiProviders.OpenAIApi: {
       const apiKey = connection!.apiKey.trim();
       return apiKey ? compatibleModels("OpenAI", apiKey) : Promise.resolve({ status: "no-key" });
