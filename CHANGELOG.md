@@ -1,3 +1,13 @@
+## [0.4.0](https://github.com/zhangchi0104/open-browser-translate/compare/v0.3.0...v0.4.0) (2026-10-08)
+
+### Features
+
+* **ai:** Run analysis on OpenAI's Decisions API ([16f2baa](https://github.com/zhangchi0104/open-browser-translate/commit/16f2baacd631b8486c7f52f6bed7369810aa7102))
+
+### Bug Fixes
+
+* **site-context:** Keep pixiv novels' context per series ([18b3de6](https://github.com/zhangchi0104/open-browser-translate/commit/18b3de604aa85c925a2242aaf1736f63e65389a4))
+
 ## [0.3.0](https://github.com/zhangchi0104/open-browser-translate/compare/v0.2.0...v0.3.0) (2026-10-05)
 
 ### Features
