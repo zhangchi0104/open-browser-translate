@@ -1,0 +1,27 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ui-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "node_modules/vite/bin/vite.js",
+        "--config",
+        "/private/tmp/claude-501/-Users-alexzhang-code-github-com-zhangchi0104-open-browser-translate/92ee0ddb-9e6e-4944-a7c8-01b8a0d2f8fc/scratchpad/preview/vite.config.mjs"
+      ],
+      "port": 5199
+    },
+    {
+      "name": "browser-tests",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5288",
+        "--directory",
+        "/private/tmp/claude-501/-Users-alexzhang-code-github-com-zhangchi0104-open-browser-translate/468dba81-a486-4bf2-9fae-1f6f379ae467/scratchpad"
+      ],
+      "port": 5288
+    }
+  ]
+}
