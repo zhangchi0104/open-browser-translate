@@ -4,12 +4,11 @@ import { Effect } from "effect";
 import { modelsFor } from "../src/modules/background/ai/models";
 import { FetchHttpClient } from "effect/unstable/http";
 import { defaultSettings, findConnection, targetLanguageOf } from "../src/modules/shared/settings/model";
-import { contextKeyOf } from "../src/modules/background/site-context";
 import { createLocalTracer, traced, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
 import { AiProviders } from "../src/modules/shared/settings/model";
 import { decideTranslationPlan } from "../src/modules/background/content-analyzer/page-plan";
 import { translateBatch } from "../src/modules/background/translation-service/translate-batch";
-import { blocksIn, chatCompletion, chatCompletionStream, chatRequest, decisionResponse, isDecisionRequest, translationInput, type ChatRequest } from "./decision-mock";
+import { blocksIn, chatCompletion, chatCompletionStream, chatRequest, decisionsRequest, decisionsResponse, isDecisionsCall, translationInput, type ChatRequest } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
 settings.analysis.connection = AiProviders.OpenAIApi;
@@ -19,14 +18,13 @@ settings.translation.models.VercelAIGateway = "test/translator";
 function mockFetch(output: unknown, requests: string[], bodies: ChatRequest[] = []): typeof globalThis.fetch {
   return async (input, init) => {
     requests.push(String(input));
-    const body = chatRequest(init);
-    bodies.push(body);
-    if (isDecisionRequest(body)) {
-      assert.equal(String(input), "https://api.openai.com/v1/chat/completions");
-      assert.equal(body.model, "gpt-6-luna");
-      return decisionResponse(body, (key, state) => key === "mode" ? "main" : key === "navigation" ? "paginated"
+    if (isDecisionsCall(input)) {
+      assert.equal(decisionsRequest(init).model, "gpt-6-luna");
+      return decisionsResponse(init, (key, state) => key === "mode" ? "main" : key === "navigation" ? "paginated"
         : blocksIn(state).find((block) => block.id === key)?.text === "Home" ? "navigation" : "content");
     }
+    const body = chatRequest(init);
+    bodies.push(body);
     assert.equal(body.model, "test/translator");
     assert.ok(body.response_format);
     return chatCompletion(body.model, JSON.stringify(output));
@@ -60,10 +58,10 @@ test("missing translation configuration makes no provider request", async () => 
 test("site context rides along in the translation prompt and terms come back", async () => {
   const bodies: ChatRequest[] = [];
   const fetch = mockFetch({ translations: [{ id: 0, text: "Effect 运行时" }], terms: [{ source: "Effect", target: "Effect" }] }, [], bodies);
-  const context = { pages: ["Effect docs"], glossary: [{ source: "runtime", target: "运行时" }], recent: [{ source: "Fibers", target: "纤程" }] };
+  const context = { glossary: [{ source: "runtime", target: "运行时" }], recent: [{ source: "Fibers", target: "纤程" }] };
   const result = await Effect.runPromise(translateBatch([{ text: "Effect runtime", tag: "p" }], { context }).pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch)));
   assert.deepEqual(result, { status: "ok", translations: ["Effect 运行时"], terms: [{ source: "Effect", target: "Effect" }] });
-  const chat = bodies.find((body) => !isDecisionRequest(body))!;
+  const chat = bodies[0]!;
   assert.deepEqual(translationInput(chat), { context, blocks: [{ id: 0, text: "Effect runtime" }] });
 });
 
@@ -88,9 +86,9 @@ test("a batch traces translation as its own step, down to the model calls", asyn
 /** A streamed Chat Completions response that writes `content` a few characters at a time. */
 function streamingFetch(content: string, bodies: ChatRequest[] = []): typeof globalThis.fetch {
   return async (input, init) => {
+    if (isDecisionsCall(input)) return decisionsResponse(init, () => "content");
     const body = chatRequest(init);
     bodies.push(body);
-    if (isDecisionRequest(body)) return decisionResponse(body, () => "content");
     assert.equal(body.stream, true, "translation streams when the caller wants partial results");
     return chatCompletionStream(body.model, content);
   };
@@ -149,8 +147,4 @@ test("the target language reaches the prompt; unset or unknown means Simplified 
   await Effect.runPromise(translateBatch([{ text: "Hello", tag: "p" }]).pipe(Effect.provide(modelsFor(settings)), Effect.provideService(FetchHttpClient.Fetch, fetch)));
   assert.match(JSON.stringify(bodies.at(-1)!.messages), /into 简体中文/);
   assert.equal(targetLanguageOf({ targetLanguage: "xx" }).code, "zh-CN");
-  // Each language keeps its own site context; Simplified Chinese keeps the bare site it always had.
-  assert.equal(contextKeyOf("https://example.com", "zh-CN"), "https://example.com");
-  assert.equal(contextKeyOf("https://example.com", "ja"), "https://example.com ja");
-  assert.equal(contextKeyOf(undefined, "ja"), undefined);
 });

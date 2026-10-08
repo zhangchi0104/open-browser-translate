@@ -82,17 +82,22 @@ pagination links and translating other tabs are not wired up.
 
 Context carries across viewport batches and pages on the same site
 (`src/modules/background/site-context`). The background keeps one context per
-origin in extension storage: the last five page titles, a glossary of terms the
-model reported translating (newest rendering wins, at most 60), and the last
-three translated passages. Each batch is sent with the page titles, the recent
-passages, and only the glossary terms that occur in that batch, plus what the
-page sends about where the batch sits: the page brief (its title, meta
-description and first heading) and the preceding text (up to 600 characters of
-source just before the batch's first block, skipping blocks analysis dropped).
-Pages without a site still send those two. Glossary terms
-are kept only if their source text appears in the batch they came from.
-Contexts expire after seven days, at most 50 sites are kept, and private
-windows keep none.
+origin in extension storage: a glossary of terms the model reported translating
+(newest rendering wins, at most 60), and the last three translated passages.
+The glossary follows the reader across the site's pages; the recent passages
+only reach later batches on the same page (told apart by a hash of its path and
+query), since another page on the site may be another story. A page that
+belongs to a work (`src/modules/page/site-works`: a pixiv novel's series, found
+through pixiv's own `/ajax/novel/<id>`, or the novel alone) keeps its context
+with the work instead, apart from the site's, and its chapters share both the
+glossary and the recent passages. Each batch is sent with the recent passages
+and only the glossary terms that occur in that batch, plus what the page sends
+about where the batch sits: the page brief (its title, meta description and
+first heading) and the preceding text (up to 600 characters of source just
+before the batch's first block, skipping blocks analysis dropped). Pages without
+a site still send those two. Glossary terms are kept only if their source text
+appears in the batch they came from. Contexts expire after seven days, at most
+50 are kept, and private windows keep none.
 
-Scheduling lives in `../../page/batch-scheduler`. Validation: `bun test tests/translation-service.test.ts tests/batch-scheduler.test.ts tests/viewport.test.ts tests/site-context.test.ts`. Tests use mocked HTTP responses;
+Scheduling lives in `../../page/batch-scheduler`. Validation: `bun test tests/translation-service.test.ts tests/batch-scheduler.test.ts tests/viewport.test.ts tests/site-context.test.ts tests/site-works.test.ts`. Tests use mocked HTTP responses;
 they verify decision/translation routing and output alignment, not live quality.

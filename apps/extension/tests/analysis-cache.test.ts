@@ -7,7 +7,7 @@ import { createCache, createMemoryCacheStore } from "../src/modules/background/c
 import { analyzePageContent } from "../src/modules/background/content-analyzer/page-analysis";
 import type { Mode } from "../src/modules/shared/protocol";
 import { AiProviders, defaultSettings, findConnection } from "../src/modules/shared/settings/model";
-import { blocksIn, chatRequest, decisionResponse } from "./decision-mock";
+import { blocksIn, decisionsResponse } from "./decision-mock";
 
 const settings = structuredClone(defaultSettings);
 settings.analysis.connection = AiProviders.OpenAIApi;
@@ -19,10 +19,9 @@ function analysisModel() {
   const asked: string[][] = [];
   let failing = false;
   const fetch: typeof globalThis.fetch = async (_input, init) => {
-    const body = chatRequest(init);
     if (failing) return Response.json({ error: { message: "model down" } }, { status: 500 });
     let texts: string[] = [];
-    const response = decisionResponse(body, (key, input) => {
+    const response = decisionsResponse(init, (key, input) => {
       texts = blocksIn(input).map(({ text }) => text);
       return texts[Number(key)] === "Home" ? "navigation" : "content";
     });

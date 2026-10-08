@@ -3,6 +3,7 @@ import { background } from "@/lib/background";
 import { DomParser, pageBrief, type TranslatableContent } from "../../modules/page/block-collector";
 import type { Span } from "../../modules/page/batch-scheduler/viewport";
 import { createTranslationSession, type SessionProgress, type TranslationSession } from "../../modules/page/batch-scheduler";
+import { workOf } from "../../modules/page/site-works";
 import { PAGE_CONTEXT_LIMITS, PURPOSE_NAMES, type Purpose } from "../../modules/shared/protocol";
 import { describeError, type LogLevel } from "../../modules/shared/debug-log/model";
 import { createCapturedContent } from "../captured-content";
@@ -106,12 +107,14 @@ export function createTranslationRunner(report: (change: Partial<LauncherState>)
         description: document.querySelector('meta[name="description"]')?.getAttribute("content"),
         heading: document.querySelector("h1")?.textContent,
       });
+      const work = await workOf(location.href);
+      if (!active()) return;
       translation = createTranslationSession(content, plan.mode, {
         spanOf,
         attached: ({ element }) => element.isConnected,
         viewportHeight: () => window.innerHeight,
         analyze: (blocks, mode) => background.request({ type: "analyze-content", mode, blocks: blocks.map(({ text, tag }) => ({ text, tag })) }),
-        translate: (blocks, onBlock, preceding) => background.translate(blocks, onBlock, { brief, preceding }),
+        translate: (blocks, onBlock, preceding) => background.translate(blocks, onBlock, { brief, preceding, work }),
         loading: (items) => capturedContent.loading(items),
         show: (item, text, final) => capturedContent.update(item, text, !final),
         discard: (items) => capturedContent.discard(items),

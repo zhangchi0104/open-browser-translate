@@ -75,17 +75,34 @@ test("cached blocks show at once and final; only the rest reach the model, and e
   assert.deepEqual(cachedOnly.result, { status: "ok", translations: ["译：Beta"], terms: [], cacheHits: 1 });
 });
 
-test("the site's context from earlier batches rides along with later ones on any of its pages", async () => {
+test("the site's glossary rides along with later batches on any of its pages, recent passages on the same page", async () => {
   const model = translationModel();
   const { stores } = memoryStores();
   await translate(model, stores, ["A Fiber is a virtual thread"]);
   await stores.contexts.flush();
-  await translate(model, stores, ["Forking a Fiber"], "https://docs.example.com/other");
+  await translate(model, stores, ["Forking a Fiber"]);
+  await translate(model, stores, ["Joining a Fiber"], "https://docs.example.com/other");
+  const glossary = [{ source: "Fiber", target: "纤程" }];
+  assert.deepEqual(model.requests[1]!.context, { glossary, recent: [{ source: "A Fiber is a virtual thread", target: "译：A Fiber is a virtual thread" }] });
+  assert.deepEqual(model.requests[2]!.context, { glossary, recent: [] });
+});
+
+test("a work's batches share a context of their own, and the work itself isn't sent to the model", async () => {
+  const model = translationModel();
+  const { stores, savedContexts } = memoryStores();
+  const run = (text: string, pageUrl: string, work?: string) => Effect.runPromise(translatePageBatch(blocks(text), pageUrl, stores, undefined, work ? { work } : {}).pipe(
+    Effect.provide(modelsFor(settings)),
+    Effect.provideService(FetchHttpClient.Fetch, model.fetch),
+  )).then(() => stores.contexts.flush());
+  await run("A Fiber in chapter one", "https://www.pixiv.net/novel/show.php?id=1", "novel/series/9");
+  await run("A Fiber in chapter two", "https://www.pixiv.net/novel/show.php?id=2", "novel/series/9");
+  await run("A Fiber elsewhere", "https://www.pixiv.net/novel/show.php?id=3");
   assert.deepEqual(model.requests[1]!.context, {
-    pages: [],
     glossary: [{ source: "Fiber", target: "纤程" }],
-    recent: [{ source: "A Fiber is a virtual thread", target: "译：A Fiber is a virtual thread" }],
+    recent: [{ source: "A Fiber in chapter one", target: "译：A Fiber in chapter one" }],
   });
+  assert.equal(model.requests[2]!.context, undefined);
+  assert.deepEqual(Object.keys(savedContexts()!).sort(), ["https://www.pixiv.net", "https://www.pixiv.net/novel/series/9"]);
 });
 
 test("a page without a site (private windows, browser pages) keeps no cache entries and no context", async () => {

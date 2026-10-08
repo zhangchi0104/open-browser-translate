@@ -14,7 +14,7 @@ After you click the floating launcher on a page to translate it, the extension s
 
 - The blocks of text to translate, with the name of each block's HTML tag (such as `p` or `h2`).
 - Context that helps the model understand the page: the page title, its meta description, its first main heading, a short sample of its opening text, the labels of its pagination links, and the original text just before the blocks being translated.
-- Context left by earlier translations on the same site: the titles of a few recently translated pages, the renderings the model chose for terms, and a few recent passages with their translations.
+- Context left by earlier translations on the same site: the renderings the model chose for terms, and a few recent passages from the same page with their translations. On pixiv novels, this context is kept per novel series instead of per site.
 
 Before the first translation, the extension shows a notice on the page saying which model service the page text will go to, and sends nothing until you choose "同意并翻译" (agree and translate). After that, page text is still sent only when you click translate; until you do, the extension sends no page content at all.
 
@@ -33,7 +33,7 @@ The following data stays in your browser and never leaves your device:
 
 - **Translation cache**: translations, with the original text stored only as a SHA-256 hash. Entries are kept per site and model for 7 days, at most 20,000 of them.
 - **Content analysis cache**: which kind of content each block is (main text, navigation and so on). It has the same retention and limit as the translation cache.
-- **Site context**: for each site, the titles of recently translated pages, the glossary and the latest translated passages. A site not translated for a week is cleared, and at most 50 sites are kept.
+- **Site context**: for each site (or pixiv novel series), the glossary and the latest translated passages, with a hash that tells which page the passages came from, not the page's address. Context not used for a week is cleared, and at most 50 are kept.
 - **Debug log and request traces**: the newest 500 log entries and 100 requests. Traces include the prompts, context, original text and translations sent to and returned by the model, and the page address (site and path only, without the query string). They do not include API keys. You can view, export or clear them under "Debug log" (调试日志) in the settings. Exporting is something you do by hand; the extension never uploads them.
 - Your settings, where the floating launcher sits on the page, and whether you agreed to send page text.
 
@@ -46,6 +46,8 @@ Page content goes only to the model service you choose, which can be:
 - **OpenAI** (`api.openai.com`), with your API key or through "Sign in with ChatGPT" on your ChatGPT plan. Signing in goes through `auth.openai.com`. See [OpenAI's privacy policy](https://openai.com/policies/privacy-policy/).
 - **Vercel AI Gateway** (`ai-gateway.vercel.sh`), with your Vercel API key. The gateway passes requests on to the model provider you pick. See [Vercel's privacy policy](https://vercel.com/legal/privacy-policy).
 - **An OpenAI-compatible server you enter yourself**, such as a model running on your own computer or a third-party platform. The extension can reach that address only after you save the connection and accept the browser's permission prompt for it.
+
+When you translate a pixiv novel, the extension also asks pixiv itself (the same `www.pixiv.net` page you are on, with your pixiv sign-in) which series the novel belongs to. It sends pixiv nothing but the novel's ID, which is already in the page address.
 
 How these services handle what you send is governed by their own terms and privacy policies. If a custom server's address starts with `http://` rather than `https://`, data travels to it unencrypted; use that only on networks you trust, such as your own computer.
 
