@@ -101,8 +101,10 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # After the GitHub release, the Chrome zip is submitted to the Chrome Web Store
-      # for review (see .releaserc.json); skipped while CHROME_EXTENSION_ID is unset.
+      # After the GitHub release, scripts/release/submit-chrome-web-store.sh submits the
+      # Chrome zip to the Chrome Web Store for review. It skips prereleases, and skips
+      # with a warning while the CHROME_* secrets are unset (set them with
+      # scripts/setup-chrome-web-store.sh). A failed submission fails this job.
       - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
