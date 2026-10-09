@@ -32,7 +32,50 @@ jobs:
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
 
+  # On a push to main or dev, works out the version semantic-release will publish, without
+  # publishing anything, so build can zip the extension at that version. The zips build
+  # uploads are then the release's: release and chrome-web-store both publish them, side
+  # by side. Empty when there's nothing to release, or when main has moved on since this
+  # commit (the run for the newer commit releases instead).
+  plan:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    runs-on: ubuntu-latest
+    # semantic-release checks it could push, even in a dry run.
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      # semantic-release 25 needs Node ^22.14 or >=24.10.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - run: bun install --frozen-lockfile
+
+      # verifyReleaseCmd (.releaserc.json) writes the next version to .release-version.
+      - name: Plan the release
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          npx semantic-release --dry-run
+          if [[ -f .release-version ]]; then
+            echo "version=$(cat .release-version)" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: plan
+    # Pull requests skip plan.
+    if: ${{ !cancelled() && needs.plan.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -58,6 +101,12 @@ jobs:
       # postinstall runs `wxt prepare`, which generates the .wxt types tsc needs.
       - run: bun install --frozen-lockfile
 
+      # WXT names the zips and sets the manifest version from package.json. A beta's
+      # -beta.N goes to version_name only.
+      - name: Set the release version
+        if: needs.plan.outputs.version
+        run: npm pkg set version=${{ needs.plan.outputs.version }} --prefix apps/extension
+
       # Typecheck and test every package, and zip the extension for Chrome and Firefox (with
       # sources for AMO review). The site is built too; pages.yml publishes it.
       - run: bunx turbo run compile test zip zip:firefox
@@ -71,13 +120,12 @@ jobs:
           # .output is a dot-directory, which upload-artifact skips by default.
           include-hidden-files: true
 
-  # Tags, writes CHANGELOG.md, bumps package.json, rebuilds the zips at the new
-  # version and publishes a GitHub release — only when commits since the last
-  # release include a feat, fix or breaking change. On dev it publishes a beta
-  # (vX.Y.Z-beta.N) as a GitHub prerelease instead, and commits nothing back.
+  # Tags, writes CHANGELOG.md, bumps package.json and publishes a GitHub release with
+  # build's zips. On dev it publishes a beta (vX.Y.Z-beta.N) as a GitHub prerelease
+  # instead, and commits nothing back.
   release:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
-    needs: build
+    needs: [plan, build]
+    if: needs.plan.outputs.version
     runs-on: ubuntu-latest
     # One queue per branch: a new push replaces a queued run on its own branch only,
     # so a dev push can't drop a pending main release.
@@ -104,11 +152,17 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # Once this run finishes, chrome-web-store.yml submits a new stable release's
-      # Chrome zip to the Chrome Web Store.
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-zips
+          path: apps/extension/.output
+
+      # Fails before tagging if semantic-release picks a different version than plan did,
+      # since the zips carry plan's.
       - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
         run: npx semantic-release
 
       # Betas count from the latest stable tag reachable from dev, but main's release
@@ -126,3 +180,69 @@ jobs:
           git checkout -B dev origin/dev
           git merge --no-edit -m "chore(release): Merge $tag back into dev" "$tag"
           git push origin dev
+
+  # Submits a stable release's Chrome zip, the one build made, to the Chrome Web Store for
+  # review, alongside release. A failure here leaves the GitHub release alone; "Re-run
+  # failed jobs" submits again. No key is stored: the job signs in to Google Cloud as the
+  # service account linked in the Chrome Web Store dashboard through GitHub OIDC (Workload
+  # Identity Federation). The provider only accepts ci.yml and chrome-web-store.yml on
+  # main. scripts/setup-chrome-web-store.sh sets it up and the repository variables below.
+  chrome-web-store:
+    needs: [plan, build]
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.version
+    runs-on: ubuntu-latest
+    concurrency:
+      group: chrome-web-store
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      CHROME_EXTENSION_ID: ${{ vars.CHROME_EXTENSION_ID }}
+      CHROME_PUBLISHER_ID: ${{ vars.CHROME_PUBLISHER_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+    steps:
+      # Until the variables are set, skip with a warning; with only some set, fail.
+      - name: Check the repository variables
+        id: vars
+        run: |
+          missing=()
+          for name in CHROME_EXTENSION_ID CHROME_PUBLISHER_ID GCP_WORKLOAD_IDENTITY_PROVIDER GCP_SERVICE_ACCOUNT; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} == 4 )); then
+            echo "::warning title=Chrome Web Store skipped::The Chrome Web Store variables are not set, so v$VERSION was not submitted. Run scripts/setup-chrome-web-store.sh."
+            exit 0
+          fi
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing repository variables: ${missing[*]}. Run scripts/setup-chrome-web-store.sh."; exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        if: steps.vars.outputs.ready
+
+      - uses: actions/download-artifact@v4
+        if: steps.vars.outputs.ready
+        with:
+          name: extension-zips
+          path: apps/extension/.output
+
+      - name: Sign in to Google Cloud
+        id: auth
+        if: steps.vars.outputs.ready
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          create_credentials_file: false
+
+      - name: Submit
+        if: steps.vars.outputs.ready
+        env:
+          CHROME_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: scripts/release/submit-chrome-web-store.sh "$VERSION"

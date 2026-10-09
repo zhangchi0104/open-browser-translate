@@ -25,7 +25,6 @@ TOTAL_STAGES=0
 _STAGE_INDEX=0
 ENV_FILE="${ENV_FILE:-.env}"
 WRITTEN_ENV=()    # KEYs written to ENV_FILE this run
-WRITTEN_SECRET=() # secret NAMEs set this run
 SKIPPED=()        # things we couldn't do (e.g. gh missing)
 
 # _clear wipes the terminal so only the current step is on screen. No-op when
@@ -138,21 +137,6 @@ write_env() {
   printf '  %s✓ wrote%s %s → %s\n' "$GREEN" "$RESET" "$key" "$ENV_FILE"
 }
 
-# set_secret NAME VALUE sets a GitHub Actions repo secret via gh. Falls back
-# to a warning (and records it) if gh is unavailable or unauthenticated.
-set_secret() {
-  local name="$1" value="$2"
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    if printf '%s' "$value" | gh secret set "$name" >/dev/null 2>&1; then
-      WRITTEN_SECRET+=("$name")
-      printf '  %s✓ set%s GitHub secret %s\n' "$GREEN" "$RESET" "$name"
-      return
-    fi
-  fi
-  SKIPPED+=("GitHub secret $name (set it manually: gh secret set $name)")
-  warn "skipped GitHub secret $name: gh not ready; set it later"
-}
-
 # set_var NAME VALUE sets a GitHub Actions repo variable (non-secret).
 set_var() {
   local name="$1" value="$2"
@@ -171,7 +155,6 @@ finish() {
   _clear
   printf '\n%s%s  ✓ Setup complete%s\n' "$BOLD" "$GREEN" "$RESET"
   (( ${#WRITTEN_ENV[@]} ))    && note "wrote ${#WRITTEN_ENV[@]} value(s) to $ENV_FILE: ${WRITTEN_ENV[*]}"
-  (( ${#WRITTEN_SECRET[@]} )) && note "set ${#WRITTEN_SECRET[@]} GitHub secret(s): ${WRITTEN_SECRET[*]}"
   if (( ${#SKIPPED[@]} )); then
     printf '\n'; warn "still to do by hand:"
     for s in "${SKIPPED[@]}"; do note "  - $s"; done
@@ -191,7 +174,7 @@ finish() {
 #   scripts/setup-chrome-web-store.sh
 #
 # It creates a Google Cloud service account (no key) and a Workload Identity Federation
-# provider that trusts only that workflow on dev, links the account in the Chrome Web
+# provider that trusts only CI and that workflow on main, links the account in the Chrome Web
 # Store dashboard, and sets four GitHub repository variables. None of them is a secret.
 # Values are remembered in .env.chrome-web-store (git-ignored) for re-runs. Every step
 # checks what already exists, so re-running is safe.
@@ -200,8 +183,8 @@ cd "$(dirname "$0")/.."
 export GH_REPO="zhangchi0104/open-browser-translate"
 ENV_FILE=".env.chrome-web-store"
 DEVCONSOLE="https://chrome.google.com/webstore/devconsole"
-WORKFLOW_FILE=".github/workflows/chrome-web-store.yml"
-DEFAULT_BRANCH="dev"
+WORKFLOWS_PATH=".github/workflows"
+RELEASE_BRANCH="main"
 SA_NAME="chrome-web-store-ci"
 POOL_ID="github"
 PROVIDER_ID="open-browser-translate"
@@ -316,12 +299,14 @@ pause
 
 # ── 7 ─────────────────────────────────────────────────────────────────────
 stage "Google Cloud: trust GitHub Actions"
-WORKFLOW_REF="$GH_REPO/$WORKFLOW_FILE@refs/heads/$DEFAULT_BRANCH"
-CONDITION="assertion.repository_id == '$REPO_ID' && assertion.workflow_ref == '$WORKFLOW_REF'"
+CI_REF="$GH_REPO/$WORKFLOWS_PATH/ci.yml@refs/heads/$RELEASE_BRANCH"
+MANUAL_REF="$GH_REPO/$WORKFLOWS_PATH/chrome-web-store.yml@refs/heads/$RELEASE_BRANCH"
+CONDITION="assertion.repository_id == '$REPO_ID' && (assertion.workflow_ref == '$CI_REF' || assertion.workflow_ref == '$MANUAL_REF')"
 POOL="projects/$GCP_PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID"
 GCP_WORKLOAD_IDENTITY_PROVIDER="$POOL/providers/$PROVIDER_ID"
 say "A Workload Identity Federation provider that accepts GitHub's OIDC tokens only from"
-note "  $WORKFLOW_REF"
+note "  $CI_REF"
+note "  $MANUAL_REF"
 note "  (repository ID $REPO_ID, so a renamed or re-created repo can't use it)"
 say "and lets them act as $GCP_SERVICE_ACCOUNT."
 printf '\n'
@@ -382,14 +367,16 @@ say "OIDC only works inside GitHub Actions, so the check is a dry run of the wor
 say "it signs in as $SA_NAME and reads the item's status, uploading nothing."
 printf '\n'
 LATEST_TAG=$(gh release list --exclude-pre-releases --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)
-if ! gh workflow view chrome-web-store.yml >/dev/null 2>&1; then
-  warn "The Chrome Web Store workflow isn't on $DEFAULT_BRANCH yet."
-  SKIPPED+=("Once it is: Actions → Chrome Web Store → Run workflow, tag ${LATEST_TAG:-<latest>}, dry_run ticked")
+# Run workflow needs the file on the default branch; the provider needs it to run on main.
+if ! gh workflow view chrome-web-store.yml >/dev/null 2>&1 ||
+  ! gh api "repos/$GH_REPO/contents/$WORKFLOWS_PATH/chrome-web-store.yml?ref=$RELEASE_BRANCH" >/dev/null 2>&1; then
+  warn "The Chrome Web Store workflow isn't on both the default branch and $RELEASE_BRANCH yet."
+  SKIPPED+=("Once it is: Actions → Chrome Web Store → Run workflow from $RELEASE_BRANCH, tag ${LATEST_TAG:-<latest>}, dry_run ticked")
 elif [[ -z "$LATEST_TAG" ]]; then
   warn "No stable release to check against yet."
-  SKIPPED+=("After the first stable release: Actions → Chrome Web Store → Run workflow with dry_run")
+  SKIPPED+=("After the first stable release: Actions → Chrome Web Store → Run workflow from $RELEASE_BRANCH with dry_run")
 elif confirm "Run a dry run against $LATEST_TAG now?"; then
-  run gh workflow run chrome-web-store.yml --ref "$DEFAULT_BRANCH" -f tag="$LATEST_TAG" -f dry_run=true
+  run gh workflow run chrome-web-store.yml --ref "$RELEASE_BRANCH" -f tag="$LATEST_TAG" -f dry_run=true
   say "Waiting for the run to start…"
   sleep 5
   run_id=$(gh run list --workflow chrome-web-store.yml --event workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')
@@ -404,11 +391,11 @@ elif confirm "Run a dry run against $LATEST_TAG now?"; then
     SKIPPED+=("Fix the dry run: gh run view $run_id --log-failed")
   fi
 else
-  SKIPPED+=("Actions → Chrome Web Store → Run workflow, tag $LATEST_TAG, dry_run ticked")
+  SKIPPED+=("Actions → Chrome Web Store → Run workflow from $RELEASE_BRANCH, tag $LATEST_TAG, dry_run ticked")
 fi
 pause
 
 finish
-say "Next feat/fix merge to main: once CI releases it, the Chrome Web Store workflow"
-say "submits the Chrome zip for review. Watch it under Actions → Chrome Web Store."
+say "Next feat/fix merge to main: CI's chrome-web-store job submits the Chrome zip for"
+say "review alongside the GitHub release. Watch it in that CI run."
 printf '\n'

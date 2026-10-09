@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 #
 # Submits a release's Chrome zip to the Chrome Web Store for review through the Chrome Web
-# Store API v2. The Chrome Web Store workflow (.github/workflows/chrome-web-store.yml) runs
-# it after CI releases on main, or by hand, once the zip is in apps/extension/.output:
+# Store API v2. CI's chrome-web-store job runs it when main releases, and the Chrome Web
+# Store workflow (.github/workflows/chrome-web-store.yml) by hand, once the zip is in
+# apps/extension/.output:
 #
 #   scripts/release/submit-chrome-web-store.sh <version>
 #
 #   CHROME_EXTENSION_ID, CHROME_PUBLISHER_ID  the store item
 #   CHROME_ACCESS_TOKEN                       OAuth token for the linked service account, with
 #                                             the https://www.googleapis.com/auth/chromewebstore
-#                                             scope; the workflow gets it through GitHub OIDC
+#                                             scope; the workflows get it through GitHub OIDC
 #   DRY_RUN=true                              only check access to the item; upload nothing
 #   CHROME_CANCEL_PENDING=true                cancel a version still in review, then submit
 #

@@ -24,7 +24,8 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "npm pkg set version=${nextRelease.version} --prefix apps/extension && bun run zip && bun run zip:firefox && if [ \"${branch.type}\" = prerelease ]; then git checkout HEAD -- apps/extension/package.json CHANGELOG.md; fi"
+        "verifyReleaseCmd": "if [ -n \"$RELEASE_VERSION\" ] && [ \"$RELEASE_VERSION\" != \"${nextRelease.version}\" ]; then echo \"build zipped $RELEASE_VERSION, but the release is ${nextRelease.version}\" >&2; exit 1; fi; echo ${nextRelease.version} > .release-version",
+        "prepareCmd": "npm pkg set version=${nextRelease.version} --prefix apps/extension && if [ \"${branch.type}\" = prerelease ]; then git checkout HEAD -- apps/extension/package.json CHANGELOG.md; fi"
       }
     ],
     [
