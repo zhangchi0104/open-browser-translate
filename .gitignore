@@ -28,3 +28,6 @@ web-ext.config.ts
 # Monorepo
 .turbo
 dist
+
+# wxt submit / publish-extension reads store IDs from here (scripts/setup-chrome-web-store.sh)
+.env.submit
