@@ -282,13 +282,17 @@ CI 固定使用 API v2（`CHROME_API_VERSION=v2`，提交脚本也默认用 v2�
 
 ### 6.3 提交失败后补交
 
-提交失败时，tag 和 GitHub Release 已经发布了。重跑 job 不会再提交：semantic-release 认为这个版本已经发过。修好问题后（常见原因：服务账号没关联、上一版还在审核中），手动补交：
+提交失败时，tag 和 GitHub Release 已经发布了。重跑 `release` job 不会再提交：semantic-release 认为这个版本已经发过。修好问题后（常见原因：服务账号没关联、上一版还在审核中），用 **Chrome Web Store** workflow（`.github/workflows/chrome-web-store.yml`）补交：
 
-1. 从这个版本的 GitHub Release 下载 `open-browser-translate-<版本>-chrome.zip`。
-2. 其他三个值 `wxt submit` 会从 `apps/extension/.env.submit` 读取（向导写的）。私钥向导没有存：在 Google Cloud 给服务账号新建一个 JSON 密钥，在当前 shell 里 export `CHROME_SERVICE_ACCOUNT_PRIVATE_KEY`（取 JSON 里的 `private_key`，保留真实换行），用完再删掉这个密钥。
-3. 在 `apps/extension` 目录运行 `bunx wxt submit --chrome-zip <zip 路径>`。可以先加 `--dry-run`，它只检查登录和条目访问，不上传。
+1. 在 Actions → **Chrome Web Store** → **Run workflow**，填入 tag，例如 `v0.4.0`（也可以填 `0.4.0`）。
+2. 它从这个 tag 的 GitHub Release 下载 `open-browser-translate-<版本>-chrome.zip`，用默认分支上的 `scripts/release/submit-chrome-web-store.sh` 提交。
+3. 两个选项：
+   - **cancel_pending**：上一版还在审核中时，提交可能被拒绝。勾选后会先撤回待审核的版本，再提交这一版。
+   - **dry_run**：只检查登录和对条目的访问，不上传。设置完 secrets 后可以用它验证一次。
 
-上一版还在审核中时，提交可能被拒绝。加 `--chrome-cancel-pending` 可以先撤回待审核的版本再提交。
+和 `release` job 不同，手动运行遇到预发布 tag 或 secrets 未设置时会直接失败，而不是跳过。
+
+也可以在本地补交：在 `apps/extension` 目录运行 `bunx wxt submit --chrome-zip <zip 路径>`。其他三个值从 `apps/extension/.env.submit` 读取（向导写的）；私钥向导没有存，需要在 Google Cloud 新建一个 JSON 密钥，在当前 shell 里 export `CHROME_SERVICE_ACCOUNT_PRIVATE_KEY`（取 JSON 里的 `private_key`，保留真实换行），用完删掉这个密钥。
 
 ## 7. 网站和隐私政策的公开 URL
 

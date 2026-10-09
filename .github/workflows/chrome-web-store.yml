@@ -1,0 +1,85 @@
+name: Chrome Web Store
+
+# Resubmits a published release to the Chrome Web Store, e.g. after the release job's
+# submit step failed. semantic-release won't redo it: the tag and GitHub release already
+# exist. Run it from Actions → Chrome Web Store → Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to submit, e.g. v0.3.0
+        required: true
+        type: string
+      cancel_pending:
+        description: Cancel a version still in review, then submit this one
+        type: boolean
+        default: false
+      dry_run:
+        description: Only check sign-in and access to the item; upload nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    # Not the release job's group: a pending run there would be cancelled by this one.
+    concurrency:
+      group: chrome-web-store
+      cancel-in-progress: false
+    env:
+      CHROME_API_VERSION: v2
+      CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+      CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
+      CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
+      CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
+      CHROME_CANCEL_PENDING: ${{ inputs.cancel_pending }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      # Accepts "v0.3.0" or "0.3.0". Unlike the release job, a manual run fails instead
+      # of skipping when there's nothing it can submit.
+      - name: Check the tag and secrets
+        id: tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "::error::'$TAG' is not a release tag like v0.3.0."; exit 1
+          fi
+          if [[ "$version" == *-* ]]; then
+            echo "::error::$TAG is a prerelease; prereleases aren't submitted to the Chrome Web Store."; exit 1
+          fi
+          if [[ -z "$CHROME_EXTENSION_ID" ]]; then
+            echo "::error::The CHROME_* secrets are not set. Run scripts/setup-chrome-web-store.sh."; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # The default branch's scripts and config, so fixes to the submit step apply to
+      # old tags too. The zip itself comes from the tag's GitHub release.
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      # publish-browser-extension needs Node >= 22.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - run: bun install --frozen-lockfile
+
+      - name: Download the Chrome zip from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: >-
+          gh release download "v$VERSION"
+          --pattern "open-browser-translate-$VERSION-chrome.zip"
+          --dir apps/extension/.output
+
+      - name: Submit
+        run: scripts/release/submit-chrome-web-store.sh "${{ steps.tag.outputs.version }}"
