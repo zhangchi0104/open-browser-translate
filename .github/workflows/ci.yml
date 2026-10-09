@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 concurrency:
@@ -73,13 +73,16 @@ jobs:
 
   # Tags, writes CHANGELOG.md, bumps package.json, rebuilds the zips at the new
   # version and publishes a GitHub release — only when commits since the last
-  # release include a feat, fix or breaking change.
+  # release include a feat, fix or breaking change. On dev it publishes a beta
+  # (vX.Y.Z-beta.N) as a GitHub prerelease instead, and commits nothing back.
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     needs: build
     runs-on: ubuntu-latest
+    # One queue per branch: a new push replaces a queued run on its own branch only,
+    # so a dev push can't drop a pending main release.
     concurrency:
-      group: release
+      group: release-${{ github.ref }}
       cancel-in-progress: false
     permissions:
       contents: write
@@ -112,3 +115,19 @@ jobs:
           CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
           CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
         run: npx semantic-release
+
+      # Betas count from the latest stable tag reachable from dev, but main's release
+      # commit and tag aren't on dev, so merge them back after each stable release.
+      # dev never commits package.json or CHANGELOG.md, so the merge doesn't conflict.
+      # Pushes made with GITHUB_TOKEN don't trigger workflows, so this doesn't cut a beta.
+      - name: Merge the release back into dev
+        if: github.ref == 'refs/heads/main'
+        run: |
+          tag=$(git describe --tags --abbrev=0 --exclude '*-*' HEAD)
+          git fetch origin dev:refs/remotes/origin/dev
+          if git merge-base --is-ancestor "$tag" origin/dev; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B dev origin/dev
+          git merge --no-edit -m "chore(release): Merge $tag back into dev" "$tag"
+          git push origin dev
