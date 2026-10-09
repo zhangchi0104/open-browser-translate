@@ -1,9 +1,19 @@
 name: Chrome Web Store
 
-# Resubmits a published release to the Chrome Web Store, e.g. after the release job's
-# submit step failed. semantic-release won't redo it: the tag and GitHub release already
-# exist. Run it from Actions → Chrome Web Store → Run workflow.
+# Submits a stable release's Chrome zip to the Chrome Web Store for review.
+#
+# - Automatically, after each successful CI run on a push to main: if that run's
+#   release job published a stable release, it's submitted. Runs that released
+#   nothing do nothing. "Re-run jobs" on a failed run submits again.
+# - By hand, for any tag: Actions → Chrome Web Store → Run workflow.
+#
+# GitHub only runs workflow_run workflows from the default branch (dev), so changes
+# to this file take effect once they're on dev.
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -24,8 +34,11 @@ permissions:
 
 jobs:
   submit:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
-    # Not the release job's group: a pending run there would be cancelled by this one.
+    # Not the release job's group: a run here must never cancel a pending release.
     concurrency:
       group: chrome-web-store
       cancel-in-progress: false
@@ -35,51 +48,80 @@ jobs:
       CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
       CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
       CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
-      CHROME_CANCEL_PENDING: ${{ inputs.cancel_pending }}
-      DRY_RUN: ${{ inputs.dry_run }}
+      CHROME_CANCEL_PENDING: ${{ inputs.cancel_pending || false }}
+      DRY_RUN: ${{ inputs.dry_run || false }}
     steps:
-      # Accepts "v0.3.0" or "0.3.0". Unlike the release job, a manual run fails instead
-      # of skipping when there's nothing it can submit.
-      - name: Check the tag and secrets
-        id: tag
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          version="${TAG#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
-            echo "::error::'$TAG' is not a release tag like v0.3.0."; exit 1
-          fi
-          if [[ "$version" == *-* ]]; then
-            echo "::error::$TAG is a prerelease; prereleases aren't submitted to the Chrome Web Store."; exit 1
-          fi
-          if [[ -z "$CHROME_EXTENSION_ID" ]]; then
-            echo "::error::The CHROME_* secrets are not set. Run scripts/setup-chrome-web-store.sh."; exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       # The default branch's scripts and config, so fixes to the submit step apply to
       # old tags too. The zip itself comes from the tag's GitHub release.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-      - uses: oven-sh/setup-bun@v2
+      # After CI: semantic-release commits "chore(release): X.Y.Z" on top of the commit
+      # CI built and tags it, so the release is the tag on that commit's child on main.
+      # By hand: accepts "v0.3.0" or "0.3.0", and fails, rather than skipping, when
+      # there's nothing it can submit.
+      - name: Find the release
+        id: release
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            version="${INPUT_TAG#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+              echo "::error::'$INPUT_TAG' is not a release tag like v0.3.0."; exit 1
+            fi
+            if [[ "$version" == *-* ]]; then
+              echo "::error::$INPUT_TAG is a prerelease; prereleases aren't submitted to the Chrome Web Store."; exit 1
+            fi
+            if [[ -z "$CHROME_EXTENSION_ID" ]]; then
+              echo "::error::The CHROME_* secrets are not set. Run scripts/setup-chrome-web-store.sh."; exit 1
+            fi
+          else
+            tag=""
+            for commit in $(git rev-list --parents origin/main | awk -v p="$HEAD_SHA" '$2 == p { print $1 }'); do
+              tag=$(git tag --points-at "$commit" --list 'v*' | grep -v -- - | head -n1 || true)
+              [[ -n "$tag" ]] && break
+            done
+            if [[ -z "$tag" ]]; then
+              echo "CI on ${HEAD_SHA:0:7} published no stable release; nothing to submit."
+              exit 0
+            fi
+            version="${tag#v}"
+          fi
+          echo "Submitting v$version."
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - if: steps.release.outputs.version
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
 
       # publish-browser-extension needs Node >= 22.
-      - uses: actions/setup-node@v5
+      - if: steps.release.outputs.version
+        uses: actions/setup-node@v5
         with:
           node-version: 24
 
-      - run: bun install --frozen-lockfile
+      - if: steps.release.outputs.version
+        run: bun install --frozen-lockfile
 
       - name: Download the Chrome zip from the release
+        if: steps.release.outputs.version
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: >-
           gh release download "v$VERSION"
           --pattern "open-browser-translate-$VERSION-chrome.zip"
           --dir apps/extension/.output
 
+      # Skips with a warning while the CHROME_* secrets are unset; fails when the
+      # upload or the submission fails.
       - name: Submit
-        run: scripts/release/submit-chrome-web-store.sh "${{ steps.tag.outputs.version }}"
+        if: steps.release.outputs.version
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: scripts/release/submit-chrome-web-store.sh "$VERSION"

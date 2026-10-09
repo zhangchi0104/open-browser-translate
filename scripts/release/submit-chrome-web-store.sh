@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# Submits a release's Chrome zip to the Chrome Web Store for review. semantic-release
-# runs it as the last publish step (.releaserc.json), after the GitHub release exists:
+# Submits a release's Chrome zip to the Chrome Web Store for review. The Chrome Web Store
+# workflow (.github/workflows/chrome-web-store.yml) runs it after CI releases on main, or
+# by hand, once the zip is in apps/extension/.output:
 #
 #   scripts/release/submit-chrome-web-store.sh <version>
 #
 # - Prereleases (any version with a "-" suffix, e.g. 0.3.0-beta.1) are never submitted.
 # - With none of the four CHROME_* secrets set, it skips with a warning on the run.
 # - With only some of them set, or when the upload or submission fails, it exits non-zero
-#   and fails the release job.
+#   and fails the run.
 #
 # scripts/setup-chrome-web-store.sh sets the secrets up.
 

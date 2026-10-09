@@ -104,18 +104,11 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # After the GitHub release, scripts/release/submit-chrome-web-store.sh submits the
-      # Chrome zip to the Chrome Web Store for review. It skips prereleases, and skips
-      # with a warning while the CHROME_* secrets are unset (set them with
-      # scripts/setup-chrome-web-store.sh). A failed submission fails this job.
+      # Once this run finishes, chrome-web-store.yml submits a new stable release's
+      # Chrome zip to the Chrome Web Store.
       - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CHROME_API_VERSION: v2
-          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
-          CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
-          CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
-          CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
         run: npx semantic-release
 
       # Betas count from the latest stable tag reachable from dev, but main's release

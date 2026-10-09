@@ -370,6 +370,7 @@ fi
 pause
 
 finish
-say "Next feat/fix merge to main: the release job's last step submits the Chrome zip"
-say "for review. Watch it under Actions → CI → release."
+say "Next feat/fix merge to main: once CI releases it, the Chrome Web Store workflow"
+say "submits the Chrome zip for review. Watch it under Actions → Chrome Web Store."
+say "To check now: Run workflow there with the latest tag and dry_run ticked."
 printf '\n'
