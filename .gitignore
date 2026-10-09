@@ -29,5 +29,5 @@ web-ext.config.ts
 .turbo
 dist
 
-# wxt submit / publish-extension reads store IDs from here (scripts/setup-chrome-web-store.sh)
-.env.submit
+# Values scripts/setup-chrome-web-store.sh remembers for re-runs
+.env.chrome-web-store

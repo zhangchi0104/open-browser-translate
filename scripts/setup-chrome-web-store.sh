@@ -185,32 +185,48 @@ finish() {
 # ──────────────────────────────────────────────────────────────────────────
 
 
-# Sets up the four GitHub secrets that let CI submit releases to the Chrome Web
-# Store (scripts/release/submit-chrome-web-store.sh):
+# Lets the Chrome Web Store workflow (.github/workflows/chrome-web-store.yml) submit
+# releases without a stored key:
 #
 #   scripts/setup-chrome-web-store.sh
 #
-# The non-secret values are also saved to apps/extension/.env.submit (git-ignored),
-# which `wxt submit` reads, so re-runs offer them as defaults and you can run
-# `cd apps/extension && bunx wxt submit status` later. The private key only goes to
-# GitHub.
+# It creates a Google Cloud service account (no key) and a Workload Identity Federation
+# provider that trusts only that workflow on dev, links the account in the Chrome Web
+# Store dashboard, and sets four GitHub repository variables. None of them is a secret.
+# Values are remembered in .env.chrome-web-store (git-ignored) for re-runs. Every step
+# checks what already exists, so re-running is safe.
 
 cd "$(dirname "$0")/.."
 export GH_REPO="zhangchi0104/open-browser-translate"
-ENV_FILE="apps/extension/.env.submit"
+ENV_FILE=".env.chrome-web-store"
 DEVCONSOLE="https://chrome.google.com/webstore/devconsole"
+WORKFLOW_FILE=".github/workflows/chrome-web-store.yml"
+DEFAULT_BRANCH="dev"
+SA_NAME="chrome-web-store-ci"
+POOL_ID="github"
+PROVIDER_ID="open-browser-translate"
 
-TOTAL_STAGES=9
+# run CMD… shows a command, runs it, and on failure offers a retry.
+run() {
+  while :; do
+    printf '  %s$ %s%s\n' "$DIM" "$*" "$RESET"
+    if "$@"; then return 0; fi
+    warn "That command failed."
+    confirm "Retry?" || { say "Fix it and run this wizard again."; exit 1; }
+  done
+}
+
+TOTAL_STAGES=10
 
 banner "Chrome Web Store release setup"
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
 stage "Check prerequisites"
 ok=true
-if ! command -v bun >/dev/null 2>&1; then
-  warn "bun is not installed: https://bun.sh"; ok=false
-elif [[ ! -x apps/extension/node_modules/.bin/wxt ]]; then
-  warn "Dependencies are not installed. Run: bun install"; ok=false
+if ! command -v gcloud >/dev/null 2>&1; then
+  warn "The Google Cloud CLI is not installed: https://cloud.google.com/sdk/docs/install"; ok=false
+elif [[ -z "$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null)" ]]; then
+  warn "gcloud is not signed in. Run: gcloud auth login"; ok=false
 fi
 if ! command -v gh >/dev/null 2>&1; then
   warn "The GitHub CLI is not installed: https://cli.github.com"; ok=false
@@ -219,7 +235,7 @@ elif ! gh auth status >/dev/null 2>&1; then
 else
   permission=$(gh repo view "$GH_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null || true)
   if [[ "$permission" != "ADMIN" ]]; then
-    warn "The active gh account can't manage $GH_REPO's secrets (permission: ${permission:-none})."
+    warn "The active gh account can't manage $GH_REPO's variables (permission: ${permission:-none})."
     note "Switch to the owner: gh auth switch --user zhangchi0104"
     ok=false
   fi
@@ -227,7 +243,8 @@ fi
 if [[ "$ok" != true ]]; then
   printf '\n'; say "Fix the above, then run this wizard again."; exit 1
 fi
-say "${GREEN}✓${RESET} bun, dependencies and gh (admin on $GH_REPO) are ready."
+REPO_ID=$(gh api "repos/$GH_REPO" -q .id)
+say "${GREEN}✓${RESET} gcloud ($(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -n1)) and gh (admin on $GH_REPO) are ready."
 printf '\n'
 say "The Chrome Web Store API can't create a new item, so the first version must"
 say "already be uploaded by hand (docs/chrome-web-store-listing.md, sections 0–5)."
@@ -260,117 +277,138 @@ done
 write_env CHROME_EXTENSION_ID "$CHROME_EXTENSION_ID"
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
-stage "Google Cloud: enable the Chrome Web Store API"
-open_url "https://console.cloud.google.com/apis/library/chromewebstore.googleapis.com"
-step "At the top of the page, pick a project, or create one (e.g. open-browser-translate)."
-step "Click Enable. If it says Manage / API Enabled, it's already on."
-note "No billing account is needed for this API."
-pause "Press Enter once the API is enabled."
+stage "Google Cloud: project"
+say "The service account and the identity provider live in a Google Cloud project."
+say "Use an existing one or create one (e.g. open-browser-translate)."
+open_url "https://console.cloud.google.com/projectcreate"
+note "No billing account is needed. Copy the project ID, not its name or number."
+ask GCP_PROJECT_ID "Project ID:"
+until gcloud projects describe "$GCP_PROJECT_ID" >/dev/null 2>&1; do
+  warn "gcloud can't see a project '$GCP_PROJECT_ID' with your account."
+  ask GCP_PROJECT_ID "Project ID:"
+done
+GCP_PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')
+write_env GCP_PROJECT_ID "$GCP_PROJECT_ID"
+say "${GREEN}✓${RESET} Project $GCP_PROJECT_ID (number $GCP_PROJECT_NUMBER)"
+pause
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
-stage "Google Cloud: service account and JSON key"
-open_url "https://console.cloud.google.com/iam-admin/serviceaccounts/create"
-step "Same project as the last stage. Name it e.g. chrome-web-store-ci."
-step "Click Create and continue. Grant it no roles: click Continue, then Done."
-step "Click the new account → Keys tab → Add key → Create new key → JSON → Create."
-step "Your browser downloads a .json key file."
-note "If key creation is blocked by an organization policy, use a project outside"
-note "that organization (a personal Google account has no such policy)."
+stage "Google Cloud: enable APIs"
+say "The Chrome Web Store API, plus the three APIs GitHub OIDC sign-in goes through."
 printf '\n'
-KEY_FILE=""
-while :; do
-  ask KEY_FILE "Path to the downloaded .json file (you can drag it here):"
-  KEY_FILE="${KEY_FILE%\"}"; KEY_FILE="${KEY_FILE#\"}"
-  KEY_FILE="${KEY_FILE%\'}"; KEY_FILE="${KEY_FILE#\'}"
-  # Dragging a file into the terminal adds a trailing space and escapes spaces.
-  KEY_FILE="${KEY_FILE%"${KEY_FILE##*[![:space:]]}"}"; KEY_FILE="${KEY_FILE//\\ / }"
-  KEY_FILE="${KEY_FILE/#\~/$HOME}"
-  [[ -f "$KEY_FILE" ]] || { warn "No file at $KEY_FILE"; continue; }
-  CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL=$(KEY_FILE="$KEY_FILE" bun -e \
-    'console.log(JSON.parse(require("fs").readFileSync(process.env.KEY_FILE, "utf8")).client_email ?? "")' 2>/dev/null || true)
-  CHROME_SERVICE_ACCOUNT_PRIVATE_KEY=$(KEY_FILE="$KEY_FILE" bun -e \
-    'console.log(JSON.parse(require("fs").readFileSync(process.env.KEY_FILE, "utf8")).private_key ?? "")' 2>/dev/null || true)
-  if [[ -n "$CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL" && "$CHROME_SERVICE_ACCOUNT_PRIVATE_KEY" == "-----BEGIN PRIVATE KEY-----"* ]]; then
-    break
-  fi
-  warn "That isn't a service account key (no client_email / private_key)."
-done
-say "${GREEN}✓${RESET} Read the key for $CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL"
-write_env CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL "$CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL"
-write_env CHROME_API_VERSION v2
+run gcloud services enable --project="$GCP_PROJECT_ID" \
+  chromewebstore.googleapis.com iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com
+pause
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
+stage "Google Cloud: service account"
+GCP_SERVICE_ACCOUNT="$SA_NAME@$GCP_PROJECT_ID.iam.gserviceaccount.com"
+if gcloud iam service-accounts describe "$GCP_SERVICE_ACCOUNT" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+  say "${GREEN}✓${RESET} $GCP_SERVICE_ACCOUNT already exists."
+else
+  say "Creating $GCP_SERVICE_ACCOUNT. It gets no project roles and no key."
+  printf '\n'
+  run gcloud iam service-accounts create "$SA_NAME" --project="$GCP_PROJECT_ID" \
+    --display-name="Chrome Web Store CI" \
+    --description="Submits releases of $GH_REPO; signed in to through GitHub OIDC"
+fi
+pause
+
+# ── 7 ─────────────────────────────────────────────────────────────────────
+stage "Google Cloud: trust GitHub Actions"
+WORKFLOW_REF="$GH_REPO/$WORKFLOW_FILE@refs/heads/$DEFAULT_BRANCH"
+CONDITION="assertion.repository_id == '$REPO_ID' && assertion.workflow_ref == '$WORKFLOW_REF'"
+POOL="projects/$GCP_PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID"
+GCP_WORKLOAD_IDENTITY_PROVIDER="$POOL/providers/$PROVIDER_ID"
+say "A Workload Identity Federation provider that accepts GitHub's OIDC tokens only from"
+note "  $WORKFLOW_REF"
+note "  (repository ID $REPO_ID, so a renamed or re-created repo can't use it)"
+say "and lets them act as $GCP_SERVICE_ACCOUNT."
+printf '\n'
+if ! gcloud iam workload-identity-pools describe "$POOL_ID" --project="$GCP_PROJECT_ID" --location=global >/dev/null 2>&1; then
+  run gcloud iam workload-identity-pools create "$POOL_ID" --project="$GCP_PROJECT_ID" \
+    --location=global --display-name="GitHub Actions"
+fi
+provider_args=(--project="$GCP_PROJECT_ID" --location=global --workload-identity-pool="$POOL_ID"
+  --display-name="$PROVIDER_ID"
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository_id=assertion.repository_id,attribute.workflow_ref=assertion.workflow_ref"
+  --attribute-condition="$CONDITION")
+if gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" --project="$GCP_PROJECT_ID" \
+  --location=global --workload-identity-pool="$POOL_ID" >/dev/null 2>&1; then
+  run gcloud iam workload-identity-pools providers update-oidc "$PROVIDER_ID" "${provider_args[@]}"
+else
+  run gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" "${provider_args[@]}" \
+    --issuer-uri="https://token.actions.githubusercontent.com"
+fi
+run gcloud iam service-accounts add-iam-policy-binding "$GCP_SERVICE_ACCOUNT" --project="$GCP_PROJECT_ID" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/$POOL/attribute.repository_id/$REPO_ID" \
+  --condition=None --format=none
+say "${GREEN}✓${RESET} Provider: $GCP_WORKLOAD_IDENTITY_PROVIDER"
+pause
+
+# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Chrome Web Store: link the service account"
 open_url "$DEVCONSOLE/$CHROME_PUBLISHER_ID"
 step "In the left sidebar, open Account."
 step "Find the service account setting and add this email, then save:"
-printf '\n      %s%s%s\n\n' "$BOLD" "$CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL" "$RESET"
+printf '\n      %s%s%s\n\n' "$BOLD" "$GCP_SERVICE_ACCOUNT" "$RESET"
 note "A publisher can have only one service account; replace any old one."
 pause "Press Enter once it's saved."
 
-# ── 7 ─────────────────────────────────────────────────────────────────────
-stage "Check that CI will be able to sign in"
-say "Asking the Chrome Web Store API for the item's status with these values."
-say "This only reads; nothing is uploaded or submitted."
-printf '\n'
-check_access() {
-  ( cd apps/extension && \
-    CHROME_API_VERSION=v2 \
-    CHROME_EXTENSION_ID="$CHROME_EXTENSION_ID" \
-    CHROME_PUBLISHER_ID="$CHROME_PUBLISHER_ID" \
-    CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL="$CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL" \
-    CHROME_SERVICE_ACCOUNT_PRIVATE_KEY="$CHROME_SERVICE_ACCOUNT_PRIVATE_KEY" \
-    bunx wxt submit status )
-}
-verified=false
-while :; do
-  if check_access; then verified=true; break; fi
-  printf '\n'
-  warn "The API rejected these values. Usual causes:"
-  note "  401/403: the service account isn't linked yet (stage 6), or it was just"
-  note "           linked; wait a minute and retry"
-  note "  403:     the API isn't enabled in the key's project (stage 4)"
-  note "  404:     the publisher or extension ID is wrong (stages 2-3)"
-  confirm "Retry?" || break
-done
-if [[ "$verified" != true ]]; then
-  confirm "Set the GitHub secrets anyway?" || { say "Nothing was sent to GitHub."; exit 1; }
-fi
-
-# ── 8 ─────────────────────────────────────────────────────────────────────
-stage "GitHub: set the release secrets"
-say "These go to $GH_REPO → Settings → Secrets and variables → Actions:"
-note "  CHROME_EXTENSION_ID                  $CHROME_EXTENSION_ID"
-note "  CHROME_PUBLISHER_ID                  $CHROME_PUBLISHER_ID"
-note "  CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL  $CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL"
-note "  CHROME_SERVICE_ACCOUNT_PRIVATE_KEY   (hidden, from the JSON key)"
+# ── 9 ─────────────────────────────────────────────────────────────────────
+stage "GitHub: set the repository variables"
+say "These go to $GH_REPO → Settings → Secrets and variables → Actions → Variables."
+say "None is a secret: without the OIDC token only that workflow gets, they grant nothing."
+note "  CHROME_EXTENSION_ID              $CHROME_EXTENSION_ID"
+note "  CHROME_PUBLISHER_ID              $CHROME_PUBLISHER_ID"
+note "  GCP_WORKLOAD_IDENTITY_PROVIDER   $GCP_WORKLOAD_IDENTITY_PROVIDER"
+note "  GCP_SERVICE_ACCOUNT              $GCP_SERVICE_ACCOUNT"
 printf '\n'
 warn "From the next feat/fix release on main, CI submits every release for review."
 if confirm "Set them now (overwrites existing values)?"; then
-  set_secret CHROME_EXTENSION_ID "$CHROME_EXTENSION_ID"
-  set_secret CHROME_PUBLISHER_ID "$CHROME_PUBLISHER_ID"
-  set_secret CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL "$CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL"
-  set_secret CHROME_SERVICE_ACCOUNT_PRIVATE_KEY "$CHROME_SERVICE_ACCOUNT_PRIVATE_KEY"
+  set_var CHROME_EXTENSION_ID "$CHROME_EXTENSION_ID"
+  set_var CHROME_PUBLISHER_ID "$CHROME_PUBLISHER_ID"
+  set_var GCP_WORKLOAD_IDENTITY_PROVIDER "$GCP_WORKLOAD_IDENTITY_PROVIDER"
+  set_var GCP_SERVICE_ACCOUNT "$GCP_SERVICE_ACCOUNT"
 else
-  SKIPPED+=("GitHub secrets (re-run this wizard to set them)")
+  SKIPPED+=("GitHub variables (re-run this wizard to set them)")
 fi
 pause
 
-# ── 9 ─────────────────────────────────────────────────────────────────────
-stage "Delete the local key file"
-say "The private key now lives in GitHub. Keeping the JSON file around only adds risk;"
-say "if you lose access, create a new key in Google Cloud and re-run this wizard."
+# ── 10 ────────────────────────────────────────────────────────────────────
+stage "Check it end to end"
+say "OIDC only works inside GitHub Actions, so the check is a dry run of the workflow:"
+say "it signs in as $SA_NAME and reads the item's status, uploading nothing."
 printf '\n'
-if confirm "Delete $KEY_FILE?"; then
-  rm -f -- "$KEY_FILE"
-  say "${GREEN}✓${RESET} Deleted."
+LATEST_TAG=$(gh release list --exclude-pre-releases --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)
+if ! gh workflow view chrome-web-store.yml >/dev/null 2>&1; then
+  warn "The Chrome Web Store workflow isn't on $DEFAULT_BRANCH yet."
+  SKIPPED+=("Once it is: Actions → Chrome Web Store → Run workflow, tag ${LATEST_TAG:-<latest>}, dry_run ticked")
+elif [[ -z "$LATEST_TAG" ]]; then
+  warn "No stable release to check against yet."
+  SKIPPED+=("After the first stable release: Actions → Chrome Web Store → Run workflow with dry_run")
+elif confirm "Run a dry run against $LATEST_TAG now?"; then
+  run gh workflow run chrome-web-store.yml --ref "$DEFAULT_BRANCH" -f tag="$LATEST_TAG" -f dry_run=true
+  say "Waiting for the run to start…"
+  sleep 5
+  run_id=$(gh run list --workflow chrome-web-store.yml --event workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')
+  if gh run watch "$run_id" --exit-status; then
+    say "${GREEN}✓${RESET} The workflow signed in and can reach the item."
+  else
+    warn "The dry run failed. Its log says which step:"
+    note "  Sign in to Google Cloud: the provider condition, or the APIs (stages 5 and 7)"
+    note "  Submit, HTTP 401/403: the service account isn't linked yet (stage 8), or it was"
+    note "    just linked; wait a minute and re-run the job"
+    note "  Submit, HTTP 404: the publisher or extension ID is wrong (stages 2 and 3)"
+    SKIPPED+=("Fix the dry run: gh run view $run_id --log-failed")
+  fi
 else
-  SKIPPED+=("Delete or safely store $KEY_FILE; never commit it")
+  SKIPPED+=("Actions → Chrome Web Store → Run workflow, tag $LATEST_TAG, dry_run ticked")
 fi
 pause
 
 finish
 say "Next feat/fix merge to main: once CI releases it, the Chrome Web Store workflow"
 say "submits the Chrome zip for review. Watch it under Actions → Chrome Web Store."
-say "To check now: Run workflow there with the latest tag and dry_run ticked."
 printf '\n'
