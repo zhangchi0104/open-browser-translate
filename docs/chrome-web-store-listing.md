@@ -1,6 +1,6 @@
 # Chrome Web Store 首次上传清单
 
-第一版必须在 [Chrome 开发者后台](https://chrome.google.com/webstore/devconsole) 手动创建条目：Chrome Web Store API v2 不能创建新条目。之后的版本由 CI 通过 `wxt submit` 提交。
+第一版必须在 [Chrome 开发者后台](https://chrome.google.com/webstore/devconsole) 手动创建条目：Chrome Web Store API v2 不能创建新条目。之后的版本由 CI 通过 `wxt submit` 自动提交，设置方法见第 6 节。
 
 这份清单按后台的页签顺序排列，写明每个字段填什么。素材都在 `store/chrome/`。
 
@@ -234,42 +234,61 @@ All JavaScript ships in the package, bundled at build time with WXT/Vite. The ex
 2. 弹窗里可以取消勾选 **Publish automatically after approval（审核通过后自动发布）**，改为延迟发布：审核通过后有 30 天时间手动点发布，超时会退回草稿。
 3. 审核结果会发到联系邮箱。被拒时邮件会写明违反了哪条政策（例如 Purple Potassium 表示请求了多余的权限）。
 
-## 6. 首次上传之后：为 CI 准备 ID 和服务账号
+## 6. 首次上传之后：让 CI 自动提交新版本
 
-CI 用 `wxt submit`（底层是 `publish-browser-extension`）调用 Chrome Web Store API v2。需要以下 GitHub secrets（仓库 Settings → Secrets and variables → Actions）：
+### 6.1 用向导设置 secrets
+
+在仓库根目录运行：
+
+```bash
+scripts/setup-chrome-web-store.sh
+```
+
+向导会逐步打开对应的网页，告诉你点哪里、复制什么，最后用 `gh secret set` 写入仓库 zhangchi0104/open-browser-translate 的四个 GitHub secrets。运行前先 `bun install`，并让 `gh` 登录到仓库所有者账号（`gh auth switch --user zhangchi0104`）。步骤如下：
+
+1. 确认第 1–5 步已经在后台建好条目（API 不能新建条目）。
+2. 从后台网址 `chrome.google.com/webstore/devconsole/<publisher-id>/...` 读出发布者 ID。
+3. 从条目页读出 32 位扩展 ID。
+4. 在 Google Cloud 项目里启用 **Chrome Web Store API**。
+5. 新建服务账号（不授予任何 IAM 角色），在 Keys 页签新建 JSON 密钥并下载。向导直接读取这个文件，私钥里的换行原样保留。
+6. 在开发者后台的 **Account（帐号）** 页面添加服务账号的邮箱。一个发布者只能有一个服务账号。
+7. 用 `wxt submit status` 只读地查询一次条目状态，确认 CI 能登录。
+8. 确认后写入 GitHub secrets。
+9. 删除本地的 JSON 密钥文件。
+
+非机密的值（扩展 ID、发布者 ID、服务账号邮箱、`CHROME_API_VERSION=v2`）会存到 `apps/extension/.env.submit`（已被 git 忽略）。再次运行向导时，这些值会作为默认值。私钥只存进 GitHub，不写到本地。
+
+四个 secrets 的来源：
 
 | Secret | 从哪里拿 |
 | --- | --- |
 | `CHROME_EXTENSION_ID` | 条目创建后，后台条目名称下方显示的 32 位小写字母 ID。它也出现在商店链接 `chromewebstore.google.com/detail/<slug>/<ID>` 里。 |
-| `CHROME_PUBLISHER_ID` | 后台网址 `chrome.google.com/webstore/devconsole/<publisher-id>/...` 中的那一段，也可以在 Account 页签的发布者信息里找到。 |
+| `CHROME_PUBLISHER_ID` | 后台网址 `chrome.google.com/webstore/devconsole/<publisher-id>/...` 中的那一段。 |
 | `CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL` | 服务账号 JSON 密钥里的 `client_email`。 |
-| `CHROME_SERVICE_ACCOUNT_PRIVATE_KEY` | 服务账号 JSON 密钥里的 `private_key`，完整的 PEM 文本，包括 `-----BEGIN PRIVATE KEY-----` 和 `-----END PRIVATE KEY-----` 两行。 |
+| `CHROME_SERVICE_ACCOUNT_PRIVATE_KEY` | 服务账号 JSON 密钥里的 `private_key`：完整的 PEM 文本，用真实换行，不是 `\n`。 |
 
-服务账号的设置步骤：
+### 6.2 发布时会发生什么
 
-1. 在 [Google Cloud Console](https://console.cloud.google.com/) 新建或选择一个项目，启用 **Chrome Web Store API**。
-2. 在 IAM → Service Accounts 中创建一个服务账号，不需要授予任何 IAM 角色。在 Keys 页签新建一个 JSON 密钥，下载到本地。
-3. 回到 Chrome 开发者后台的 **Account（帐号）** 页签，在服务账号一栏添加第 2 步得到的 `client_email`，让它有权管理这个发布者的条目。
-4. 把四个值填进 GitHub secrets。私钥要保留真实换行：把 JSON 里 `private_key` 的 `\n` 换成真正的换行再粘贴。GitHub secret 支持多行文本。
-5. 填完后从本地删除 JSON 密钥文件，不要提交进仓库。
+`main` 上有 `feat`/`fix` 提交时，CI 的 `release` job 运行 semantic-release。它发布 GitHub Release 之后，最后一步运行 `scripts/release/submit-chrome-web-store.sh <版本>`（见 `.releaserc.json`），把 `apps/extension/.output/open-browser-translate-<版本>-chrome.zip` 用 `wxt submit` 上传并提交审核。审核通过后自动发布。
 
-`wxt submit` 默认仍使用旧的 v1.1 接口，而 v1.1 将于 **2026-10-15 停止服务**。所以 CI 里必须设置环境变量 `CHROME_API_VERSION=v2`（它不是机密，可以直接写在 workflow 的 `env:` 里）。
+| 情况 | 结果 |
+| --- | --- |
+| 预发布版本（版本号带 `-`，例如 `0.3.0-beta.1`） | 不提交，只发 GitHub Release。 |
+| 四个 secrets 都没设置 | 跳过，在 Actions 运行页面显示一条警告，job 仍然成功。 |
+| 只设置了一部分 | job 失败，并列出缺少哪几个。 |
+| 登录、上传或提交审核失败 | `wxt submit` 以非零状态退出，job 失败。 |
 
-CI 的提交步骤大致如下：
+CI 固定使用 API v2（`CHROME_API_VERSION=v2`，提交脚本也默认用 v2）。`wxt submit` 默认仍是旧的 v1.1 接口，而 v1.1 在 **2026-10-15 停止服务**。
 
-```yaml
-- name: Submit to Chrome Web Store
-  working-directory: apps/extension
-  run: bunx wxt submit --chrome-zip .output/*-chrome.zip
-  env:
-    CHROME_API_VERSION: v2
-    CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
-    CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
-    CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
-    CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
-```
+### 6.3 提交失败后补交
 
-可以先加 `--dry-run` 验证凭据，再正式提交。
+提交失败时，tag 和 GitHub Release 已经发布了。重跑 job 不会再提交：semantic-release 认为这个版本已经发过。修好问题后（常见原因：服务账号没关联、上一版还在审核中），手动补交：
+
+1. 从这个版本的 GitHub Release 下载 `open-browser-translate-<版本>-chrome.zip`。
+2. 其他三个值 `wxt submit` 会从 `apps/extension/.env.submit` 读取（向导写的）。私钥向导没有存：在 Google Cloud 给服务账号新建一个 JSON 密钥，在当前 shell 里 export `CHROME_SERVICE_ACCOUNT_PRIVATE_KEY`（取 JSON 里的 `private_key`，保留真实换行），用完再删掉这个密钥。
+3. 在 `apps/extension` 目录运行 `bunx wxt submit --chrome-zip <zip 路径>`。可以先加 `--dry-run`，它只检查登录和条目访问，不上传。
+
+上一版还在审核中时，提交可能被拒绝。加 `--chrome-cancel-pending` 可以先撤回待审核的版本再提交。
 
 ## 7. 网站和隐私政策的公开 URL
 
