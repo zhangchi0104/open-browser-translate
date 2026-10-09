@@ -1,3 +1,26 @@
+## [0.4.0](https://github.com/zhangchi0104/open-browser-translate/compare/v0.3.0...v0.4.0) (2026-10-08)
+
+### Features
+
+* **ai:** Run analysis on OpenAI's Decisions API ([16f2baa](https://github.com/zhangchi0104/open-browser-translate/commit/16f2baacd631b8486c7f52f6bed7369810aa7102))
+
+### Bug Fixes
+
+* **site-context:** Keep pixiv novels' context per series ([18b3de6](https://github.com/zhangchi0104/open-browser-translate/commit/18b3de604aa85c925a2242aaf1736f63e65389a4))
+
+## [0.3.0](https://github.com/zhangchi0104/open-browser-translate/compare/v0.2.0...v0.3.0) (2026-10-05)
+
+### Features
+
+* Ask before the first translation sends page text anywhere ([f0e1f69](https://github.com/zhangchi0104/open-browser-translate/commit/f0e1f6916f70814906860d679d2a2511d778303d))
+* Name the extension Open Browser Translate, in English and Chinese ([5edb2bf](https://github.com/zhangchi0104/open-browser-translate/commit/5edb2bfca867216377bd821e0af15113e5fc843f))
+
+### Bug Fixes
+
+* Drop the unused api.typesafe.ai host permission ([36b9990](https://github.com/zhangchi0104/open-browser-translate/commit/36b999005c6534df4e8ee3186995e34a8df86b80))
+* **firefox:** Start the background on Firefox, which has no action API in Manifest V2 ([0c3dc30](https://github.com/zhangchi0104/open-browser-translate/commit/0c3dc3090d3fb62047719c793969cd15c551a632))
+* Replace the template puzzle-piece icon with the extension's own ([1d2e1c4](https://github.com/zhangchi0104/open-browser-translate/commit/1d2e1c4cf985f3765f437a58a6c31d2937d6d57d))
+
 ## [0.2.0](https://github.com/zhangchi0104/open-browser-translate/compare/v0.1.0...v0.2.0) (2026-10-05)
 
 ### Features
