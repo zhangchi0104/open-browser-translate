@@ -10,7 +10,7 @@ On a Mac with Xcode:
 bun run build:safari
 ```
 
-That builds `apps/extension/.output/safari-mv3` (`wxt build -b safari --mv3`) and then runs `apps/extension/scripts/safari-xcode.sh`, which wraps it with `xcrun safari-web-extension-converter` in an Xcode project at `apps/extension/.output/safari-xcode/Open Browser Translate/Open Browser Translate.xcodeproj`. The project has a macOS app and an iOS/iPadOS app, each with its extension.
+That builds `apps/extension/.output/safari-mv3` (`wxt build -b safari --mv3`) and then runs `apps/extension/scripts/safari-xcode.sh`, which wraps it with `xcrun safari-web-extension-converter` in an Xcode project at `apps/extension/.output/safari-xcode/Open Browser Translate/Open Browser Translate.xcodeproj`. The project has a macOS app and an iOS/iPadOS app, each with its extension. It also works inside `nix develop`, which leaves Xcode's tools alone (see `docs/nix.md`).
 
 - Bundle ID: `io.github.zhangchi0104.open-browser-translate` (the extension is `….Extension`), after the Firefox add-on ID.
 - The app's version is the extension's (`MARKETING_VERSION`); the build number stays 1.

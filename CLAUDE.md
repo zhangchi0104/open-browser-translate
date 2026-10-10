@@ -3,6 +3,7 @@
 ## Repository layout
 
 Bun workspaces run by Turborepo. Run tasks from the root (`bun run compile`, `bun run test`, `bun run zip`, `bun run dev`, `bun run site`); Turborepo runs them in each package and caches results in `.turbo`.
+`nix develop` (or direnv's `.envrc`) gives a shell with Bun, Node 24 and the release scripts' CLIs; see `docs/nix.md`.
 
 - `apps/extension`: the browser extension (WXT + React). Its `package.json` version is the release version.
   `bun run build:safari` builds it for Safari and wraps it in a generated Xcode project (macOS + iOS); see `docs/safari.md`.
