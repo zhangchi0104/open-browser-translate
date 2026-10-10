@@ -12,6 +12,8 @@ const spanLabels: Record<string, string> = {
   "prepare-translation": "准备翻译",
   "translate-content": "翻译批次",
   "analyze-content": "内容分析请求",
+  "test-connection": "连接测试请求",
+  "connection.list-models": "读取模型列表",
   "content-analysis": "内容分析",
   translation: "翻译",
   "DecisionModel.decide": "决策模型",
@@ -53,6 +55,9 @@ function summaryOf(root: OtlpSpan) {
     attribute(root, "obt.translated") && `译出 ${attribute(root, "obt.translated")} 段`,
     attribute(root, "obt.plan.mode") && `模式 ${attribute(root, "obt.plan.mode")}`,
     attribute(root, "gen_ai.request.model"),
+    attribute(root, "obt.connection.api_url"),
+    attribute(root, "obt.test.models_listed") && `列出 ${attribute(root, "obt.test.models_listed")} 个模型`,
+    attribute(root, "obt.test.reason"),
   ];
   return parts.filter(Boolean).join(" · ");
 }
@@ -122,7 +127,7 @@ export function TraceView() {
       <div className="overflow-hidden rounded-xl border bg-card">
           {spans && !visible.length ? (
             <p className="px-5 py-8 text-center text-sm text-muted-foreground">
-              {traces.length ? "没有出错的请求。" : "暂无追踪数据。点击网页上的翻译按钮后，每次请求的步骤和耗时会显示在这里。"}
+              {traces.length ? "没有出错的请求。" : "暂无追踪数据。点击网页上的翻译按钮或设置里的「测试连接」后，每次请求的步骤和耗时会显示在这里。"}
             </p>
           ) : (
             <ol className="divide-y">
@@ -210,13 +215,15 @@ function TraceRow({ trace }: { trace: Trace }) {
 const eventLabels: Record<string, string> = {
   "obt.prompt.system": "提示词",
   "obt.prompt.context": "上下文",
+  "obt.server.message": "服务返回",
+  "obt.response.body": "响应内容",
   exception: "异常",
 };
 const attributeOf = (event: OtlpSpan["events"][number] | undefined, key: string) =>
   event?.attributes.find((attribute) => attribute.key === key)?.value;
-/** The context is stored compact; it reads better indented. */
+/** The context and JSON response bodies are stored compact; they read better indented. */
 function readable(name: string, content: string) {
-  if (name !== "obt.prompt.context") return content;
+  if (name !== "obt.prompt.context" && name !== "obt.response.body") return content;
   try { return JSON.stringify(JSON.parse(content), null, 2); } catch { return content; }
 }
 /** A `blocks` event's texts, by id. */

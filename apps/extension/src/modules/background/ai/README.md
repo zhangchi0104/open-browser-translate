@@ -69,11 +69,21 @@ response body (up to 4000 characters, saying how much was left out). The page
 turns it into advice (`entrypoints/options/connection-test.ts`), such as adding
 `/v1`, and shows everything that came back in full below it.
 
-Every test goes to the debug log (「调试日志」→「其他日志」) and the console:
-the background logs each result it returns (`connectionTestLog`: the address,
-whether there was a key but never the key, and the whole result), and the page
-logs what the background never saw: a refused permission, or a request that
-failed or whose reply didn't decode. A reply of nothing at all usually means
+Every test is a request trace in 「调试日志」→「请求追踪」, recorded by the same
+local tracer as translation. The background runs it as `traceConnectionTest`:
+a `test-connection` root span (连接测试请求) with the address, whether there was
+a key (never the key), the connection's models and the result
+(`obt.test.result`, `obt.test.reason`, `obt.test.models_listed`,
+`obt.test.missing`), and a `connection.list-models` client span (读取模型列表)
+for the request, with `url.full`, `http.response.status_code`, `error.type` and
+the server's message and response body as events. A failed test marks both
+spans failed, so it shows under 仅出错的请求. Failures only the options page
+sees (permission refused, the request not delivered, a reply it can't decode)
+are sent as `connection-test-failed`, which the background records as a failed
+`test-connection` trace (`obt.test.reason`: `page-permission`, `page-send`,
+`page-reply`). If the background can't be reached, there is nothing to record
+it, and the page console is the only place it appears. Both sides also print
+each test to the console (`connectionTestLog`). A reply of nothing at all usually means
 the service worker is older than the page: an unpacked extension's pages load
 fresh from disk after a rebuild, but its worker keeps running the old script
 until the extension is reloaded, and the old worker has no handler for the

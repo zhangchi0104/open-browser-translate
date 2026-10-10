@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { browser } from "wxt/browser";
 import { background } from "@/lib/background";
-import { PURPOSE_NAMES, type Purpose } from "@/modules/shared/protocol";
+import { PURPOSE_NAMES, type ConnectionTestFailure, type Purpose } from "@/modules/shared/protocol";
 import { Bug, ChevronDown, Database, ExternalLink, KeyRound, Languages, Plus } from "lucide-react";
 import {
   AiProviders, aiSettings, CHATGPT_CONNECTION, CONNECTION_KIND_NAMES, CONNECTION_KINDS,
@@ -408,10 +408,13 @@ function ChatGPTRow({ email, onSignIn, onSignOut }: {
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-/** A test failure the background never logged: to the page's console and the extension's debug log. */
-function logTestFailure(level: "warn" | "error", event: string, detail: string) {
-  console[level](`[测试连接] ${event}\n${detail}`);
-  void background.request({ type: "debug-log", entry: { level, event, detail } }).catch(() => {});
+/**
+ * A test failure only the page saw, to its console and to the background, which records it as a
+ * failed trace in 「请求追踪」. When the background can't be reached either, the console has it.
+ */
+function reportTestFailure(failure: ConnectionTestFailure) {
+  console[failure.stage === "permission" ? "warn" : "error"](`[测试连接] ${failure.apiUrl}（${failure.stage}）\n${failure.error}`);
+  void background.request({ type: "connection-test-failed", failure }).catch(() => {});
 }
 
 /** A connection in the list: its name and state, opening in place to edit. */
@@ -449,18 +452,24 @@ function ConnectionRow({ connection, uses, models, error, open, onToggle, onChan
     const origin = new URL(apiUrl).origin;
     const permitted = browser.permissions.request({ origins: [`${origin}/*`] })
       .then((granted) => ({ granted }), (error: unknown) => ({ granted: false, error: errorText(error) }));
+    const started = performance.now();
+    const failure = (stage: ConnectionTestFailure["stage"], error: string): ConnectionTestFailure =>
+      ({ apiUrl, hasKey: !!apiKey, stage, error, elapsedMs: Math.round(performance.now() - started) });
     setTest({ apiUrl, apiKey });
     void (async () => {
       const permission = await permitted;
       if (!permission.granted) {
         const details = `请求的权限：${origin}/*\n${"error" in permission ? `浏览器报错：${permission.error}` : "权限请求被拒绝或关闭。"}`;
-        logTestFailure("warn", "测试连接：没有获得访问权限", `接口地址：${apiUrl}\n${details}`);
+        reportTestFailure(failure("permission", details));
         return done({ text: `没有获得访问 ${origin} 的权限，扩展无法连接这个接口。请再次测试并选择允许。`, tone: "error", details });
       }
-      const result = await background.request({ type: "test-connection", apiUrl, apiKey, models })
-        .catch((error: unknown) => ({ status: "failed" as const, error: `无法把请求发给扩展后台：${errorText(error)}` }));
-      // The background logs every result it sends; a failure here never got one through.
-      if (result.status === "failed") logTestFailure("error", "测试连接没有完成", `接口地址：${apiUrl}\n${result.error ?? "没有错误信息"}`);
+      let sent = true;
+      const result = await background.request({ type: "test-connection", apiUrl, apiKey, models }).catch((error: unknown) => {
+        sent = false;
+        return { status: "failed" as const, error: `无法把请求发给扩展后台：${errorText(error)}` };
+      });
+      // The background traces every test it runs; a failure here is one it may never have seen.
+      if (result.status === "failed") reportTestFailure(failure(sent ? "reply" : "send", result.error ?? "没有错误信息"));
       done(describeConnectionTest(result, { apiUrl, apiKey }));
     })();
   }

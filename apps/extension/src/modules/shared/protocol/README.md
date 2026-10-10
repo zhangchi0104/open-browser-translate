@@ -12,7 +12,9 @@ lives in `index.ts`:
   doesn't decode is answered `{ status: "failed" }`, and a reply the page can't
   decode counts as failed too, with an error (`undecodedReply`) that holds every
   schema issue and the reply itself. No reply at all means no handler answered,
-  usually a background older than the page.
+  usually a background older than the page. `connection-test-failed` is how
+  the options page reports a connection test that failed on its side, so the
+  background can record it as a trace.
 - **Translation stream** (`STREAM_PORT`): the page sends `{ blocks }`, then
   gets `{ type: "block", index, text, final }` events (`final` for cached
   blocks) and one `{ type: "result", result }`.

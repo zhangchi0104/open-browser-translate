@@ -1,6 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { connectionTestLog, testConnection } from "../src/modules/background/ai/connection-test";
+import { Effect } from "effect";
+import { connectionTestLog, recordConnectionTestFailure, testConnection, traceConnectionTest } from "../src/modules/background/ai/connection-test";
+import { createLocalTracer, groupTraces, traced, type OtlpSpan } from "../src/modules/shared/debug-log/trace";
 import { describeConnectionTest } from "../src/entrypoints/options/connection-test";
 import { createClient, createDispatcher, type ConnectionTestResult, type Handlers, type Sender } from "../src/modules/shared/protocol";
 
@@ -128,7 +130,7 @@ test("messages say what to change", () => {
   assert.match(describeConnectionTest(unauthorized, { apiUrl: "https://example.com/v1", apiKey: "" }).text, /需要 API key（401）.*bad key/);
   assert.match(describeConnectionTest(unauthorized, { apiUrl: "https://example.com/v1", apiKey: "k" }).text, /API key 无效/);
 
-  const ok = describeConnectionTest({ status: "ok", models: 2, ms: 12, missing: [] }, { apiUrl: "https://example.com/v1", apiKey: "" });
+  const ok = describeConnectionTest({ status: "ok", models: 2, ms: 12, missing: [], url: "https://example.com/v1/models", httpStatus: 200 }, { apiUrl: "https://example.com/v1", apiKey: "" });
   assert.deepEqual(ok, { text: "连接成功：服务列出了 2 个模型，用时 12 毫秒。", tone: "success" });
   assert.equal(describeConnectionTest({ status: "failed" }, { apiUrl: "", apiKey: "" }).tone, "error");
 });
@@ -212,7 +214,7 @@ test("a failed test's details hold the request, status, message and body", () =>
     { apiUrl: "https://example.com/v1", apiKey: "" },
   );
   assert.equal(message.details, '请求：GET https://example.com/v1/models\nHTTP 状态：400\n说明：bad request\n响应内容：\n{"error":"bad request"}');
-  assert.equal(describeConnectionTest({ status: "ok", models: 1, ms: 1, missing: [] }, { apiUrl: "u", apiKey: "" }).details, undefined);
+  assert.equal(describeConnectionTest({ status: "ok", models: 1, ms: 1, missing: [], url: "u", httpStatus: 200 }, { apiUrl: "u", apiKey: "" }).details, undefined);
 });
 
 test("the debug log gets every result, with the key left out", async () => {
@@ -225,5 +227,96 @@ test("the debug log gets every result, with the key left out", async () => {
     assert.equal(entry.event, `测试连接失败：${result.reason}`);
     if (result.body) assert.ok(entry.detail.includes(result.body));
     if (result.detail) assert.ok(entry.detail.includes(result.detail));
+  }
+});
+
+/** The spans one traced test records, root first. */
+async function traceOf(effect: Effect.Effect<unknown>) {
+  const spans: OtlpSpan[] = [];
+  await Effect.runPromise(traced(effect, createLocalTracer((span) => spans.push(span))));
+  const [trace] = groupTraces(spans);
+  assert.equal(groupTraces(spans).length, 1, "one trace per test");
+  return trace!;
+}
+const attr = (span: OtlpSpan, key: string) => {
+  const value = span.attributes.find((entry) => entry.key === key)?.value;
+  return value?.stringValue ?? value?.intValue ?? value?.boolValue ?? value?.arrayValue?.values.map((item) => item.stringValue);
+};
+const event = (span: OtlpSpan, name: string) =>
+  span.events.find((entry) => entry.name === name)?.attributes.find((entry) => entry.key === "content")?.value.stringValue;
+
+test("a passing test is a test-connection trace with a list-models step, and no key", async () => {
+  const quiet = console.info;
+  console.info = () => {};
+  try {
+    const { fetcher } = server(() => models("gpt-a", "gpt-b"));
+    const trace = await traceOf(traceConnectionTest({ apiUrl: "https://example.com/v1", apiKey: "sk-test-value", models: ["gpt-a", "gpt-z"] }, { fetcher }));
+    assert.deepEqual(trace.spans.map(({ span, depth }) => [span.name, depth]), [["test-connection", 0], ["connection.list-models", 1]]);
+    assert.equal(trace.error, false);
+    const root = trace.root;
+    assert.equal(root.kind, 2);
+    assert.equal(attr(root, "obt.connection.api_url"), "https://example.com/v1");
+    assert.equal(attr(root, "obt.connection.has_key"), true);
+    assert.deepEqual(attr(root, "obt.connection.models"), ["gpt-a", "gpt-z"]);
+    assert.equal(attr(root, "obt.test.result"), "ok");
+    assert.equal(attr(root, "obt.test.models_listed"), "2");
+    assert.deepEqual(attr(root, "obt.test.missing"), ["gpt-z"]);
+    const step = trace.spans[1]!.span;
+    assert.equal(attr(step, "url.full"), "https://example.com/v1/models");
+    assert.equal(attr(step, "http.response.status_code"), "200");
+    assert.doesNotMatch(JSON.stringify(trace.spans), /sk-test-value/);
+  } finally {
+    console.info = quiet;
+  }
+});
+
+test("a failing test is an error trace carrying the status, the server's message and the body, and no key", async () => {
+  const quiet = console.warn;
+  console.warn = () => {};
+  try {
+    const body = { error: { message: "Incorrect API key provided" } };
+    const { fetcher } = server(() => Response.json(body, { status: 401 }));
+    const trace = await traceOf(traceConnectionTest({ apiUrl: "https://example.com/v1", apiKey: "sk-test-value" }, { fetcher }));
+    assert.equal(trace.error, true, "listed under errors");
+    const [root, step] = trace.spans.map(({ span }) => span);
+    assert.deepEqual(root!.status, { code: 2, message: "测试连接失败：unauthorized（HTTP 401）" });
+    assert.equal(attr(root!, "obt.test.result"), "error");
+    assert.equal(attr(root!, "obt.test.reason"), "unauthorized");
+    assert.equal(step!.status.code, 2);
+    assert.equal(step!.kind, 3);
+    assert.equal(attr(step!, "url.full"), "https://example.com/v1/models");
+    assert.equal(attr(step!, "http.response.status_code"), "401");
+    assert.equal(attr(step!, "error.type"), "unauthorized");
+    assert.equal(event(step!, "obt.server.message"), "Incorrect API key provided");
+    assert.equal(event(step!, "obt.response.body"), JSON.stringify(body));
+    assert.doesNotMatch(JSON.stringify(trace.spans), /sk-test-value/);
+
+    const down = await traceOf(traceConnectionTest({ apiUrl: "http://127.0.0.1:1/v1", apiKey: "" }, {
+      fetcher: (async () => { throw new TypeError("Failed to fetch"); }) as typeof fetch,
+    }));
+    assert.equal(down.error, true);
+    assert.equal(attr(down.root, "obt.test.reason"), "network");
+    assert.equal(event(down.spans[1]!.span, "obt.server.message"), "Failed to fetch");
+  } finally {
+    console.warn = quiet;
+  }
+});
+
+test("a failure only the page saw is recorded as an error trace of the same name", async () => {
+  const quiet = console.warn;
+  console.warn = () => {};
+  try {
+    const trace = await traceOf(recordConnectionTestFailure({
+      apiUrl: "https://example.com/v1", hasKey: true, stage: "permission", error: "请求的权限：https://example.com/*\n权限请求被拒绝或关闭。", elapsedMs: 12,
+    }));
+    assert.equal(trace.root.name, "test-connection");
+    assert.equal(trace.error, true);
+    assert.equal(trace.root.status.message, "测试连接失败：没有获得访问接口的权限");
+    assert.equal(attr(trace.root, "obt.test.reason"), "page-permission");
+    assert.equal(attr(trace.root, "obt.connection.has_key"), true);
+    const exception = trace.root.events.find((entry) => entry.name === "exception");
+    assert.match(JSON.stringify(exception), /权限请求被拒绝或关闭/);
+  } finally {
+    console.warn = quiet;
   }
 });

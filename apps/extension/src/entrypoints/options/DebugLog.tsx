@@ -101,7 +101,7 @@ function LogView() {
       <div className="overflow-hidden rounded-xl border bg-card">
           {entries && !visible.length ? (
             <p className="px-5 py-8 text-center text-sm text-muted-foreground">
-              {entries.length ? "没有符合筛选条件的日志。" : "暂无日志。登录、读取模型列表和网页端的错误会记在这里；翻译请求见「请求追踪」。"}
+              {entries.length ? "没有符合筛选条件的日志。" : "暂无日志。登录、读取模型列表和网页端的错误会记在这里；翻译和测试连接见「请求追踪」。"}
             </p>
           ) : (
             <ol className="divide-y">
