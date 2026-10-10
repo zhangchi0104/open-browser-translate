@@ -1,0 +1,100 @@
+name: Chrome Web Store
+
+# Submits a stable release's Chrome zip to the Chrome Web Store by hand: to resubmit a
+# release, cancel a version still in review, or check access with a dry run. CI's
+# chrome-web-store job submits each new release automatically; "Re-run failed jobs" on
+# that run is the usual way to retry.
+#
+# Run it from main (Use workflow from: main): the Workload Identity Federation provider
+# only accepts ci.yml and this file on main. scripts/setup-chrome-web-store.sh sets up
+# the provider and the variables below, in the production environment. The zip comes
+# from the tag's GitHub release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to submit, e.g. v0.3.0
+        required: true
+        type: string
+      cancel_pending:
+        description: Cancel a version still in review, then submit this one
+        type: boolean
+        default: false
+      dry_run:
+        description: Only check access to the item; upload nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    environment: production
+    # Shared with CI's chrome-web-store job.
+    concurrency:
+      group: chrome-web-store
+      cancel-in-progress: false
+    env:
+      CHROME_EXTENSION_ID: ${{ vars.CHROME_EXTENSION_ID }}
+      CHROME_PUBLISHER_ID: ${{ vars.CHROME_PUBLISHER_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Accepts "v0.3.0" or "0.3.0".
+      - name: Check the branch, tag and variables
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::Run this from main (Use workflow from: main); Google Cloud only trusts it there."; exit 1
+          fi
+          version="${INPUT_TAG#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "::error::'$INPUT_TAG' is not a release tag like v0.3.0."; exit 1
+          fi
+          if [[ "$version" == *-* ]]; then
+            echo "::error::$INPUT_TAG is a prerelease; prereleases aren't submitted to the Chrome Web Store."; exit 1
+          fi
+
+          missing=()
+          for name in CHROME_EXTENSION_ID CHROME_PUBLISHER_ID GCP_WORKLOAD_IDENTITY_PROVIDER GCP_SERVICE_ACCOUNT; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing variables in the production environment: ${missing[*]}. Run scripts/setup-chrome-web-store.sh."; exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          create_credentials_file: false
+
+      - name: Download the Chrome zip from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: >-
+          gh release download "v$VERSION"
+          --pattern "open-browser-translate-$VERSION-chrome.zip"
+          --dir apps/extension/.output
+
+      - name: Submit
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          CHROME_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CHROME_CANCEL_PENDING: ${{ inputs.cancel_pending }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: scripts/release/submit-chrome-web-store.sh "$VERSION"

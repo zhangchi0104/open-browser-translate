@@ -1,6 +1,6 @@
 # Chrome Web Store 首次上传清单
 
-第一版必须在 [Chrome 开发者后台](https://chrome.google.com/webstore/devconsole) 手动创建条目：Chrome Web Store API v2 不能创建新条目。之后的版本由 CI 通过 `wxt submit` 提交。
+第一版必须在 [Chrome 开发者后台](https://chrome.google.com/webstore/devconsole) 手动创建条目：Chrome Web Store API v2 不能创建新条目。之后的版本由 CI 在发版时通过 Chrome Web Store API 自动提交，设置方法见第 6 节。
 
 这份清单按后台的页签顺序排列，写明每个字段填什么。素材都在 `store/chrome/`。
 
@@ -234,42 +234,106 @@ All JavaScript ships in the package, bundled at build time with WXT/Vite. The ex
 2. 弹窗里可以取消勾选 **Publish automatically after approval（审核通过后自动发布）**，改为延迟发布：审核通过后有 30 天时间手动点发布，超时会退回草稿。
 3. 审核结果会发到联系邮箱。被拒时邮件会写明违反了哪条政策（例如 Purple Potassium 表示请求了多余的权限）。
 
-## 6. 首次上传之后：为 CI 准备 ID 和服务账号
+## 6. 首次上传之后：让 CI 自动提交新版本
 
-CI 用 `wxt submit`（底层是 `publish-browser-extension`）调用 Chrome Web Store API v2。需要以下 GitHub secrets（仓库 Settings → Secrets and variables → Actions）：
+`main` 发版时，CI 把同一份构建产物同时发布到 GitHub Release 和 Chrome Web Store。CI 不保存任何密钥：提交商店的 job 通过 GitHub OIDC（Google Cloud 的 Workload Identity Federation）以一个服务账号的身份登录 Google Cloud，拿到短期 access token，再用 curl 调用 Chrome Web Store API v2 上传和提交审核。服务账号没有 JSON 密钥。
 
-| Secret | 从哪里拿 |
-| --- | --- |
-| `CHROME_EXTENSION_ID` | 条目创建后，后台条目名称下方显示的 32 位小写字母 ID。它也出现在商店链接 `chromewebstore.google.com/detail/<slug>/<ID>` 里。 |
-| `CHROME_PUBLISHER_ID` | 后台网址 `chrome.google.com/webstore/devconsole/<publisher-id>/...` 中的那一段，也可以在 Account 页签的发布者信息里找到。 |
-| `CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL` | 服务账号 JSON 密钥里的 `client_email`。 |
-| `CHROME_SERVICE_ACCOUNT_PRIVATE_KEY` | 服务账号 JSON 密钥里的 `private_key`，完整的 PEM 文本，包括 `-----BEGIN PRIVATE KEY-----` 和 `-----END PRIVATE KEY-----` 两行。 |
+### 6.1 用向导设置
 
-服务账号的设置步骤：
+在仓库根目录运行：
 
-1. 在 [Google Cloud Console](https://console.cloud.google.com/) 新建或选择一个项目，启用 **Chrome Web Store API**。
-2. 在 IAM → Service Accounts 中创建一个服务账号，不需要授予任何 IAM 角色。在 Keys 页签新建一个 JSON 密钥，下载到本地。
-3. 回到 Chrome 开发者后台的 **Account（帐号）** 页签，在服务账号一栏添加第 2 步得到的 `client_email`，让它有权管理这个发布者的条目。
-4. 把四个值填进 GitHub secrets。私钥要保留真实换行：把 JSON 里 `private_key` 的 `\n` 换成真正的换行再粘贴。GitHub secret 支持多行文本。
-5. 填完后从本地删除 JSON 密钥文件，不要提交进仓库。
-
-`wxt submit` 默认仍使用旧的 v1.1 接口，而 v1.1 将于 **2026-10-15 停止服务**。所以 CI 里必须设置环境变量 `CHROME_API_VERSION=v2`（它不是机密，可以直接写在 workflow 的 `env:` 里）。
-
-CI 的提交步骤大致如下：
-
-```yaml
-- name: Submit to Chrome Web Store
-  working-directory: apps/extension
-  run: bunx wxt submit --chrome-zip .output/*-chrome.zip
-  env:
-    CHROME_API_VERSION: v2
-    CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
-    CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
-    CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
-    CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
+```bash
+scripts/setup-chrome-web-store.sh
 ```
 
-可以先加 `--dry-run` 验证凭据，再正式提交。
+运行前需要：
+
+- 安装 `gcloud` 并登录（`gcloud auth login`），账号要能在 Google Cloud 项目里创建服务账号和 Workload Identity 池。
+- 安装 `gh` 并切到仓库所有者账号（`gh auth switch --user zhangchi0104`）。向导需要仓库的 admin 权限来写变量。
+
+向导分 10 步，每一步都会先检查已有的资源，重复运行是安全的：
+
+1. 检查 `gcloud` 和 `gh`，确认第 1–5 节已经在后台建好条目（API 不能新建条目）。
+2. 从后台网址 `chrome.google.com/webstore/devconsole/<publisher-id>/...` 读出发布者 ID。
+3. 从条目页读出 32 位扩展 ID。
+4. 选择或新建 Google Cloud 项目（不需要结算账号）。
+5. 启用 Chrome Web Store API，以及 OIDC 登录要用的 IAM、IAM Credentials、STS 三个 API。
+6. 新建服务账号 `chrome-web-store-ci`：不授予项目角色，不创建密钥。
+7. 新建 Workload Identity 池 `github` 和 OIDC provider `open-browser-translate`，并允许这个仓库的令牌扮演服务账号（`roles/iam.workloadIdentityUser`）。
+8. 在开发者后台的 **Account（帐号）** 页面添加服务账号的邮箱。一个发布者只能有一个服务账号。
+9. 用 `gh variable set --env production` 把四个变量写入 `production` environment（没有这个 environment 时先创建）。
+10. 从 `main` 触发一次 Chrome Web Store workflow 的 dry run，确认能登录、能读取条目状态。OIDC 只在 GitHub Actions 里可用，所以没法在本地检查。
+
+输入的值存在仓库根目录的 `.env.chrome-web-store`（已被 git 忽略），再次运行时作为默认值。
+
+**provider 只信任 `main` 上的两个 workflow。** 它的条件要求令牌同时满足：
+
+- `repository_id` 是这个仓库的数字 ID：仓库改名或被删后重建都不能冒用。
+- `workflow_ref` 是下面两个之一：
+  - `zhangchi0104/open-browser-translate/.github/workflows/ci.yml@refs/heads/main`：发版时自动提交。
+  - `zhangchi0104/open-browser-translate/.github/workflows/chrome-web-store.yml@refs/heads/main`：手动补交和 dry run。
+
+所以只有 `main` 上的这两个文件能登录。能改它们的只有能合并到 `main` 的人，和能发版的是同一批人。`dev`、PR 和其他分支上的副本都拿不到 token。`ci.yml` 里只有 `chrome-web-store` job 申请了 `id-token: write`。
+
+四个变量放在 `production` environment 里（Settings → **Environments** → `production` → Environment variables）。提交商店的两个 job（`ci.yml` 的 `chrome-web-store` 和 `chrome-web-store.yml` 的 `submit`）都声明了 `environment: production`，只有它们读得到。这些变量都不是机密：没有只有这两个 workflow 才能拿到的 OIDC 令牌，它们什么也做不了。
+
+`production` 的保护规则会作用在这两个 job 上：
+
+- 设了 **Required reviewers**：每次提交商店都要先有人批准，job 才开始运行，release 不受影响。
+- 设了 **Deployment branches**：必须允许 `main`，否则 job 会被拒绝。
+
+| 变量 | 从哪里来 |
+| --- | --- |
+| `CHROME_EXTENSION_ID` | 条目创建后，后台条目名称下方显示的 32 位小写字母 ID。它也出现在商店链接 `chromewebstore.google.com/detail/<slug>/<ID>` 里。 |
+| `CHROME_PUBLISHER_ID` | 后台网址 `chrome.google.com/webstore/devconsole/<publisher-id>/...` 中的那一段。 |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | provider 的完整名称：`projects/<项目编号>/locations/global/workloadIdentityPools/github/providers/open-browser-translate`。 |
+| `GCP_SERVICE_ACCOUNT` | 服务账号邮箱：`chrome-web-store-ci@<项目 ID>.iam.gserviceaccount.com`。 |
+
+### 6.2 发布时会发生什么
+
+push 到 `main` 后，CI（`.github/workflows/ci.yml`）按这个顺序运行：
+
+```text
+plan ──▶ build ──┬──▶ release           打 tag、更新 CHANGELOG、发布 GitHub Release
+                 └──▶ chrome-web-store  提交 Chrome Web Store 审核（只在 main）
+```
+
+1. **plan**：运行 `semantic-release --dry-run`，算出这次要发布的版本号，不发布任何东西。没有 `feat`/`fix` 提交，或者 `main` 在这次提交之后又有了新提交（由新提交那次运行来发版）时，版本号为空，后面两个发布 job 都跳过。
+2. **build**：有版本号时，先把 `apps/extension/package.json` 设成这个版本，再类型检查、测试、打包。打出来的 zip 就是发布用的 zip，作为 artifact 上传。
+3. **release** 和 **chrome-web-store** 同时开始，用的是同一份 artifact：
+   - **release** 运行 semantic-release，把 artifact 里的 zip 附到 GitHub Release 上。如果它算出的版本号和 plan 不一样，会在打 tag 之前失败，不会把版本号对不上的 zip 发出去。
+   - **chrome-web-store** 在 `production` environment 里运行，检查四个变量，通过 OIDC 登录，然后运行 `scripts/release/submit-chrome-web-store.sh <版本>`：先 `fetchStatus` 读取条目状态，再 `upload` 上传 zip（大包是异步处理的，脚本会轮询到处理完），最后 `publish` 提交审核。审核通过后自动发布。
+
+两个发布 job 互不影响：任一个失败，另一个照常完成。`dev` 上的 beta 只走 release，不会提交商店。
+
+| 情况 | 结果 |
+| --- | --- |
+| 预发布版本（`dev` 上的 `X.Y.Z-beta.N`） | `chrome-web-store` job 只在 `main` 上运行；手动运行也会拒绝。提交脚本还会再检查一次：版本号带 `-` 就不提交。 |
+| 四个变量都没设置 | 自动提交跳过，在运行页面显示一条警告，job 仍然成功。手动运行直接失败。 |
+| 只设置了一部分 | job 失败，并列出缺少哪几个。 |
+| OIDC 登录失败 | **Sign in to Google Cloud** 这一步失败。常见原因：provider 条件不对、API 没启用、手动运行时没选 `main`。 |
+| API 返回非 2xx（例如服务账号没关联返回 401/403，ID 填错返回 404） | job 失败，错误响应打印在日志里。 |
+| 上传没有成功（版本号不高于上一次上传、包被拒绝） | job 失败，日志里有上传状态。 |
+
+两个发布 job 并行，所以可能出现一边成功、一边失败：
+
+- 商店提交了，但 GitHub Release 失败：对那次运行点 **Re-run failed jobs**，只重跑 release。它会用同一个版本号和同一份 zip。
+- GitHub Release 发了，但商店失败：见 6.3。
+
+### 6.3 提交失败后补交
+
+修好问题后（常见原因：服务账号没关联、上一版还在审核中），任选一种方式：
+
+- **重跑：** 打开那次 CI 运行，点 **Re-run failed jobs**。只重跑 `chrome-web-store` job，用的还是同一份 artifact（artifact 保留 90 天）。
+- **手动运行：** Actions → **Chrome Web Store** → **Run workflow**。**Use workflow from** 选 `main`，填入 tag，例如 `v0.4.0`（也可以填 `0.4.0`）。任何稳定版 tag 都可以，zip 从这个 tag 的 GitHub Release 下载。两个选项：
+  - **cancel_pending**：上一版还在审核中时，提交可能被拒绝。勾选后会先撤回待审核的版本，再提交这一版。
+  - **dry_run**：只登录并读取条目状态，不上传。设置完变量后可以用它验证一次。
+
+  手动运行遇到预发布 tag、变量未设置，或者不是从 `main` 运行时，会直接失败。
+
+不能在本地补交：服务账号没有密钥，只有 `main` 上的这两个 workflow 能登录。
+
+`workflow_dispatch` 的 workflow 要先出现在默认分支 `dev` 上，Actions 页面才有 **Run workflow** 按钮；又要在 `main` 上才能登录。所以这个 PR 先合并到 `dev`，再随 `dev` 合并到 `main` 之后，自动提交和手动补交才都可用。
 
 ## 7. 网站和隐私政策的公开 URL
 

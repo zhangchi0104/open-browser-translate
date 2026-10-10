@@ -28,3 +28,9 @@ web-ext.config.ts
 # Monorepo
 .turbo
 dist
+
+# The next version, written by semantic-release's verifyReleaseCmd
+.release-version
+
+# Values scripts/setup-chrome-web-store.sh remembers for re-runs
+.env.chrome-web-store
