@@ -66,7 +66,7 @@ function handlers(overrides: Partial<Handlers>): Handlers {
   return {
     "open-settings": unexpected, "debug-log": unexpected, "debug-log-clear": unexpected, "traces-clear": unexpected,
     "cache-stats": unexpected, "cache-clear": unexpected, "chatgpt-sign-in": unexpected, "chatgpt-sign-out": unexpected,
-    "chatgpt-models": unexpected, "openai-models": unexpected, "gateway-models": unexpected,
+    "chatgpt-models": unexpected, "openai-models": unexpected, "gateway-models": unexpected, "test-connection": unexpected,
     "prepare-translation": unexpected, "analyze-content": unexpected,
     "quick-settings": unexpected, "update-quick-settings": unexpected, "connection-models": unexpected,
     ...overrides,

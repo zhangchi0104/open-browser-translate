@@ -10,6 +10,7 @@ import {
   type AISettings, type Connection, type ConnectionKind, type ReasoningEffort, type SettingsProvider,
 } from "@/modules/shared/settings";
 import { CHATGPT_ISSUER } from "@/modules/background/ai/chatgpt-auth";
+import { OPENAI_API_URL } from "@/modules/background/ai/openai-models";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/background/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/background/ai/chatgpt-session";
 import { Button } from "@/components/ui/button";
@@ -27,9 +28,10 @@ import { CacheSettings } from "./CacheSettings";
 import { SettingsGroup, SettingsRow } from "./SettingsList";
 import { ModelPicker } from "@/components/model-picker";
 import { useCatalog, type LoadedCatalog } from "@/components/use-catalog";
+import { describeConnectionTest, type TestMessage } from "./connection-test";
 
 type Status = { text: string; tone?: "error" | "success" };
-const statusTones = { error: "text-destructive", success: "text-success" } as const;
+const statusTones = { error: "text-destructive", success: "text-success", warning: "text-warning-foreground" } as const;
 
 const kindDescriptions: Record<ConnectionKind, string> = {
   [AiProviders.VercelAIGateway]: "一个 key 用多家公司的模型，按用量付费。",
@@ -245,6 +247,15 @@ export function App() {
 
   /** The purposes that use connection `id`. */
   const usesOf = (id: string) => draft ? (["analysis", "translation"] as const).filter((p) => draft[p].connection === id).map((p) => PURPOSE_NAMES[p]) : [];
+  /** The models connection `id` is used with that its model list should name; decision models aren't listed. */
+  const modelsOf = (id: string) => {
+    if (!draft) return [];
+    const provider = providerOf(draft, id);
+    return (["analysis", "translation"] as const)
+      .filter((p) => draft[p].connection === id && !decisionModels(p, provider))
+      .map((p) => (draft[p].models[id] ?? defaultModel(p, provider)).trim())
+      .filter(Boolean);
+  };
 
   return (
     <SidebarProvider>
@@ -329,6 +340,7 @@ export function App() {
                       key={connection.id}
                       connection={connection}
                       uses={usesOf(connection.id)}
+                      models={modelsOf(connection.id)}
                       error={connectionErrors[connection.id]}
                       open={expanded === connection.id}
                       onToggle={() => setExpanded(expanded === connection.id ? undefined : connection.id)}
@@ -395,9 +407,10 @@ function ChatGPTRow({ email, onSignIn, onSignOut }: {
 }
 
 /** A connection in the list: its name and state, opening in place to edit. */
-function ConnectionRow({ connection, uses, error, open, onToggle, onChange, onRemove }: {
+function ConnectionRow({ connection, uses, models, error, open, onToggle, onChange, onRemove }: {
   connection: Connection;
   uses: string[];
+  models: string[];
   error: string | undefined;
   open: boolean;
   onToggle: () => void;
@@ -408,6 +421,34 @@ function ConnectionRow({ connection, uses, error, open, onToggle, onChange, onRe
   const [shown, setShown] = useState(false);
   const custom = connection.kind === AiProviders.Custom;
   const link = kindLinks[connection.kind];
+  // The Vercel AI Gateway's model list is public, so listing it can't tell whether a key works.
+  const testable = custom || connection.kind === AiProviders.OpenAIApi;
+  const [test, setTest] = useState<{ apiUrl: string; apiKey: string; message?: TestMessage }>();
+  const apiUrl = custom ? normalizeApiUrl(connection.apiUrl) : OPENAI_API_URL;
+  const apiKey = connection.apiKey.trim();
+  // A result describes the address and key it was run with; editing either hides it.
+  const tested = test?.apiUrl === apiUrl && test.apiKey === apiKey ? test : undefined;
+  const testing = !!tested && !tested.message;
+
+  /** Lists the models once with the address and key as entered, saved or not. */
+  function runTest() {
+    const done = (message: TestMessage) => setTest((current) =>
+      current?.apiUrl === apiUrl && current.apiKey === apiKey && !current.message ? { apiUrl, apiKey, message } : current);
+    const invalid = custom ? validateApiUrl(apiUrl) : !apiKey && "请先填写 API key。";
+    if (invalid) return setTest({ apiUrl, apiKey, message: { text: invalid, tone: "error" } });
+    // Asked before anything is awaited, while the click still counts as the user's: the background
+    // reaches the server only with permission for its origin (Safari grants even the manifest's on request).
+    const origin = new URL(apiUrl).origin;
+    const permitted = browser.permissions.request({ origins: [`${origin}/*`] }).catch(() => false);
+    setTest({ apiUrl, apiKey });
+    void (async () => {
+      if (!await permitted) return done({ text: `没有获得访问 ${origin} 的权限，扩展无法连接这个接口。请再次测试并选择允许。`, tone: "error" });
+      const result = await background.request({ type: "test-connection", apiUrl, apiKey, models })
+        .catch((error: unknown) => ({ status: "failed" as const, error: error instanceof Error ? error.message : String(error) }));
+      done(describeConnectionTest(result, { apiUrl, apiKey }));
+    })();
+  }
+
   return (
     <div>
       <SettingsRow label={connectionName(connection)}>
@@ -476,6 +517,17 @@ function ConnectionRow({ connection, uses, error, open, onToggle, onChange, onRe
               )}
             </div>
           </div>
+          {testable && (
+            <div className="space-y-1.5">
+              <Button type="button" variant="outline" size="sm" disabled={testing} aria-describedby={`${id}-test`} onClick={runTest}>
+                {testing && <span className="size-3 animate-spin rounded-full border-2 border-border border-t-primary motion-reduce:[animation-duration:2.4s]" aria-hidden="true" />}
+                {testing ? "正在测试…" : "测试连接"}
+              </Button>
+              <p id={`${id}-test`} role="status" aria-live="polite" className={cn("text-[12px] break-words", tested?.message ? statusTones[tested.message.tone] : "text-muted-foreground")}>
+                {tested?.message?.text ?? (testing ? "正在请求模型列表…" : `用上面填写的${custom ? "地址和 key" : " key"} 请求一次模型列表，不用先保存。`)}
+              </p>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <Button type="button" variant="ghost" size="sm" className="-ml-3 text-destructive hover:text-destructive" disabled={uses.length > 0} onClick={onRemove}>
               删除这个连接

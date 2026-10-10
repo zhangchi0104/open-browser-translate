@@ -105,6 +105,15 @@ const Requests = {
    */
   "openai-models": request("openai-models", { apiKey: Schema.optional(Schema.String), apiUrl: Schema.optional(Schema.String) }),
   "gateway-models": request("gateway-models", {}),
+  /**
+   * Lists the models at an OpenAI-compatible `apiUrl` once with `apiKey`, as the options page has
+   * them before saving, to tell whether the connection works; `models` are the IDs it's used with.
+   */
+  "test-connection": request("test-connection", {
+    apiUrl: Schema.String,
+    apiKey: Schema.String,
+    models: Schema.optional(Schema.Array(Schema.String)),
+  }),
   "prepare-translation": request("prepare-translation", { context: PageContext }),
   "quick-settings": request("quick-settings", {}),
   "update-quick-settings": request("update-quick-settings", {
@@ -132,6 +141,24 @@ const Models = status("ok", { models: Schema.Array(ChatGPTModel) });
 export type ModelList = typeof Models.Type | Failed;
 /** Any reply can also be a failure: the request didn't decode, or its handler threw. */
 const orFailed = <S extends Schema.Top>(reply: S) => Schema.Union([reply, Failed]);
+
+/** Why a connection test failed. */
+export const CONNECTION_TEST_FAILURES = ["invalid-url", "network", "timeout", "unauthorized", "not-found", "http", "html", "bad-response"] as const;
+/**
+ * How a connection test went: how many models the server listed, in how many ms, and which of the
+ * connection's models it didn't list; or why it failed, with the URL asked, the HTTP status and
+ * what the server said.
+ */
+const ConnectionTestResult = Schema.Union([
+  status("ok", { models: Schema.Number, ms: Schema.Number, missing: Schema.Array(Schema.String) }),
+  status("error", {
+    reason: Schema.Literals(CONNECTION_TEST_FAILURES),
+    url: Schema.optional(Schema.String),
+    httpStatus: Schema.optional(Schema.Number),
+    detail: Schema.optional(Schema.String),
+  }),
+]);
+export type ConnectionTestResult = typeof ConnectionTestResult.Type;
 
 /** How the analysis model decided to translate a page. */
 const TranslationPlan = Schema.Struct({
@@ -184,6 +211,7 @@ const Replies = {
   "chatgpt-models": orFailed(Models),
   "openai-models": orFailed(Schema.Union([Models, status("no-key", {})])),
   "gateway-models": orFailed(Models),
+  "test-connection": orFailed(ConnectionTestResult),
   // `language` is the target language's code, for the translations' `lang`.
   "prepare-translation": orFailed(Schema.Union([status("ok", { plan: TranslationPlan, language: Schema.String }), NotConfigured])),
   "quick-settings": orFailed(status("ok", { settings: QuickSettings })),
