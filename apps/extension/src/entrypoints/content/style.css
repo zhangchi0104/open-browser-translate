@@ -4,6 +4,7 @@
 @import "../../styles/theme.css";
 
 @source "../../components/launcher";
+@source "../../components/model-picker.tsx";
 @source "../../components/ui/button.tsx";
 @source "../../components/ui/input.tsx";
 @source "../../components/ui/label.tsx";

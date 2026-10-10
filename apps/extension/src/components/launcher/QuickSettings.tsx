@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { ModelPicker } from "../model-picker";
 import { PURPOSE_NAMES, type Purpose, type QuickSettings as View, type Request } from "../../modules/shared/protocol";
 import { useCatalog, type Catalog } from "../use-catalog";
 import { TARGET_LANGUAGES } from "../../modules/shared/settings/model";
@@ -131,7 +132,7 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor: string; c
   );
 }
 
-/** A list of the connection's models once it loads; otherwise a field to type a model ID. */
+/** A searchable list of the connection's models once it loads; otherwise a field to type a model ID. */
 function ModelControl({ id, model, catalog, disabled, onChange }: {
   id: string;
   model: string;
@@ -142,22 +143,8 @@ function ModelControl({ id, model, catalog, disabled, onChange }: {
   const [typed, setTyped] = useState(model);
   useEffect(() => setTyped(model), [model]);
   if (catalog.status === "ok" && catalog.models.length) {
-    const unlisted = model && !catalog.models.some(({ slug }) => slug === model);
-    return (
-      <Select value={model} disabled={disabled} onValueChange={onChange}>
-        <SelectTrigger id={id} size="sm" className="w-full">
-          <SelectValue placeholder="选择模型" />
-        </SelectTrigger>
-        <SelectContent>
-          {unlisted && <SelectItem value={model}>{model}（不在列表中）</SelectItem>}
-          {catalog.models.map(({ slug, displayName }) => (
-            <SelectItem key={slug} value={slug} description={displayName !== slug && slug}>
-              {displayName}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    );
+    // A model the list doesn't have is still offered: the background says if the purpose can't use it.
+    return <ModelPicker id={id} value={model} models={catalog.models} allowCustom disabled={disabled} size="sm" className="w-full" onChange={onChange} />;
   }
   // No list to pick from (still loading, signed out, no key, or the list failed): type an ID.
   return (

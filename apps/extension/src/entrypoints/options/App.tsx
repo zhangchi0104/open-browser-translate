@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { DebugLog } from "./DebugLog";
 import { CacheSettings } from "./CacheSettings";
 import { SettingsGroup, SettingsRow } from "./SettingsList";
+import { ModelPicker } from "@/components/model-picker";
 import { useCatalog, type LoadedCatalog } from "@/components/use-catalog";
 
 type Status = { text: string; tone?: "error" | "success" };
@@ -120,7 +121,7 @@ export function App() {
   const [expanded, setExpanded] = useState<string>();
   const [section, setSection] = useState<Section>("models");
   const [status, setStatus] = useState<Status>({ text: "正在读取设置…" });
-  const modelInputs = { analysis: useRef<HTMLInputElement>(null), translation: useRef<HTMLInputElement>(null) };
+  const modelFields = { analysis: useRef<HTMLElement>(null), translation: useRef<HTMLElement>(null) };
   const email = useChatGPTEmail();
 
   useEffect(() => {
@@ -181,7 +182,7 @@ export function App() {
         setStatus({ text: `${PURPOSE_NAMES[purpose]}：${error}`, tone: "error" });
         setSection("models");
         // The models section may be hidden until this render commits.
-        requestAnimationFrame(() => modelInputs[purpose].current?.focus());
+        requestAnimationFrame(() => modelFields[purpose].current?.focus());
         return;
       }
     }
@@ -293,7 +294,7 @@ export function App() {
                     draft={draft}
                     email={email}
                     error={errors[purpose]}
-                    inputRef={modelInputs[purpose]}
+                    fieldRef={modelFields[purpose]}
                     onConnectionChange={(connection) => edit((next) => { next[purpose].connection = connection; })}
                     onModelChange={(model) => edit((next) => { next[purpose].models[next[purpose].connection] = model; })}
                     onEffortChange={(effort) => edit((next) => {
@@ -551,12 +552,13 @@ function catalogRequest(provider: SettingsProvider | undefined, connection: Conn
   }
 }
 
-function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChange, onModelChange, onEffortChange, onFastChange }: {
+function ModelSection({ purpose, draft, email, error, fieldRef, onConnectionChange, onModelChange, onEffortChange, onFastChange }: {
   purpose: Purpose;
   draft: AISettings | undefined;
   email: string | null | undefined;
   error: string | undefined;
-  inputRef: RefObject<HTMLInputElement | null>;
+  /** The model field, list or text, for focusing it when the model is wrong. */
+  fieldRef: RefObject<HTMLElement | null>;
   onConnectionChange: (connection: string) => void;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: ReasoningEffort | undefined) => void;
@@ -580,10 +582,12 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
   // A list to pick from replaces the free-text field once the connection's catalog has loaded.
   const choices = catalog.status === "ok" && catalog.models.length ? catalog.models : undefined;
   const unlisted = choices && model && !choices.some((m) => m.slug === model);
+  // Any typed ID will do for a loaded catalog; only decision models must come from their list.
+  const unusable = unlisted && evaluation;
   // Empty text (the gateway needs nothing to list its models) shows no footnote.
   const help = (error ?? (removed ? "这个连接已被删除，请选择其他连接。"
     : !text || (choices && !unlisted) ? undefined
-    : unlisted ? (evaluation ? `模型 ${model} 不能用于内容分析，请重新选择。` : `模型 ${model} 不在${text.source}的模型列表中，请重新选择。`)
+    : unlisted ? (evaluation ? `模型 ${model} 不能用于内容分析，请重新选择。` : `模型 ${model} 不在${text.source}的模型列表中，请确认 ID 无误。`)
     : catalog.status === "ok" ? `${text.source}没有返回可用模型，可直接填写模型 ID。`
     : catalog.status === "loading" ? "正在读取可用模型…"
     : catalog.status === "failed" ? "无法读取模型列表，可直接填写模型 ID，或稍后重试。"
@@ -599,12 +603,13 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
   const advanced = reasons || offersFast;
   const advancedOpen = showAdvanced || !!effort || fast;
   const field = "w-full sm:w-60";
+  const setField = (node: HTMLElement | null) => { fieldRef.current = node; };
   return (
     <SettingsGroup
       title={config.title}
       description={config.description}
       footer={help && (
-        <p id={`${id}-help`} className={cn(error || unlisted || removed ? "text-destructive" : undefined)}>
+        <p id={`${id}-help`} className={cn(error || unusable || removed ? "text-destructive" : undefined)}>
           {help}
           {catalog.status === "failed" && (
             <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-[12px]" onClick={reload}>重试</Button>
@@ -632,22 +637,20 @@ function ModelSection({ purpose, draft, email, error, inputRef, onConnectionChan
       {!removed && (
         <SettingsRow label="模型" htmlFor={`${id}-model`}>
           {choices ? (
-            <Select value={model} onValueChange={onModelChange}>
-              <SelectTrigger id={`${id}-model`} className={field} aria-invalid={!!error || !!unlisted} aria-describedby={help ? `${id}-help` : undefined}>
-                <SelectValue placeholder="选择模型" />
-              </SelectTrigger>
-              <SelectContent>
-                {unlisted && <SelectItem value={model}>{model}（不在列表中）</SelectItem>}
-                {choices.map((m) => (
-                  <SelectItem key={m.slug} value={m.slug} description={m.displayName !== m.slug && m.slug}>
-                    {m.displayName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ModelPicker
+              ref={setField}
+              id={`${id}-model`}
+              className={field}
+              value={model}
+              models={choices}
+              allowCustom={!evaluation}
+              aria-invalid={!!error || !!unusable}
+              aria-describedby={help ? `${id}-help` : undefined}
+              onChange={onModelChange}
+            />
           ) : (
             <Input
-              ref={inputRef}
+              ref={setField}
               id={`${id}-model`}
               className={field}
               autoComplete="off"
