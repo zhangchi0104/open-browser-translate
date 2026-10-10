@@ -50,5 +50,10 @@ export default defineConfig({
         gecko_android: { strict_min_version: "142.0" },
       },
     }),
+    // Safari builds as Manifest V3 (`--mv3`, see package.json). 16.4 brings storage.session, which
+    // the ChatGPT sign-in keeps its pending attempt in, and the CSS that Tailwind 4 needs.
+    ...(browser === "safari" && {
+      browser_specific_settings: { safari: { strict_min_version: "16.4" } },
+    }),
   }),
 });
