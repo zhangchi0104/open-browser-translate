@@ -261,7 +261,7 @@ scripts/setup-chrome-web-store.sh
 6. 新建服务账号 `chrome-web-store-ci`：不授予项目角色，不创建密钥。
 7. 新建 Workload Identity 池 `github` 和 OIDC provider `open-browser-translate`，并允许这个仓库的令牌扮演服务账号（`roles/iam.workloadIdentityUser`）。
 8. 在开发者后台的 **Account（帐号）** 页面添加服务账号的邮箱。一个发布者只能有一个服务账号。
-9. 用 `gh variable set` 写入四个仓库变量。
+9. 用 `gh variable set --env production` 把四个变量写入 `production` environment（没有这个 environment 时先创建）。
 10. 从 `main` 触发一次 Chrome Web Store workflow 的 dry run，确认能登录、能读取条目状态。OIDC 只在 GitHub Actions 里可用，所以没法在本地检查。
 
 输入的值存在仓库根目录的 `.env.chrome-web-store`（已被 git 忽略），再次运行时作为默认值。
@@ -275,7 +275,12 @@ scripts/setup-chrome-web-store.sh
 
 所以只有 `main` 上的这两个文件能登录。能改它们的只有能合并到 `main` 的人，和能发版的是同一批人。`dev`、PR 和其他分支上的副本都拿不到 token。`ci.yml` 里只有 `chrome-web-store` job 申请了 `id-token: write`。
 
-四个仓库变量（Settings → Secrets and variables → Actions → **Variables**）都不是机密：没有只有这两个 workflow 才能拿到的 OIDC 令牌，它们什么也做不了。
+四个变量放在 `production` environment 里（Settings → **Environments** → `production` → Environment variables）。提交商店的两个 job（`ci.yml` 的 `chrome-web-store` 和 `chrome-web-store.yml` 的 `submit`）都声明了 `environment: production`，只有它们读得到。这些变量都不是机密：没有只有这两个 workflow 才能拿到的 OIDC 令牌，它们什么也做不了。
+
+`production` 的保护规则会作用在这两个 job 上：
+
+- 设了 **Required reviewers**：每次提交商店都要先有人批准，job 才开始运行，release 不受影响。
+- 设了 **Deployment branches**：必须允许 `main`，否则 job 会被拒绝。
 
 | 变量 | 从哪里来 |
 | --- | --- |
@@ -297,7 +302,7 @@ plan ──▶ build ──┬──▶ release           打 tag、更新 CHANG
 2. **build**：有版本号时，先把 `apps/extension/package.json` 设成这个版本，再类型检查、测试、打包。打出来的 zip 就是发布用的 zip，作为 artifact 上传。
 3. **release** 和 **chrome-web-store** 同时开始，用的是同一份 artifact：
    - **release** 运行 semantic-release，把 artifact 里的 zip 附到 GitHub Release 上。如果它算出的版本号和 plan 不一样，会在打 tag 之前失败，不会把版本号对不上的 zip 发出去。
-   - **chrome-web-store** 检查四个仓库变量，通过 OIDC 登录，然后运行 `scripts/release/submit-chrome-web-store.sh <版本>`：先 `fetchStatus` 读取条目状态，再 `upload` 上传 zip（大包是异步处理的，脚本会轮询到处理完），最后 `publish` 提交审核。审核通过后自动发布。
+   - **chrome-web-store** 在 `production` environment 里运行，检查四个变量，通过 OIDC 登录，然后运行 `scripts/release/submit-chrome-web-store.sh <版本>`：先 `fetchStatus` 读取条目状态，再 `upload` 上传 zip（大包是异步处理的，脚本会轮询到处理完），最后 `publish` 提交审核。审核通过后自动发布。
 
 两个发布 job 互不影响：任一个失败，另一个照常完成。`dev` 上的 beta 只走 release，不会提交商店。
 

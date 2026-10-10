@@ -137,11 +137,11 @@ write_env() {
   printf '  %s✓ wrote%s %s → %s\n' "$GREEN" "$RESET" "$key" "$ENV_FILE"
 }
 
-# set_var NAME VALUE sets a GitHub Actions repo variable (non-secret).
+# set_var NAME VALUE sets a (non-secret) variable in the $GH_ENVIRONMENT environment.
 set_var() {
   local name="$1" value="$2"
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    if gh variable set "$name" --body "$value" >/dev/null 2>&1; then
+    if gh variable set "$name" --env "$GH_ENVIRONMENT" --body "$value" >/dev/null 2>&1; then
       printf '  %s✓ set%s GitHub variable %s\n' "$GREEN" "$RESET" "$name"
       return
     fi
@@ -175,7 +175,8 @@ finish() {
 #
 # It creates a Google Cloud service account (no key) and a Workload Identity Federation
 # provider that trusts only CI and that workflow on main, links the account in the Chrome Web
-# Store dashboard, and sets four GitHub repository variables. None of them is a secret.
+# Store dashboard, and sets four variables in the GitHub production environment. None
+# of them is a secret.
 # Values are remembered in .env.chrome-web-store (git-ignored) for re-runs. Every step
 # checks what already exists, so re-running is safe.
 
@@ -185,6 +186,7 @@ ENV_FILE=".env.chrome-web-store"
 DEVCONSOLE="https://chrome.google.com/webstore/devconsole"
 WORKFLOWS_PATH=".github/workflows"
 RELEASE_BRANCH="main"
+GH_ENVIRONMENT="production"
 SA_NAME="chrome-web-store-ci"
 POOL_ID="github"
 PROVIDER_ID="open-browser-translate"
@@ -342,9 +344,10 @@ note "A publisher can have only one service account; replace any old one."
 pause "Press Enter once it's saved."
 
 # ── 9 ─────────────────────────────────────────────────────────────────────
-stage "GitHub: set the repository variables"
-say "These go to $GH_REPO → Settings → Secrets and variables → Actions → Variables."
-say "None is a secret: without the OIDC token only that workflow gets, they grant nothing."
+stage "GitHub: set the environment variables"
+say "These go to $GH_REPO → Settings → Environments → $GH_ENVIRONMENT. The jobs that submit"
+say "to the store run in that environment. None is a secret: without the OIDC token only"
+say "those workflows get, they grant nothing."
 note "  CHROME_EXTENSION_ID              $CHROME_EXTENSION_ID"
 note "  CHROME_PUBLISHER_ID              $CHROME_PUBLISHER_ID"
 note "  GCP_WORKLOAD_IDENTITY_PROVIDER   $GCP_WORKLOAD_IDENTITY_PROVIDER"
@@ -352,12 +355,16 @@ note "  GCP_SERVICE_ACCOUNT              $GCP_SERVICE_ACCOUNT"
 printf '\n'
 warn "From the next feat/fix release on main, CI submits every release for review."
 if confirm "Set them now (overwrites existing values)?"; then
+  # Create the environment only if it's missing: updating one resets its protection rules.
+  if ! gh api "repos/$GH_REPO/environments/$GH_ENVIRONMENT" >/dev/null 2>&1; then
+    run gh api -X PUT "repos/$GH_REPO/environments/$GH_ENVIRONMENT" --silent
+  fi
   set_var CHROME_EXTENSION_ID "$CHROME_EXTENSION_ID"
   set_var CHROME_PUBLISHER_ID "$CHROME_PUBLISHER_ID"
   set_var GCP_WORKLOAD_IDENTITY_PROVIDER "$GCP_WORKLOAD_IDENTITY_PROVIDER"
   set_var GCP_SERVICE_ACCOUNT "$GCP_SERVICE_ACCOUNT"
 else
-  SKIPPED+=("GitHub variables (re-run this wizard to set them)")
+  SKIPPED+=("GitHub $GH_ENVIRONMENT variables (re-run this wizard to set them)")
 fi
 pause
 

@@ -186,11 +186,13 @@ jobs:
   # failed jobs" submits again. No key is stored: the job signs in to Google Cloud as the
   # service account linked in the Chrome Web Store dashboard through GitHub OIDC (Workload
   # Identity Federation). The provider only accepts ci.yml and chrome-web-store.yml on
-  # main. scripts/setup-chrome-web-store.sh sets it up and the repository variables below.
+  # main. scripts/setup-chrome-web-store.sh sets it up and the variables below, which live
+  # in the production environment.
   chrome-web-store:
     needs: [plan, build]
     if: github.ref == 'refs/heads/main' && needs.plan.outputs.version
     runs-on: ubuntu-latest
+    environment: production
     concurrency:
       group: chrome-web-store
       cancel-in-progress: false
@@ -204,8 +206,8 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
     steps:
-      # Until the variables are set, skip with a warning; with only some set, fail.
-      - name: Check the repository variables
+      # Until production's variables are set, skip with a warning; with only some set, fail.
+      - name: Check the environment variables
         id: vars
         run: |
           missing=()
@@ -217,7 +219,7 @@ jobs:
             exit 0
           fi
           if (( ${#missing[@]} )); then
-            echo "::error::Missing repository variables: ${missing[*]}. Run scripts/setup-chrome-web-store.sh."; exit 1
+            echo "::error::Missing variables in the production environment: ${missing[*]}. Run scripts/setup-chrome-web-store.sh."; exit 1
           fi
           echo "ready=true" >> "$GITHUB_OUTPUT"
 

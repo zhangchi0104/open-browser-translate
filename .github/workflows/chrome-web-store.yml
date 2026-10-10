@@ -7,8 +7,8 @@ name: Chrome Web Store
 #
 # Run it from main (Use workflow from: main): the Workload Identity Federation provider
 # only accepts ci.yml and this file on main. scripts/setup-chrome-web-store.sh sets up
-# the provider and the repository variables below. The zip comes from the tag's GitHub
-# release.
+# the provider and the variables below, in the production environment. The zip comes
+# from the tag's GitHub release.
 on:
   workflow_dispatch:
     inputs:
@@ -32,6 +32,7 @@ permissions:
 jobs:
   submit:
     runs-on: ubuntu-latest
+    environment: production
     # Shared with CI's chrome-web-store job.
     concurrency:
       group: chrome-web-store
@@ -66,7 +67,7 @@ jobs:
             [[ -n "${!name}" ]] || missing+=("$name")
           done
           if (( ${#missing[@]} )); then
-            echo "::error::Missing repository variables: ${missing[*]}. Run scripts/setup-chrome-web-store.sh."; exit 1
+            echo "::error::Missing variables in the production environment: ${missing[*]}. Run scripts/setup-chrome-web-store.sh."; exit 1
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
