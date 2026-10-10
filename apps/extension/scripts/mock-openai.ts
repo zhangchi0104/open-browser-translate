@@ -19,7 +19,8 @@
  *     are all numbers (a decision's "probabilities") gets 0.9 on its first option, the rest shared;
  *   - anything else: a short plain-text reply.
  *
- * Env: PORT (8787), MARKER ("[译] "), STREAM_DELAY_MS (15), STREAM_CHUNK (16 chars), LATENCY_MS (0).
+ * Env: PORT (8787), MARKER ("[译] "), STREAM_DELAY_MS (15), STREAM_CHUNK (16 chars), LATENCY_MS (0),
+ * API_KEY (unset: any or no key works; set: other keys get 401, for checking 「测试连接」).
  */
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -27,6 +28,7 @@ const MARKER = process.env.MARKER ?? "[译] ";
 const STREAM_DELAY_MS = Number(process.env.STREAM_DELAY_MS ?? 15);
 const STREAM_CHUNK = Math.max(1, Number(process.env.STREAM_CHUNK ?? 16));
 const LATENCY_MS = Number(process.env.LATENCY_MS ?? 0);
+const API_KEY = process.env.API_KEY;
 const MODELS = ["mock-translator", "mock-analyzer"];
 
 type Json = any;
@@ -303,6 +305,11 @@ const server = Bun.serve({
     }
 
     if (LATENCY_MS > 0) await Bun.sleep(LATENCY_MS);
+
+    if (API_KEY && request.headers.get("authorization") !== `Bearer ${API_KEY}`) {
+      log(`${color(31, method)} ${url.pathname} (${auth}) → 401`);
+      return json(request, { error: { message: "Incorrect API key provided.", type: "invalid_request_error", code: "invalid_api_key" } }, 401);
+    }
 
     if (method === "GET" && path === "/models") {
       log(`${color(32, "GET")} ${url.pathname} (${auth}) → ${MODELS.length} models`);

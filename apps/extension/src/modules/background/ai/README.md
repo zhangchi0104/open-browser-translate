@@ -53,7 +53,21 @@ models (Jev and similar), and on an OpenAI key the Decisions API; on the ChatGPT
 plan or a custom connection it answers decisions with an ordinary model (see below). Custom connections share the OpenAI client with
 their own base URL, and cached answers from them are also keyed by that URL.
 The background reaches a custom server only with host permission for its
-origin, which the settings page requests when it saves.
+origin, which the settings page requests when it saves or tests the connection.
+
+### Testing a connection
+
+The options page's 「测试连接」 button sends `test-connection` with the URL and
+key as entered, saved or not, and the models the connection is used with.
+`testConnection` (`connection-test.ts`) asks `GET {apiUrl}/models` once, with
+a 10-second timeout, and returns a typed result: `ok` with the number of models,
+the time taken and the connection's models the list doesn't name; or `error`
+with a reason (`invalid-url`, `network`, `timeout`, `unauthorized` for 401/403,
+`not-found`, `html` when the address serves a web page, `bad-response`, or
+`http` for any other status), the HTTP status and the server's message. The
+page turns it into advice (`entrypoints/options/connection-test.ts`), such as
+adding `/v1`. Custom connections and OpenAI keys can be tested; the Vercel AI
+Gateway lists its models without a key, so listing them proves nothing.
 
 `models.ts` turns the settings into models. `AnalysisModel` (a `DecisionModel`)
 and `TranslationModel` (a `LanguageModel`) are layers that read the `Settings`

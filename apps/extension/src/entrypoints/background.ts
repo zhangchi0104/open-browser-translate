@@ -12,6 +12,7 @@ import {
 } from "../modules/background/ai/chatgpt-session";
 import { listOpenAIModels } from "../modules/background/ai/openai-models";
 import { listGatewayModels } from "../modules/background/ai/gateway-models";
+import { testConnection } from "../modules/background/ai/connection-test";
 import { translatePageBatch } from "../modules/background/translation-dispatcher";
 import { createTranslationService } from "../modules/background/translation-service";
 import { createCache } from "../modules/background/cache-store";
@@ -146,6 +147,7 @@ export default defineBackground(() => {
         return compatibleModels(apiUrl ? "自定义连接" : "OpenAI", apiKey.trim(), apiUrl);
       },
       "gateway-models": () => catalog("Vercel AI Gateway", listGatewayModels),
+      "test-connection": (request) => testConnection(request),
       // The page's quick settings panel: it sees names and choices, and changes go through here.
       "quick-settings": async () => ({ status: "ok" as const, settings: quickView(await aiSettings.getValue()) }),
       "update-quick-settings": async ({ change }) => {

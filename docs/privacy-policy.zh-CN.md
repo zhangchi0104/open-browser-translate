@@ -1,6 +1,6 @@
 # Open Browser Translate 隐私政策
 
-最后更新：2026-10-05
+最后更新：2026-10-10
 
 Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在你阅读网页时，把网页文字就地翻译成你选择的语言，翻译由你自己配置的大模型服务完成。本扩展由 Alex Zhang 开发和维护。
 
@@ -45,7 +45,7 @@ Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在�
 
 - **OpenAI**（`api.openai.com`），使用你的 API key，或者通过"用 ChatGPT 登录"使用你的 ChatGPT 订阅。登录流程经过 `auth.openai.com`。参见 [OpenAI 隐私政策](https://openai.com/policies/privacy-policy/)。
 - **Vercel AI Gateway**（`ai-gateway.vercel.sh`），使用你的 Vercel API key。网关会把请求转给你选择的模型提供方。参见 [Vercel 隐私政策](https://vercel.com/legal/privacy-policy)。
-- **你自己填写的 OpenAI 兼容接口**，例如本地运行的模型服务或第三方平台。只有在你保存这个连接、并在浏览器弹出的权限请求中同意之后，本扩展才能访问该地址。
+- **你自己填写的 OpenAI 兼容接口**，例如本地运行的模型服务或第三方平台。只有在你同意浏览器弹出的权限请求之后，本扩展才能访问该地址；保存或测试这个连接时会弹出这个请求。「测试连接」会用你填写的 key 向该服务请求一次模型列表，不发送任何页面内容。
 
 翻译 pixiv 小说时，本扩展还会向 pixiv 本身（就是你正在浏览的 `www.pixiv.net`，带着你的 pixiv 登录状态）查询这篇小说属于哪个系列。发给 pixiv 的只有小说 ID，而这个 ID 本来就在页面地址里。
 
