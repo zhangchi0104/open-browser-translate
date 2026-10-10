@@ -44,6 +44,8 @@ There's no `dev:safari`: WXT's dev server can't load into Safari, so rebuild ins
 
 A simulator reaches servers on the Mac at `127.0.0.1`, so a custom connection to a local OpenAI-compatible server works there.
 
+To try a build without a model provider, run `bun apps/extension/scripts/mock-openai.ts` and add a custom connection with API URL `http://127.0.0.1:8787/v1`, model `mock-translator` and any key; translations come back as the original text marked `[译] `.
+
 ## Differences from Chrome and Firefox
 
 - **Manifest V3, Safari 16.4 or later.** Session storage (used by the ChatGPT sign-in) needs 16.4; `browser_specific_settings.safari.strict_min_version` says so. The converter's iOS app targets iOS 17, so in practice iOS 17+.
