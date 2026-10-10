@@ -23,7 +23,9 @@ xcrun safari-web-extension-converter "$extension" \
   --project-location "$out" --app-name "$name" --bundle-identifier "$bundle_id" \
   --swift --no-open --no-prompt --force
 
-# The converter starts every app at 1.0.
-sed -i '' "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = $version;/" "$out/$name/$name.xcodeproj/project.pbxproj"
+# The converter starts every app at 1.0. -i.bak works with both BSD sed and GNU sed (Nix dev shell).
+pbxproj="$out/$name/$name.xcodeproj/project.pbxproj"
+sed -i.bak "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = $version;/" "$pbxproj"
+rm "$pbxproj.bak"
 
 echo "Xcode project: $out/$name/$name.xcodeproj"
