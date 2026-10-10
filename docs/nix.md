@@ -20,6 +20,14 @@ Then work as usual: `bun install`, `bun run compile`, `bun run test`, `bun run b
 
 Systems: `aarch64-darwin`, `x86_64-linux`, `aarch64-linux`. nixpkgs drops `x86_64-darwin` in 26.11, so Intel Macs aren't covered.
 
+## GitHub account
+
+The repo belongs to `zhangchi0104`, and other accounts logged in to `gh` may not see it. In the shell, `gh` acts as `zhangchi0104` whichever account is active: the shellHook exports that account's token (`gh auth token --user zhangchi0104`) as `GH_TOKEN`, without printing it. `gh`'s active account is left alone, so outside the shell, and once direnv unloads, `gh` uses whichever account is active there.
+
+- If `zhangchi0104` isn't logged in, the shell prints a hint (`gh auth login --hostname github.com`, as that account) and `gh` uses its active account.
+- Git over HTTPS goes through `gh auth git-credential`, if that's git's helper for github.com (`gh auth setup-git`). That helper reads `GH_TOKEN`, so HTTPS pushes from the shell go out as `zhangchi0104` too.
+- Git over SSH (`git@github.com:…`) uses your SSH key, not `gh`, so the shell doesn't change it.
+
 ## Bun version
 
 Bun comes from nixpkgs-unstable, which `flake.lock` pins at a commit whose `bun` matches `package.json`'s `packageManager` (and CI's `bun-version`). `nix flake check` fails when they differ, and the shell warns. When bumping Bun, bump `packageManager` and CI, then `nix flake update`; if nixpkgs doesn't have that version yet, wait for it or override `bun` in the flake.

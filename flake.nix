@@ -16,6 +16,9 @@
       # package.json's "packageManager": "bun@X.Y.Z", which CI installs too.
       packageJson = builtins.fromJSON (builtins.readFile ./package.json);
       bunVersion = nixpkgs.lib.removePrefix "bun@" packageJson.packageManager;
+
+      # The GitHub account that owns this repo; other accounts logged in to gh may not see it.
+      githubUser = "zhangchi0104";
     in
     {
       devShells = forAllSystems (pkgs: {
@@ -41,6 +44,15 @@
             if [ "$(bun --version)" != "${bunVersion}" ]; then
               echo "warning: bun $(bun --version) from nixpkgs, but package.json pins bun@${bunVersion}" >&2
             fi
+
+            # gh (and git over HTTPS through gh's helper) acts as the repo owner's account in this
+            # shell only; gh's active account elsewhere is left alone.
+            if gh_token=$(gh auth token --hostname github.com --user ${githubUser} 2>/dev/null); then
+              export GH_TOKEN="$gh_token"
+            else
+              echo "note: gh isn't logged in as ${githubUser}; run 'gh auth login --hostname github.com' as that account. Using gh's active account meanwhile." >&2
+            fi
+            unset gh_token
           '';
         };
       });
