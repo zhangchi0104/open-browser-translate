@@ -12,7 +12,7 @@ import {
 } from "../modules/background/ai/chatgpt-session";
 import { listOpenAIModels } from "../modules/background/ai/openai-models";
 import { listGatewayModels } from "../modules/background/ai/gateway-models";
-import { testConnection } from "../modules/background/ai/connection-test";
+import { connectionTestLog, testConnection } from "../modules/background/ai/connection-test";
 import { translatePageBatch } from "../modules/background/translation-dispatcher";
 import { createTranslationService } from "../modules/background/translation-service";
 import { createCache } from "../modules/background/cache-store";
@@ -147,7 +147,18 @@ export default defineBackground(() => {
         return compatibleModels(apiUrl ? "自定义连接" : "OpenAI", apiKey.trim(), apiUrl);
       },
       "gateway-models": () => catalog("Vercel AI Gateway", listGatewayModels),
-      "test-connection": (request) => testConnection(request),
+      // Every outcome goes to the debug log (and the console), so what the options page showed can be found later.
+      "test-connection": async (request) => {
+        try {
+          const result = await testConnection(request);
+          const { level, event, detail } = connectionTestLog(request, result);
+          void debugLog.write(level, event, { detail });
+          return result;
+        } catch (error) {
+          void debugLog.error("测试连接出错", { detail: `接口地址：${request.apiUrl}\n${describeError(error)}` });
+          throw error;
+        }
+      },
       // The page's quick settings panel: it sees names and choices, and changes go through here.
       "quick-settings": async () => ({ status: "ok" as const, settings: quickView(await aiSettings.getValue()) }),
       "update-quick-settings": async ({ change }) => {

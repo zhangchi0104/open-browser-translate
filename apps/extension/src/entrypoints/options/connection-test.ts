@@ -1,6 +1,12 @@
 import type { ConnectionTestResult, Failed } from "@/modules/shared/protocol";
+import { failureDetails } from "@/modules/background/ai/connection-test";
 
-export interface TestMessage { text: string; tone: "error" | "success" | "warning" }
+export interface TestMessage {
+  text: string;
+  tone: "error" | "success" | "warning";
+  /** Everything that came back, in full: the request, status, server message and body, or the page's own error. */
+  details?: string;
+}
 
 /** Whether a base URL's path names an API version, as `/v1`, `/api/v1` or `/v1beta/openai` do. */
 const hasVersion = (url: URL) => /\/v\d+[a-z0-9]*(\/|$)/i.test(url.pathname);
@@ -24,12 +30,25 @@ function httpFailure(status = 0): string {
   return `服务拒绝了请求（${status}）。`;
 }
 
+/** What a failed test got back, line by line; nothing for a passed one. */
+function detailsOf(result: ConnectionTestResult | Failed): string | undefined {
+  if (result.status === "ok") return;
+  if (result.status === "failed") return result.error ?? "扩展后台没有回应，也没有说明原因。";
+  return failureDetails(result) || undefined;
+}
+
 /**
  * What a connection test found, in words for the options page: success with the model count and
- * time, or what failed and what to try. `apiUrl` and `apiKey` are what was tested.
+ * time, or what failed and what to try, with everything that came back as `details`. `apiUrl` and
+ * `apiKey` are what was tested.
  */
-export function describeConnectionTest(result: ConnectionTestResult | Failed, { apiUrl, apiKey }: { apiUrl: string; apiKey: string }): TestMessage {
-  if (result.status === "failed") return { text: `测试没有完成：${result.error ?? "扩展后台没有回应"}。请重试。`, tone: "error" };
+export function describeConnectionTest(result: ConnectionTestResult | Failed, tested: { apiUrl: string; apiKey: string }): TestMessage {
+  const details = detailsOf(result);
+  return { ...summarize(result, tested), ...(details && { details }) };
+}
+
+function summarize(result: ConnectionTestResult | Failed, { apiUrl, apiKey }: { apiUrl: string; apiKey: string }): Omit<TestMessage, "details"> {
+  if (result.status === "failed") return { text: "测试没有完成。下面是完整的错误信息，「调试日志」中也有记录。", tone: "error" };
   if (result.status === "ok") {
     if (result.missing.length) {
       return {

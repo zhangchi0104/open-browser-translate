@@ -64,9 +64,20 @@ a 10-second timeout, and returns a typed result: `ok` with the number of models,
 the time taken and the connection's models the list doesn't name; or `error`
 with a reason (`invalid-url`, `network`, `timeout`, `unauthorized` for 401/403,
 `not-found`, `html` when the address serves a web page, `bad-response`, or
-`http` for any other status), the HTTP status and the server's message. The
-page turns it into advice (`entrypoints/options/connection-test.ts`), such as
-adding `/v1`. Custom connections and OpenAI keys can be tested; the Vercel AI
+`http` for any other status), the HTTP status, the server's message and the
+response body (up to 4000 characters, saying how much was left out). The page
+turns it into advice (`entrypoints/options/connection-test.ts`), such as adding
+`/v1`, and shows everything that came back in full below it.
+
+Every test goes to the debug log (「调试日志」→「其他日志」) and the console:
+the background logs each result it returns (`connectionTestLog`: the address,
+whether there was a key but never the key, and the whole result), and the page
+logs what the background never saw: a refused permission, or a request that
+failed or whose reply didn't decode. A reply of nothing at all usually means
+the service worker is older than the page: an unpacked extension's pages load
+fresh from disk after a rebuild, but its worker keeps running the old script
+until the extension is reloaded, and the old worker has no handler for the
+newer request. Custom connections and OpenAI keys can be tested; the Vercel AI
 Gateway lists its models without a key, so listing them proves nothing.
 
 `models.ts` turns the settings into models. `AnalysisModel` (a `DecisionModel`)

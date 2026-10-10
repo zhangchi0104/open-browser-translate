@@ -406,6 +406,14 @@ function ChatGPTRow({ email, onSignIn, onSignOut }: {
   );
 }
 
+const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/** A test failure the background never logged: to the page's console and the extension's debug log. */
+function logTestFailure(level: "warn" | "error", event: string, detail: string) {
+  console[level](`[测试连接] ${event}\n${detail}`);
+  void background.request({ type: "debug-log", entry: { level, event, detail } }).catch(() => {});
+}
+
 /** A connection in the list: its name and state, opening in place to edit. */
 function ConnectionRow({ connection, uses, models, error, open, onToggle, onChange, onRemove }: {
   connection: Connection;
@@ -439,12 +447,20 @@ function ConnectionRow({ connection, uses, models, error, open, onToggle, onChan
     // Asked before anything is awaited, while the click still counts as the user's: the background
     // reaches the server only with permission for its origin (Safari grants even the manifest's on request).
     const origin = new URL(apiUrl).origin;
-    const permitted = browser.permissions.request({ origins: [`${origin}/*`] }).catch(() => false);
+    const permitted = browser.permissions.request({ origins: [`${origin}/*`] })
+      .then((granted) => ({ granted }), (error: unknown) => ({ granted: false, error: errorText(error) }));
     setTest({ apiUrl, apiKey });
     void (async () => {
-      if (!await permitted) return done({ text: `没有获得访问 ${origin} 的权限，扩展无法连接这个接口。请再次测试并选择允许。`, tone: "error" });
+      const permission = await permitted;
+      if (!permission.granted) {
+        const details = `请求的权限：${origin}/*\n${"error" in permission ? `浏览器报错：${permission.error}` : "权限请求被拒绝或关闭。"}`;
+        logTestFailure("warn", "测试连接：没有获得访问权限", `接口地址：${apiUrl}\n${details}`);
+        return done({ text: `没有获得访问 ${origin} 的权限，扩展无法连接这个接口。请再次测试并选择允许。`, tone: "error", details });
+      }
       const result = await background.request({ type: "test-connection", apiUrl, apiKey, models })
-        .catch((error: unknown) => ({ status: "failed" as const, error: error instanceof Error ? error.message : String(error) }));
+        .catch((error: unknown) => ({ status: "failed" as const, error: `无法把请求发给扩展后台：${errorText(error)}` }));
+      // The background logs every result it sends; a failure here never got one through.
+      if (result.status === "failed") logTestFailure("error", "测试连接没有完成", `接口地址：${apiUrl}\n${result.error ?? "没有错误信息"}`);
       done(describeConnectionTest(result, { apiUrl, apiKey }));
     })();
   }
@@ -526,6 +542,14 @@ function ConnectionRow({ connection, uses, models, error, open, onToggle, onChan
               <p id={`${id}-test`} role="status" aria-live="polite" className={cn("text-[12px] break-words", tested?.message ? statusTones[tested.message.tone] : "text-muted-foreground")}>
                 {tested?.message?.text ?? (testing ? "正在请求模型列表…" : `用上面填写的${custom ? "地址和 key" : " key"} 请求一次模型列表，不用先保存。`)}
               </p>
+              {tested?.message?.details && (
+                <pre
+                  aria-label="完整的测试结果"
+                  className="max-h-60 overflow-auto rounded-md border bg-muted/50 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-muted-foreground"
+                >
+                  {tested.message.details}
+                </pre>
+              )}
             </div>
           )}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

@@ -1,7 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { testConnection } from "../src/modules/background/ai/connection-test";
+import { connectionTestLog, testConnection } from "../src/modules/background/ai/connection-test";
 import { describeConnectionTest } from "../src/entrypoints/options/connection-test";
+import { createClient, createDispatcher, type ConnectionTestResult, type Handlers, type Sender } from "../src/modules/shared/protocol";
 
 const models = (...ids: string[]) => Response.json({ object: "list", data: ids.map((id) => ({ id, object: "model" })) });
 
@@ -61,6 +62,18 @@ test("HTTP failures are classified by status, with the server's error message", 
   const { fetcher } = server(() => Response.json({ error: { message: "Incorrect API key provided" } }, { status: 401 }));
   const result = await testConnection({ apiUrl: "https://example.com/v1", apiKey: "k" }, { fetcher });
   assert.equal(result.status === "error" && result.detail, "Incorrect API key provided");
+  assert.equal(result.status === "error" && result.body, '{"error":{"message":"Incorrect API key provided"}}');
+});
+
+test("a long server message and body are kept, up to a stated limit", async () => {
+  const message = "x".repeat(1000);
+  const { fetcher } = server(() => Response.json({ error: { message } }, { status: 400 }));
+  const result = await testConnection({ apiUrl: "https://example.com/v1", apiKey: "" }, { fetcher });
+  assert.equal(result.status === "error" && result.detail, message);
+
+  const huge = server(() => new Response("y".repeat(10_000), { status: 500 }));
+  const clipped = await testConnection({ apiUrl: "https://example.com/v1", apiKey: "" }, { fetcher: huge.fetcher });
+  assert.match(clipped.status === "error" ? clipped.body ?? "" : "", /^y{4000}\n（共 10000 个字符，只保留前 4000 个）$/);
 });
 
 test("a web page or a body that isn't a model list is reported as such", async () => {
@@ -71,12 +84,13 @@ test("a web page or a body that isn't a model list is reported as such", async (
   const other = server(() => Response.json({ models: ["a"] }));
   const shape = await testConnection({ apiUrl: "https://example.com/v1", apiKey: "" }, { fetcher: other.fetcher });
   assert.equal(shape.status === "error" && shape.reason, "bad-response");
-  assert.match(shape.status === "error" ? shape.detail ?? "" : "", /models/);
+  assert.equal(shape.status === "error" && shape.body, '{"models":["a"]}');
 
   const notFoundPage = server(() => new Response("<html>404</html>", { status: 404 }));
   const missing = await testConnection({ apiUrl: "https://example.com", apiKey: "" }, { fetcher: notFoundPage.fetcher });
   assert.equal(missing.status === "error" && missing.reason, "not-found");
-  assert.equal(missing.status === "error" && missing.detail, undefined, "an HTML error page isn't quoted");
+  assert.equal(missing.status === "error" && missing.detail, undefined, "an HTML page has no error message");
+  assert.equal(missing.status === "error" && missing.body, "<html>404</html>");
 });
 
 test("an unreachable server is a network failure, and a silent one times out", async () => {
@@ -117,4 +131,99 @@ test("messages say what to change", () => {
   const ok = describeConnectionTest({ status: "ok", models: 2, ms: 12, missing: [] }, { apiUrl: "https://example.com/v1", apiKey: "" });
   assert.deepEqual(ok, { text: "连接成功：服务列出了 2 个模型，用时 12 毫秒。", tone: "success" });
   assert.equal(describeConnectionTest({ status: "failed" }, { apiUrl: "", apiKey: "" }).tone, "error");
+});
+
+/** Every result `testConnection` can return, each produced by the real function. */
+async function everyResult(): Promise<ConnectionTestResult[]> {
+  const run = (respond: () => Response | Promise<Response>, apiUrl = "https://example.com/v1") =>
+    testConnection({ apiUrl, apiKey: "k", models: ["gpt-a", "gpt-z"] }, { fetcher: server(respond).fetcher });
+  const results = await Promise.all([
+    run(() => models("gpt-a", "gpt-z")),
+    run(() => models("gpt-a")),
+    run(() => models(), "not a url"),
+    run(() => { throw new TypeError("Failed to fetch"); }),
+    testConnection({ apiUrl: "https://example.com/v1", apiKey: "" }, {
+      timeoutMs: 5,
+      fetcher: ((_: unknown, init?: RequestInit) => new Promise((_resolve, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))))) as typeof fetch,
+    }),
+    run(() => Response.json({ error: { message: "bad key" } }, { status: 401 })),
+    run(() => new Response("", { status: 404 })),
+    run(() => new Response("<html></html>", { headers: { "Content-Type": "text/html" } })),
+    run(() => Response.json({ object: "list" })),
+    run(() => new Response("Bad Gateway", { status: 502 })),
+  ]);
+  const variants = new Set(results.map((result) => result.status === "ok" ? `ok:${result.missing.length}` : result.reason));
+  assert.equal(variants.size, results.length, "each case is a different variant");
+  return results;
+}
+
+/** Both ends of the real protocol, with each message serialized as extension messaging does. */
+function messaging(reply: () => unknown, serialize: (value: unknown) => unknown) {
+  const handlers = new Proxy({} as Handlers, { get: () => reply });
+  const dispatcher = createDispatcher({ trusted: () => true, handlers, translate: async () => ({ status: "failed" }) });
+  const sender: Sender = { id: "extension", url: "chrome-extension://extension/options.html" };
+  return createClient({
+    sendMessage: (message) => new Promise((resolve) => {
+      if (!dispatcher.onMessage(serialize(message), sender, (response) => resolve(serialize(response)))) resolve(undefined);
+    }),
+    connect: () => { throw new Error("no stream"); },
+  });
+}
+
+const serializations = {
+  json: (value: unknown) => value === undefined ? undefined : JSON.parse(JSON.stringify(value)),
+  "structured clone": (value: unknown) => structuredClone(value),
+};
+
+test("every test result reaches the options page intact through the real protocol, serialized either way", async () => {
+  const results = await everyResult();
+  for (const [name, serialize] of Object.entries(serializations)) {
+    for (const result of results) {
+      const client = messaging(() => result, serialize);
+      const received = await client.request({ type: "test-connection", apiUrl: "https://example.com/v1", apiKey: "k", models: ["gpt-a"] });
+      assert.deepEqual(received, result, `${name}: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test("a request no handler answers says the background may be out of date, with the schema error and the raw reply", async () => {
+  const unanswered = createClient({ sendMessage: async () => undefined, connect: () => { throw new Error("no stream"); } });
+  const result = await unanswered.request({ type: "test-connection", apiUrl: "https://example.com/v1", apiKey: "" });
+  assert.equal(result.status, "failed");
+  const error = result.status === "failed" ? result.error ?? "" : "";
+  assert.match(error, /后台没有回应「test-connection」请求，可能还在运行旧版本的扩展/);
+  assert.match(error, /「test-connection」的回复无法识别：Expected/);
+  assert.match(error, /收到的回复：undefined$/);
+  assert.equal(describeConnectionTest(result, { apiUrl: "https://example.com/v1", apiKey: "" }).details, error, "the page shows the whole error");
+});
+
+test("a malformed reply names the field that's wrong and quotes the reply", async () => {
+  const client = messaging(() => ({ status: "error", reason: "weird", url: "u" }), serializations.json);
+  const result = await client.request({ type: "test-connection", apiUrl: "u", apiKey: "" });
+  const error = result.status === "failed" ? result.error ?? "" : "";
+  assert.match(error, /at \["reason"\]/);
+  assert.match(error, /收到的回复：\{"status":"error","reason":"weird","url":"u"\}/);
+});
+
+test("a failed test's details hold the request, status, message and body", () => {
+  const message = describeConnectionTest(
+    { status: "error", reason: "http", url: "https://example.com/v1/models", httpStatus: 400, detail: "bad request", body: '{"error":"bad request"}' },
+    { apiUrl: "https://example.com/v1", apiKey: "" },
+  );
+  assert.equal(message.details, '请求：GET https://example.com/v1/models\nHTTP 状态：400\n说明：bad request\n响应内容：\n{"error":"bad request"}');
+  assert.equal(describeConnectionTest({ status: "ok", models: 1, ms: 1, missing: [] }, { apiUrl: "u", apiKey: "" }).details, undefined);
+});
+
+test("the debug log gets every result, with the key left out", async () => {
+  for (const result of await everyResult()) {
+    const entry = connectionTestLog({ apiUrl: "https://example.com/v1", apiKey: "sk-test-value", models: ["gpt-a"] }, result);
+    assert.doesNotMatch(entry.detail, /sk-test-value/);
+    assert.match(entry.detail, /^接口地址：https:\/\/example\.com\/v1\nAPI key：已填写/);
+    if (result.status !== "error") continue;
+    assert.equal(entry.level, "warn");
+    assert.equal(entry.event, `测试连接失败：${result.reason}`);
+    if (result.body) assert.ok(entry.detail.includes(result.body));
+    if (result.detail) assert.ok(entry.detail.includes(result.detail));
+  }
 });

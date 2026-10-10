@@ -146,8 +146,8 @@ const orFailed = <S extends Schema.Top>(reply: S) => Schema.Union([reply, Failed
 export const CONNECTION_TEST_FAILURES = ["invalid-url", "network", "timeout", "unauthorized", "not-found", "http", "html", "bad-response"] as const;
 /**
  * How a connection test went: how many models the server listed, in how many ms, and which of the
- * connection's models it didn't list; or why it failed, with the URL asked, the HTTP status and
- * what the server said.
+ * connection's models it didn't list; or why it failed, with the URL asked, the HTTP status, what
+ * the server said and the body it sent.
  */
 const ConnectionTestResult = Schema.Union([
   status("ok", { models: Schema.Number, ms: Schema.Number, missing: Schema.Array(Schema.String) }),
@@ -155,7 +155,10 @@ const ConnectionTestResult = Schema.Union([
     reason: Schema.Literals(CONNECTION_TEST_FAILURES),
     url: Schema.optional(Schema.String),
     httpStatus: Schema.optional(Schema.Number),
+    /** What the server said: its error message, or why the request didn't complete. */
     detail: Schema.optional(Schema.String),
+    /** The response body as received, when there was one. */
+    body: Schema.optional(Schema.String),
   }),
 ]);
 export type ConnectionTestResult = typeof ConnectionTestResult.Type;
@@ -260,6 +263,26 @@ export interface Sender {
   readonly tab?: { readonly url?: string; readonly incognito?: boolean };
 }
 
+/** The most of a reply an error quotes. */
+const MAX_QUOTED_REPLY = 4000;
+
+/**
+ * Why a reply didn't decode, in full: every issue the schema found, with its path, and the reply
+ * itself. No reply at all means no handler answered: a background older than the page (an
+ * unpacked extension's pages load fresh from disk, its service worker doesn't) has no handler for
+ * a newer request type.
+ */
+export function undecodedReply(type: string, raw: unknown, failure: { readonly message: string }): string {
+  let quoted: string;
+  try { quoted = raw === undefined ? "undefined" : JSON.stringify(raw) ?? String(raw); } catch { quoted = String(raw); }
+  if (quoted.length > MAX_QUOTED_REPLY) quoted = `${quoted.slice(0, MAX_QUOTED_REPLY)}（共 ${quoted.length} 个字符，只显示前 ${MAX_QUOTED_REPLY} 个）`;
+  return [
+    raw === undefined && `后台没有回应「${type}」请求，可能还在运行旧版本的扩展。请在浏览器的扩展管理页重新加载本扩展后再试。`,
+    `「${type}」的回复无法识别：${failure.message}`,
+    `收到的回复：${quoted}`,
+  ].filter(Boolean).join("\n");
+}
+
 /** The page side, over `browser.runtime` (or a fake in tests). */
 export function createClient(runtime: {
   sendMessage(message: unknown): Promise<unknown>;
@@ -269,8 +292,9 @@ export function createClient(runtime: {
   return {
     /** Sends a request; rejects only when the message can't be delivered. A reply that doesn't decode is a failure. */
     async request<M extends Request>(message: M): Promise<Response<M["type"]>> {
-      const reply = Schema.decodeUnknownResult(Replies[message.type])(await runtime.sendMessage(message));
-      return Result.isSuccess(reply) ? reply.success : { status: "failed", error: String(reply.failure) };
+      const raw = await runtime.sendMessage(message);
+      const reply = Schema.decodeUnknownResult(Replies[message.type])(raw);
+      return Result.isSuccess(reply) ? reply.success : { status: "failed", error: undecodedReply(message.type, raw, reply.failure) };
     },
 
     /**
