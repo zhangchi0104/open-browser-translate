@@ -9,6 +9,7 @@ import {
   TARGET_LANGUAGES, targetLanguageOf, validateApiUrl,
   type AISettings, type Connection, type ConnectionKind, type ReasoningEffort, type SettingsProvider,
 } from "@/modules/shared/settings";
+import { CHATGPT_ISSUER } from "@/modules/background/ai/chatgpt-auth";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/background/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/background/ai/chatgpt-session";
 import { Button } from "@/components/ui/button";
@@ -207,9 +208,17 @@ export function App() {
   }
 
   async function signIn() {
+    // Safari grants the manifest's hosts only when asked: without them the background can't see the
+    // loopback callback tab's URL or reach the token endpoint. Other browsers granted them at install.
+    // Asked before anything is awaited, while the click still counts as the user's.
+    const permitted = browser.permissions.request({ origins: [`${CHATGPT_ISSUER}/*`, "http://127.0.0.1/*"] }).catch(() => false);
     setBusy(true);
     setStatus({ text: "请在新打开的页面中登录 ChatGPT…" });
     try {
+      if (!await permitted) {
+        setStatus({ text: "没有获得访问 ChatGPT 登录页面的权限，无法登录。", tone: "error" });
+        return;
+      }
       const started = await background.request({ type: "chatgpt-sign-in" });
       if (started.status !== "started") throw new Error(started.error ?? "后台无法开始登录");
       const result = await signInOutcome(started.state);
