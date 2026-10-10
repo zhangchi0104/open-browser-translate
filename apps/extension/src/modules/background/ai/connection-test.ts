@@ -1,4 +1,6 @@
-import type { ConnectionTestResult } from "../../shared/protocol";
+import { Effect } from "effect";
+import { markFailed } from "../../shared/debug-log/trace";
+import type { ConnectionTestFailure, ConnectionTestResult } from "../../shared/protocol";
 
 /** How long a test waits for the model list before giving up. */
 export const CONNECTION_TEST_TIMEOUT_MS = 10_000;
@@ -76,7 +78,7 @@ export async function testConnection(
   }
   const listed = new Set(ids);
   const missing = [...new Set(models.map((model) => model.trim()).filter((model) => model && !listed.has(model)))];
-  return { status: "ok", models: ids.length, ms, missing };
+  return { status: "ok", models: ids.length, ms, missing, url: url.href, httpStatus: response.status };
 }
 
 /** Everything a failed test got back, line by line: the request, HTTP status, server message and body. */
@@ -90,8 +92,8 @@ export function failureDetails(result: Extract<ConnectionTestResult, { status: "
 }
 
 /**
- * A debug log entry for a test: what was asked (never the key, only whether there was one) and
- * everything that came back, so a failure the options page showed can be found again in the log.
+ * A console line for a test: what was asked (never the key, only whether there was one) and
+ * everything that came back. The trace holds the same; this is for reading the worker's console.
  */
 export function connectionTestLog(
   { apiUrl, apiKey, models = [] }: { apiUrl: string; apiKey: string; models?: readonly string[] },
@@ -104,3 +106,87 @@ export function connectionTestLog(
   if (!result.missing.length) return { level: "info", event: "测试连接成功", detail: detail(listed) };
   return { level: "warn", event: "测试连接：模型不在列表中", detail: detail(listed, `列表中没有：${result.missing.join("、")}`) };
 }
+
+type ConnectionTestRequest = { apiUrl: string; apiKey: string; models?: readonly string[] };
+
+/** Records a long text on the current span as an event, which the trace view shows as a block. */
+const note = (name: string, content: string | undefined) => content === undefined ? Effect.void : Effect.currentSpan.pipe(
+  Effect.tap((span) => Effect.sync(() => span.event(name, BigInt(Date.now()) * 1_000_000n, { content }))),
+  Effect.ignore,
+);
+
+/** How a failed test reads in the trace: its reason and, when there was one, the HTTP status. */
+const failureText = (result: Extract<ConnectionTestResult, { status: "error" }>) =>
+  `测试连接失败：${result.reason}${result.httpStatus !== undefined ? `（HTTP ${result.httpStatus}）` : ""}`;
+
+/** What was asked, as span attributes: the address, whether there was a key (never the key) and the models. */
+const requestAttributes = ({ apiUrl, apiKey, models = [] }: ConnectionTestRequest) => ({
+  "obt.connection.api_url": apiUrl,
+  "obt.connection.has_key": !!apiKey,
+  ...(models.length && { "obt.connection.models": [...models] }),
+});
+
+/**
+ * `testConnection` as a traced request, like translation's: a `test-connection` root span with
+ * what was asked and how it went, and a `connection.list-models` client span for the request to
+ * the server, carrying the HTTP status, the server's message and the response body. A failed test
+ * marks both spans failed, so it's listed under errors.
+ */
+export const traceConnectionTest = (request: ConnectionTestRequest, options?: Parameters<typeof testConnection>[1]) =>
+  Effect.gen(function* () {
+    const root = yield* Effect.orDie(Effect.currentSpan);
+    const result = yield* Effect.gen(function* () {
+      const span = yield* Effect.orDie(Effect.currentSpan);
+      const result = yield* Effect.promise(() => testConnection(request, options));
+      yield* Effect.annotateCurrentSpan({
+        ...(result.url && { "url.full": result.url }),
+        ...(result.httpStatus !== undefined && { "http.response.status_code": result.httpStatus }),
+      });
+      if (result.status === "ok") return result;
+      yield* Effect.annotateCurrentSpan({ "error.type": result.reason });
+      yield* note("obt.server.message", result.detail);
+      yield* note("obt.response.body", result.body);
+      markFailed(span, failureText(result));
+      return result;
+    }).pipe(Effect.withSpan("connection.list-models", { kind: "client", attributes: { "http.request.method": "GET" } }));
+    if (result.status === "ok") {
+      yield* Effect.annotateCurrentSpan({
+        "obt.test.result": "ok",
+        "obt.test.models_listed": result.models,
+        ...(result.missing.length && { "obt.test.missing": [...result.missing] }),
+      });
+    } else {
+      yield* Effect.annotateCurrentSpan({ "obt.test.result": "error", "obt.test.reason": result.reason });
+      markFailed(root, failureText(result));
+    }
+    const { level, detail } = connectionTestLog(request, result);
+    console[level](`[test-connection] ${detail}`);
+    return result;
+  }).pipe(Effect.withSpan("test-connection", { kind: "server", attributes: requestAttributes(request) }));
+
+const failureStages: Record<ConnectionTestFailure["stage"], string> = {
+  permission: "没有获得访问接口的权限",
+  send: "请求没有送到扩展后台",
+  reply: "后台没有返回可用的结果",
+};
+
+/**
+ * A test that failed on the options page before or after the background ran it (permission
+ * refused, the request not delivered, a reply that didn't decode), recorded as a failed
+ * `test-connection` trace so it's listed with the others. Only the page saw it, so the page reports it.
+ */
+export const recordConnectionTestFailure = ({ apiUrl, hasKey, stage, error, elapsedMs }: ConnectionTestFailure) =>
+  Effect.gen(function* () {
+    const span = yield* Effect.orDie(Effect.currentSpan);
+    console.warn(`[test-connection] ${failureStages[stage]}：${apiUrl}\n${error}`);
+    markFailed(span, `测试连接失败：${failureStages[stage]}`, new Error(error));
+  }).pipe(Effect.withSpan("test-connection", {
+    kind: "server",
+    attributes: {
+      "obt.connection.api_url": apiUrl,
+      "obt.connection.has_key": hasKey,
+      "obt.test.result": "error",
+      "obt.test.reason": `page-${stage}`,
+      "obt.test.page_elapsed_ms": elapsedMs,
+    },
+  }));

@@ -48,7 +48,7 @@ export function describeConnectionTest(result: ConnectionTestResult | Failed, te
 }
 
 function summarize(result: ConnectionTestResult | Failed, { apiUrl, apiKey }: { apiUrl: string; apiKey: string }): Omit<TestMessage, "details"> {
-  if (result.status === "failed") return { text: "测试没有完成。下面是完整的错误信息，「调试日志」中也有记录。", tone: "error" };
+  if (result.status === "failed") return { text: "测试没有完成。下面是完整的错误信息，「调试日志」→「请求追踪」中也有记录。", tone: "error" };
   if (result.status === "ok") {
     if (result.missing.length) {
       return {

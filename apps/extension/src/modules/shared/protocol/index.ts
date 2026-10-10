@@ -83,6 +83,16 @@ const QuickSettings = Schema.Struct({
   translation: PurposeChoice,
 });
 export type QuickSettings = typeof QuickSettings.Type;
+/** A connection test that failed on the options page; `error` is everything the page has to say about it. */
+const ConnectionTestFailure = Schema.Struct({
+  apiUrl: Schema.String.check(Schema.isMaxLength(2000)),
+  hasKey: Schema.Boolean,
+  stage: Schema.Literals(["permission", "send", "reply"]),
+  error: Schema.String.check(Schema.isMaxLength(20_000)),
+  elapsedMs: Schema.Number,
+});
+export type ConnectionTestFailure = typeof ConnectionTestFailure.Type;
+
 const QuickChoice = Schema.Struct({ connection: Schema.String, model: Schema.optional(Schema.String) });
 
 const request = <const T extends string, const F extends Schema.Struct.Fields>(type: T, fields: F) =>
@@ -114,6 +124,12 @@ const Requests = {
     apiKey: Schema.String,
     models: Schema.optional(Schema.Array(Schema.String)),
   }),
+  /**
+   * A connection test that failed on the options page, where the background couldn't see it: the
+   * permission was refused, the request wasn't delivered, or its reply didn't decode. The
+   * background records it as a failed trace.
+   */
+  "connection-test-failed": request("connection-test-failed", { failure: ConnectionTestFailure }),
   "prepare-translation": request("prepare-translation", { context: PageContext }),
   "quick-settings": request("quick-settings", {}),
   "update-quick-settings": request("update-quick-settings", {
@@ -145,12 +161,12 @@ const orFailed = <S extends Schema.Top>(reply: S) => Schema.Union([reply, Failed
 /** Why a connection test failed. */
 export const CONNECTION_TEST_FAILURES = ["invalid-url", "network", "timeout", "unauthorized", "not-found", "http", "html", "bad-response"] as const;
 /**
- * How a connection test went: how many models the server listed, in how many ms, and which of the
- * connection's models it didn't list; or why it failed, with the URL asked, the HTTP status, what
+ * How a connection test went: how many models the server listed, in how many ms, which of the
+ * connection's models it didn't list, and the URL asked and its HTTP status; or why it failed, with the URL asked, the HTTP status, what
  * the server said and the body it sent.
  */
 const ConnectionTestResult = Schema.Union([
-  status("ok", { models: Schema.Number, ms: Schema.Number, missing: Schema.Array(Schema.String) }),
+  status("ok", { models: Schema.Number, ms: Schema.Number, missing: Schema.Array(Schema.String), url: Schema.String, httpStatus: Schema.Number }),
   status("error", {
     reason: Schema.Literals(CONNECTION_TEST_FAILURES),
     url: Schema.optional(Schema.String),
@@ -215,6 +231,7 @@ const Replies = {
   "openai-models": orFailed(Schema.Union([Models, status("no-key", {})])),
   "gateway-models": orFailed(Models),
   "test-connection": orFailed(ConnectionTestResult),
+  "connection-test-failed": orFailed(Ok),
   // `language` is the target language's code, for the translations' `lang`.
   "prepare-translation": orFailed(Schema.Union([status("ok", { plan: TranslationPlan, language: Schema.String }), NotConfigured])),
   "quick-settings": orFailed(status("ok", { settings: QuickSettings })),

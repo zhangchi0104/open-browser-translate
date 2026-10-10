@@ -7,7 +7,8 @@ extension storage; nothing is uploaded.
 ## Request traces (OpenTelemetry)
 
 Translation requests (`prepare-translation`, `translate-content`,
-`analyze-content`) are recorded as OpenTelemetry traces (`trace.ts`). The
+`analyze-content`) and connection tests (`test-connection`, see
+`../../background/ai/README.md`) are recorded as OpenTelemetry traces (`trace.ts`). The
 background runs each request as a root span on its `ManagedRuntime`, whose
 `tracingLayer` records spans locally; the request's steps are child spans. `translateBatch` adds
 `content-analysis` and `translation` spans, and Effect's own AI and HTTP modules
@@ -25,7 +26,7 @@ OpenTelemetry tools can open.
 
 ## Plain log
 
-Everything else (ChatGPT sign-in, model lists, page-side failures) goes to a
+Everything else (ChatGPT sign-in, model lists, page-side translation failures) goes to a
 bounded log (`model.ts`) in `local:debugLog`, newest 500 entries, each detail cut
 at 4000 characters. Content scripts send `{ type: "debug-log", entry }` and the
 background attaches the sender's page.
