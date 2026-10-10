@@ -3,18 +3,23 @@ import type { ConnectionTestResult } from "../../shared/protocol";
 /** How long a test waits for the model list before giving up. */
 export const CONNECTION_TEST_TIMEOUT_MS = 10_000;
 
-/** The first 300 characters of a server's error: its `error.message` when it sends one, else the body unless it's a web page. */
+/** The most of a response body a result carries. */
+const MAX_BODY = 4000;
+
+/** `text` up to `max` characters, saying how much was left out. */
+function bounded(text: string, max = MAX_BODY): string {
+  return text.length > max ? `${text.slice(0, max)}\n（共 ${text.length} 个字符，只保留前 ${max} 个）` : text;
+}
+
+/** The error message in a server's JSON error body, if it has one. */
 function serverMessage(text: string): string | undefined {
-  if (/^\s*</.test(text)) return;
-  let message = text;
   try {
     const body = JSON.parse(text) as { error?: unknown; message?: unknown; detail?: unknown };
     // OpenAI sends { error: { message } }; other servers send the message bare or under another key.
     const candidates = [body?.error, (body?.error as { message?: unknown })?.message, body?.message, body?.detail];
-    message = candidates.find((candidate): candidate is string => typeof candidate === "string") ?? text;
+    const message = candidates.find((candidate): candidate is string => typeof candidate === "string")?.trim();
+    return message ? bounded(message) : undefined;
   } catch {}
-  const clipped = message.replace(/\s+/g, " ").trim().slice(0, 300);
-  return clipped || undefined;
 }
 
 function failureOf(status: number): "unauthorized" | "not-found" | "http" {
@@ -54,9 +59,10 @@ export async function testConnection(
     clearTimeout(timer);
   }
   const ms = Date.now() - started;
+  const body = text.trim() ? { body: bounded(text) } : {};
   if (!response.ok) {
     const detail = serverMessage(text);
-    return { status: "error", reason: failureOf(response.status), url: url.href, httpStatus: response.status, ...(detail && { detail }) };
+    return { status: "error", reason: failureOf(response.status), url: url.href, httpStatus: response.status, ...(detail && { detail }), ...body };
   }
   let ids: string[] | undefined;
   try {
@@ -65,11 +71,36 @@ export async function testConnection(
   } catch {}
   if (!ids) {
     // A web page rather than an API: usually the site's address without the API's path.
-    if (/^\s*</.test(text) || /html/i.test(response.headers.get("content-type") ?? "")) return { status: "error", reason: "html", url: url.href };
-    const detail = text.replace(/\s+/g, " ").trim().slice(0, 200);
-    return { status: "error", reason: "bad-response", url: url.href, ...(detail && { detail }) };
+    const html = /^\s*</.test(text) || /html/i.test(response.headers.get("content-type") ?? "");
+    return { status: "error", reason: html ? "html" : "bad-response", url: url.href, httpStatus: response.status, ...body };
   }
   const listed = new Set(ids);
   const missing = [...new Set(models.map((model) => model.trim()).filter((model) => model && !listed.has(model)))];
   return { status: "ok", models: ids.length, ms, missing };
+}
+
+/** Everything a failed test got back, line by line: the request, HTTP status, server message and body. */
+export function failureDetails(result: Extract<ConnectionTestResult, { status: "error" }>): string {
+  return [
+    result.url && `请求：GET ${result.url}`,
+    result.httpStatus !== undefined && `HTTP 状态：${result.httpStatus}`,
+    result.detail && `说明：${result.detail}`,
+    result.body && `响应内容：\n${result.body}`,
+  ].filter(Boolean).join("\n");
+}
+
+/**
+ * A debug log entry for a test: what was asked (never the key, only whether there was one) and
+ * everything that came back, so a failure the options page showed can be found again in the log.
+ */
+export function connectionTestLog(
+  { apiUrl, apiKey, models = [] }: { apiUrl: string; apiKey: string; models?: readonly string[] },
+  result: ConnectionTestResult,
+): { level: "info" | "warn"; event: string; detail: string } {
+  const asked = [`接口地址：${apiUrl}`, `API key：${apiKey ? "已填写" : "未填写"}`, models.length ? `使用的模型：${models.join("、")}` : ""];
+  const detail = (...found: string[]) => [...asked, ...found].filter(Boolean).join("\n");
+  if (result.status === "error") return { level: "warn", event: `测试连接失败：${result.reason}`, detail: detail(`原因：${result.reason}`, failureDetails(result)) };
+  const listed = `列出 ${result.models} 个模型，用时 ${result.ms} 毫秒`;
+  if (!result.missing.length) return { level: "info", event: "测试连接成功", detail: detail(listed) };
+  return { level: "warn", event: "测试连接：模型不在列表中", detail: detail(listed, `列表中没有：${result.missing.join("、")}`) };
 }

@@ -10,7 +10,9 @@ lives in `index.ts`:
   along with the shared results (`TranslationPlan`, `PageAnalysisResult`,
   `TranslationBatchResult`) the background's modules return. Any request that
   doesn't decode is answered `{ status: "failed" }`, and a reply the page can't
-  decode counts as failed too.
+  decode counts as failed too, with an error (`undecodedReply`) that holds every
+  schema issue and the reply itself. No reply at all means no handler answered,
+  usually a background older than the page.
 - **Translation stream** (`STREAM_PORT`): the page sends `{ blocks }`, then
   gets `{ type: "block", index, text, final }` events (`final` for cached
   blocks) and one `{ type: "result", result }`.
