@@ -1,6 +1,6 @@
 # Open Browser Translate 隐私政策
 
-最后更新：2026-10-10
+最后更新：2026-10-11
 
 Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在你阅读网页时，把网页文字就地翻译成你选择的语言，翻译由你自己配置的大模型服务完成。本扩展由 Alex Zhang 开发和维护。
 
@@ -44,6 +44,8 @@ Open Browser Translate（下称"本扩展"）是一个浏览器扩展。它在�
 网页内容只会发给你自己选择的模型服务，可能是以下几种：
 
 - **OpenAI**（`api.openai.com`），使用你的 API key，或者通过"用 ChatGPT 登录"使用你的 ChatGPT 订阅。登录流程经过 `auth.openai.com`。参见 [OpenAI 隐私政策](https://openai.com/policies/privacy-policy/)。
+- **Anthropic**（`api.anthropic.com`），使用你的 Anthropic API key。参见 [Anthropic 隐私政策](https://www.anthropic.com/legal/privacy)。
+- **OpenRouter**（`openrouter.ai`），使用你的 OpenRouter API key。OpenRouter 会把请求转给提供你所选模型的服务商。参见 [OpenRouter 隐私政策](https://openrouter.ai/privacy)。
 - **Vercel AI Gateway**（`ai-gateway.vercel.sh`），使用你的 Vercel API key。网关会把请求转给你选择的模型提供方。参见 [Vercel 隐私政策](https://vercel.com/legal/privacy-policy)。
 - **你自己填写的 OpenAI 兼容接口**，例如本地运行的模型服务或第三方平台。只有在你同意浏览器弹出的权限请求之后，本扩展才能访问该地址；保存或测试这个连接时会弹出这个请求。「测试连接」会用你填写的 key 向该服务请求一次模型列表，不发送任何页面内容。
 

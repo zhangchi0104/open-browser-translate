@@ -43,8 +43,8 @@ Reference: https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completi
 Settings keep a list of named connections separately from task selections:
 `connections[]` (`{ id, kind, name, apiKey, apiUrl? }`), `analysis.{connection,models}`
 and `translation.{connection,models}`. A connection's kind is the Vercel AI
-Gateway, OpenAI, or `Custom`: any OpenAI-compatible API at `apiUrl`, where the
-key may be empty for local servers. There can be several of each kind. The
+Gateway, OpenRouter, OpenAI, Anthropic, or `Custom`: any OpenAI-compatible API
+at `apiUrl`, where the key may be empty for local servers. There can be several of each kind. The
 ChatGPT sign-in stays one per browser, reached through the fixed connection id
 `CHATGPT_CONNECTION`. Model IDs are retained per task and connection.
 
@@ -59,7 +59,10 @@ origin, which the settings page requests when it saves or tests the connection.
 
 The options page's 「测试连接」 button sends `test-connection` with the URL and
 key as entered, saved or not, and the models the connection is used with.
-`testConnection` (`connection-test.ts`) asks `GET {apiUrl}/models` once, with
+`testConnection` (`connection-test.ts`) lists the models once the way the
+connection's API does (`api`: OpenAI-compatible `GET {apiUrl}/models` with a
+bearer key, OpenRouter's `/models/user`, or Anthropic's `/v1/models` with
+`x-api-key`), with
 a 10-second timeout, and returns a typed result: `ok` with the number of models,
 the time taken and the connection's models the list doesn't name; or `error`
 with a reason (`invalid-url`, `network`, `timeout`, `unauthorized` for 401/403,
@@ -87,7 +90,7 @@ each test to the console (`connectionTestLog`). A reply of nothing at all usuall
 the service worker is older than the page: an unpacked extension's pages load
 fresh from disk after a rebuild, but its worker keeps running the old script
 until the extension is reloaded, and the old worker has no handler for the
-newer request. Custom connections and OpenAI keys can be tested; the Vercel AI
+newer request. Custom connections and OpenAI, Anthropic and OpenRouter keys can be tested; the Vercel AI
 Gateway lists its models without a key, so listing them proves nothing.
 
 `models.ts` turns the settings into models. `AnalysisModel` (a `DecisionModel`)
@@ -118,6 +121,36 @@ and their remembered models carry over unchanged.
 
 Settings v6 resets the analysis model remembered for every OpenAI connection to
 `gpt-6-luna`, the only model the Decisions API runs.
+
+## Anthropic and OpenRouter
+
+Both take an API key. Neither has dedicated decision models, so analysis
+on them answers decisions with an ordinary model (`languageModelDecisionLayer`,
+see below). Their URLs and Anthropic's headers live in `endpoints.ts`, which
+the options page imports without bundling a model client.
+
+- `anthropic.ts`: Claude through the Messages API (`@effect/ai-anthropic`).
+  Structured output goes as `output_config.format`, and a reasoning effort as
+  `output_config.effort`. Claude has no `none` or `minimal` effort, so those
+  map to `low`; models that take no effort reject one that is set. Thinking is
+  left to the model's default. The background's requests carry the extension's
+  origin, which the API refuses without
+  `anthropic-dangerous-direct-browser-access: true`; the key is the user's
+  own, so the header is always sent. `listAnthropicModels` reads `GET /v1/models`.
+- `openrouter.ts`: OpenRouter's Chat Completions, through the same
+  OpenAI-compatible client as custom connections: OpenRouter takes OpenAI's
+  request shape, and an effort goes as `reasoning_effort`, its shorthand for
+  `reasoning.effort`. Effect's OpenRouter adapter would add some 400 kB of
+  generated schemas to the background for nothing this extension uses. Model IDs are `provider/model`, like
+  the gateway's. `listOpenRouterModels` reads `GET /models/user`: the catalog
+  filtered by the account's provider, privacy and guardrail settings. It takes
+  the key, unlike the public `/models`, so the list and 「测试连接」 both check it.
+
+Neither host is in the manifest's `host_permissions`, since adding hosts there
+makes Chrome disable the extension on update until the user re-approves. The
+options page asks for the origin at runtime instead (it is in
+`optional_host_permissions`), when a connection of either kind with a key is
+saved or tested, like a custom connection's server.
 
 ## Content analysis on OpenAI
 

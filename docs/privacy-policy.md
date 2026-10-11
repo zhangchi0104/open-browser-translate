@@ -1,6 +1,6 @@
 # Open Browser Translate Privacy Policy
 
-Last updated: 2026-10-10 · [中文版](https://github.com/zhangchi0104/open-browser-translate/blob/dev/docs/privacy-policy.zh-CN.md)
+Last updated: 2026-10-11 · [中文版](https://github.com/zhangchi0104/open-browser-translate/blob/dev/docs/privacy-policy.zh-CN.md)
 
 Open Browser Translate ("the extension") is a browser extension. It translates the web page you are reading in place, into a language you choose, using an AI model service you set up yourself. It is developed and maintained by Alex Zhang.
 
@@ -44,6 +44,8 @@ In private (incognito) windows, the extension writes no cache, keeps no site con
 Page content goes only to the model service you choose, which can be:
 
 - **OpenAI** (`api.openai.com`), with your API key or through "Sign in with ChatGPT" on your ChatGPT plan. Signing in goes through `auth.openai.com`. See [OpenAI's privacy policy](https://openai.com/policies/privacy-policy/).
+- **Anthropic** (`api.anthropic.com`), with your Anthropic API key. See [Anthropic's privacy policy](https://www.anthropic.com/legal/privacy).
+- **OpenRouter** (`openrouter.ai`), with your OpenRouter API key. OpenRouter passes requests on to the model provider that serves the model you pick. See [OpenRouter's privacy policy](https://openrouter.ai/privacy).
 - **Vercel AI Gateway** (`ai-gateway.vercel.sh`), with your Vercel API key. The gateway passes requests on to the model provider you pick. See [Vercel's privacy policy](https://vercel.com/legal/privacy-policy).
 - **An OpenAI-compatible server you enter yourself**, such as a model running on your own computer or a third-party platform. The extension can reach that address only after you accept the browser's permission prompt for it, which appears when you save or test the connection. Testing a connection ("测试连接") asks the server once for its model list with the key you entered; it sends no page content.
 
