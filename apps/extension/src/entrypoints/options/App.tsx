@@ -360,6 +360,7 @@ export function App() {
                       key={connection.id}
                       connection={connection}
                       uses={usesOf(connection.id)}
+                      unsaved={dirty}
                       models={modelsOf(connection.id)}
                       error={connectionErrors[connection.id]}
                       open={expanded === connection.id}
@@ -438,9 +439,11 @@ function reportTestFailure(failure: ConnectionTestFailure): Promise<boolean> {
 }
 
 /** A connection in the list: its name and state, opening in place to edit. */
-function ConnectionRow({ connection, uses, models, error, open, onToggle, onChange, onRemove }: {
+function ConnectionRow({ connection, uses, unsaved, models, error, open, onToggle, onChange, onRemove }: {
   connection: Connection;
   uses: string[];
+  /** Whether the page has changes that reloading the extension, which closes it, would lose. */
+  unsaved: boolean;
   models: string[];
   error: string | undefined;
   open: boolean;
@@ -586,7 +589,17 @@ function ConnectionRow({ connection, uses, models, error, open, onToggle, onChan
                 </pre>
               )}
               {tested?.message?.reloadable && (
-                <Button type="button" size="sm" onClick={() => browser.runtime.reload()}>重新加载扩展</Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    // Reloading closes this page, which skips the unsaved-changes guard; ask instead.
+                    if (unsaved && !window.confirm("重新加载扩展会关闭设置页，未保存的更改会丢失。要继续吗？")) return;
+                    browser.runtime.reload();
+                  }}
+                >
+                  重新加载扩展
+                </Button>
               )}
             </div>
           )}
