@@ -11,8 +11,8 @@ lives in `index.ts`:
   `TranslationBatchResult`) the background's modules return. Any request that
   doesn't decode is answered `{ status: "failed" }`, and a reply the page can't
   decode counts as failed too, with an error (`undecodedReply`) that holds every
-  schema issue and the reply itself. No reply at all means no handler answered,
-  usually a background older than the page. `connection-test-failed` is how
+  schema issue and the reply itself, and a `reason`: `no-reply` when no handler
+  answered (a background older than the page), `bad-reply` otherwise. `connection-test-failed` is how
   the options page reports a connection test that failed on its side, so the
   background can record it as a trace.
 - **Translation stream** (`STREAM_PORT`): the page sends `{ blocks }`, then

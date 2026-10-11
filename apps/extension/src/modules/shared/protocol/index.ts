@@ -157,7 +157,14 @@ const status = <const S extends string, const F extends Schema.Struct.Fields>(va
   Schema.Struct({ status: Schema.Literal(value), ...fields });
 const Ok = status("ok", {});
 /** Also the reply to any request that doesn't decode. */
-const Failed = status("failed", { error: Schema.optional(Schema.String) });
+const Failed = status("failed", {
+  error: Schema.optional(Schema.String),
+  /**
+   * Set by the page's client when the reply itself was the problem: `no-reply` when no handler
+   * answered (usually a background older than the page), `bad-reply` when the reply didn't decode.
+   */
+  reason: Schema.optional(Schema.Literals(["no-reply", "bad-reply"])),
+});
 export type Failed = typeof Failed.Type;
 const NotConfigured = status("not-configured", { purpose: Purpose });
 /** A model a provider's catalog lists. */
@@ -323,7 +330,8 @@ export function createClient(runtime: {
     async request<M extends Request>(message: M): Promise<Response<M["type"]>> {
       const raw = await runtime.sendMessage(message);
       const reply = Schema.decodeUnknownResult(Replies[message.type])(raw);
-      return Result.isSuccess(reply) ? reply.success : { status: "failed", error: undecodedReply(message.type, raw, reply.failure) };
+      if (Result.isSuccess(reply)) return reply.success;
+      return { status: "failed", reason: raw === undefined ? "no-reply" : "bad-reply", error: undecodedReply(message.type, raw, reply.failure) };
     },
 
     /**

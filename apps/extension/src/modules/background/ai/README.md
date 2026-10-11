@@ -85,12 +85,16 @@ sees (permission refused, the request not delivered, a reply it can't decode)
 are sent as `connection-test-failed`, which the background records as a failed
 `test-connection` trace (`obt.test.reason`: `page-permission`, `page-send`,
 `page-reply`). If the background can't be reached, there is nothing to record
-it, and the page console is the only place it appears. Both sides also print
-each test to the console (`connectionTestLog`). A reply of nothing at all usually means
-the service worker is older than the page: an unpacked extension's pages load
-fresh from disk after a rebuild, but its worker keeps running the old script
-until the extension is reloaded, and the old worker has no handler for the
-newer request. Custom connections and OpenAI, Anthropic and OpenRouter keys can be tested; the Vercel AI
+it, and the page console is the only place it appears; the message under the
+button then says so instead of pointing at 「请求追踪」. A defect while testing
+fails the trace and comes back as a failed reply carrying the whole error,
+never as no reply. Both sides also print
+each test to the console (`connectionTestLog`). A reply of nothing at all (`reason: "no-reply"`) means
+no handler answered, which a current background never does: the service worker
+is older than the page. An unpacked extension's pages load fresh from disk after
+a rebuild, but its worker keeps running the script it was registered with, even
+across idle restarts, until the extension is reloaded. The page then offers
+「重新加载扩展」 (`browser.runtime.reload()`), which loads the worker from disk. Custom connections and OpenAI, Anthropic and OpenRouter keys can be tested; the Vercel AI
 Gateway lists its models without a key, so listing them proves nothing.
 
 `models.ts` turns the settings into models. `AnalysisModel` (a `DecisionModel`)
