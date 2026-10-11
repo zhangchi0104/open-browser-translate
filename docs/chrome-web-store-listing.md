@@ -29,7 +29,7 @@
 | 语言 | 标题 | 摘要 |
 | --- | --- | --- |
 | English (`en`，默认) | Open Browser Translate | Translate the page you're reading in place, on-screen text first, with AI models you choose: an API key, a local server or ChatGPT.（131 字符） |
-| 中文（简体）(`zh_CN`) | Open Browser Translate - 网页翻译 | 用你自己选的大模型就地翻译正在读的网页，先译眼前的内容。支持 OpenAI、Vercel AI Gateway、OpenAI 兼容接口和 ChatGPT 登录。（80 字符） |
+| 中文（简体）(`zh_CN`) | Open Browser Translate - 网页翻译 | 用你自己选的大模型就地翻译正在读的网页，先译眼前的内容。支持 OpenAI、Anthropic、OpenRouter、Vercel AI Gateway、OpenAI 兼容接口和 ChatGPT 登录。（80 字符） |
 
 要改标题或摘要，就改 `messages.json`，然后发一个新版本。
 
@@ -54,6 +54,8 @@ HOW IT WORKS
 CONNECT YOUR OWN MODEL
 • OpenAI, with an API key
 • Sign in with ChatGPT, to translate on your ChatGPT plan (OpenAI's sign-in for open-source apps)
+• Anthropic, with your Claude API key
+• OpenRouter, for hundreds of models with one key
 • Vercel AI Gateway, for models from many providers with one key
 • Any OpenAI-compatible API, including a model running on your own computer
 Content analysis and translation can each use their own connection and model.
@@ -85,6 +87,8 @@ Open Browser Translate 在你正在阅读的网页上就地翻译：每段译文
 连接你自己的模型
 • OpenAI：使用 API key
 • 用 ChatGPT 登录：用你的 ChatGPT 订阅额度翻译（OpenAI 为开源应用提供的登录方式）
+• Anthropic：使用你的 Claude API key
+• OpenRouter：一个 key 即可使用数百个模型
 • Vercel AI Gateway：一个 key 即可使用多家厂商的模型
 • 任何 OpenAI 兼容接口，包括在你自己电脑上运行的模型
 内容分析和翻译可以分别使用不同的连接和模型。
@@ -144,10 +148,10 @@ NODE_PATH="$(npm root -g)" node store/chrome/source/render.cjs                  
 ### 3.1 Single purpose（单一用途）
 
 ```text
-Translate the web page the user is reading, in place, into a language the user chooses, using an AI model service the user configures (an OpenAI or Vercel AI Gateway API key, Sign in with ChatGPT, or an OpenAI-compatible server).
+Translate the web page the user is reading, in place, into a language the user chooses, using an AI model service the user configures (an OpenAI, Anthropic, OpenRouter or Vercel AI Gateway API key, Sign in with ChatGPT, or an OpenAI-compatible server).
 ```
 
-> 中文对照：用用户自己配置的大模型服务（OpenAI 或 Vercel AI Gateway 的 API key、ChatGPT 登录，或 OpenAI 兼容接口），把用户正在阅读的网页就地翻译成用户选择的语言。
+> 中文对照：用用户自己配置的大模型服务（OpenAI、Anthropic、OpenRouter 或 Vercel AI Gateway 的 API key、ChatGPT 登录，或 OpenAI 兼容接口），把用户正在阅读的网页就地翻译成用户选择的语言。
 
 ### 3.2 Permission justification（权限理由）
 
@@ -168,7 +172,7 @@ Content script on http/https pages: shows the translate button; only after the u
 ai-gateway.vercel.sh, api.openai.com: the background sends the page text to the model service the user configured (Vercel AI Gateway or OpenAI) and lists its models. Keys never reach the page.
 auth.openai.com: Sign in with ChatGPT (OAuth token exchange and ID token keys).
 http://127.0.0.1/*: OpenAI's sign-in redirects to the loopback address http://127.0.0.1:45173/callback, which OpenAI requires; the extension reads the code from that tab's URL and closes it. Nothing listens there.
-Optional https://*/* and http://*/*: requested at runtime, only for the origin of a custom OpenAI-compatible server the user adds (e.g. a local model), when they save it.
+Optional https://*/* and http://*/*: requested at runtime, only for the origin of a model service the user adds that the manifest doesn't list: a custom OpenAI-compatible server (e.g. a local model), api.anthropic.com or openrouter.ai, when they save or test the connection.
 ```
 
 > 中文对照：
@@ -176,7 +180,7 @@ Optional https://*/* and http://*/*: requested at runtime, only for the origin o
 > - **ai-gateway.vercel.sh、api.openai.com**：后台把页面文字发给用户配置的模型服务（Vercel AI Gateway 或 OpenAI），并读取可用模型列表。API key 不会进入网页。
 > - **auth.openai.com**：用 ChatGPT 登录（OAuth 换取令牌、获取 ID 令牌的验签公钥）。
 > - **http://127.0.0.1/\***：OpenAI 登录只接受回环地址作为回调，会跳转到 `http://127.0.0.1:45173/callback`。扩展从该标签页的网址读出授权码后关闭标签页，这个端口上没有任何服务在监听。
-> - **可选的 https://\*/\*、http://\*/\***：只在用户保存自定义 OpenAI 兼容接口（例如本地模型）时，在运行时请求该接口所在源的权限。
+> - **可选的 https://\*/\*、http://\*/\***：只在用户保存或测试清单中没有列出的模型服务（自定义 OpenAI 兼容接口，例如本地模型；api.anthropic.com；openrouter.ai）时，在运行时请求该服务所在源的权限。
 
 内容脚本匹配所有站点，可选权限又是 `<all_urls>` 级别，预计会进入人工深度审核，耗时比普通审核长。
 

@@ -6,7 +6,9 @@ import type { Purpose } from "../../shared/protocol";
 import { openAICompatibleLayer, vercelLayer } from "./vercel";
 import { OPENAI_API_URL } from "./openai-models";
 import { ChatGPTToken, chatgptLayer } from "./chatgpt";
-import { chatgptDecisionLayer, compatibleDecisionLayer } from "./structured-decisions";
+import { chatgptDecisionLayer, compatibleDecisionLayer, languageModelDecisionLayer } from "./structured-decisions";
+import { anthropicLayer } from "./anthropic";
+import { openRouterLayer } from "./openrouter";
 import { openAIDecisionLayer } from "./openai-decisions";
 import { vercelDecisionLayer } from "./gateway-decisions";
 
@@ -81,17 +83,21 @@ export function missingConfiguration(settings: AISettings, signedIn: boolean, pu
 }
 
 // Only called for configured purposes, so `provider` is set. An OpenAI key asks the Decisions API;
-// the ChatGPT plan and custom APIs simulate it on a language model.
+// the ChatGPT plan, Claude, OpenRouter and custom APIs simulate it on a language model.
 function analysisLayer({ provider, model, apiKey, apiUrl, reasoningEffort, fast }: ModelConfig): Layer.Layer<DecisionModel.DecisionModel, never, ChatGPTToken> {
   if (provider === AiProviders.OpenAISubscription) return chatgptDecisionLayer({ model, reasoningEffort, fast });
   if (provider === AiProviders.VercelAIGateway) return vercelDecisionLayer({ model, apiKey });
   if (provider === AiProviders.OpenAIApi) return openAIDecisionLayer({ model, apiKey });
+  if (provider === AiProviders.Anthropic) return languageModelDecisionLayer.pipe(Layer.provide(anthropicLayer({ model, apiKey, reasoningEffort })));
+  if (provider === AiProviders.OpenRouter) return languageModelDecisionLayer.pipe(Layer.provide(openRouterLayer({ model, apiKey, reasoningEffort })));
   return compatibleDecisionLayer({ model, apiKey, apiUrl: apiUrl!, reasoningEffort });
 }
 
 function translationLayer({ provider, model, apiKey, apiUrl, reasoningEffort, fast }: ModelConfig): Layer.Layer<LanguageModel.LanguageModel, never, ChatGPTToken> {
   if (provider === AiProviders.OpenAISubscription) return chatgptLayer({ model, reasoningEffort, fast });
   if (provider === AiProviders.VercelAIGateway) return vercelLayer({ model, apiKey, reasoningEffort });
+  if (provider === AiProviders.Anthropic) return anthropicLayer({ model, apiKey, reasoningEffort });
+  if (provider === AiProviders.OpenRouter) return openRouterLayer({ model, apiKey, reasoningEffort });
   return openAICompatibleLayer({ model, apiKey, apiUrl: apiUrl || OPENAI_API_URL, reasoningEffort });
 }
 

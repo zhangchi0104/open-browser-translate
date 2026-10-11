@@ -12,6 +12,8 @@ import {
 } from "../modules/background/ai/chatgpt-session";
 import { listOpenAIModels } from "../modules/background/ai/openai-models";
 import { listGatewayModels } from "../modules/background/ai/gateway-models";
+import { listAnthropicModels } from "../modules/background/ai/anthropic";
+import { listOpenRouterModels } from "../modules/background/ai/openrouter";
 import { recordConnectionTestFailure, traceConnectionTest } from "../modules/background/ai/connection-test";
 import { translatePageBatch } from "../modules/background/translation-dispatcher";
 import { createTranslationService } from "../modules/background/translation-service";
@@ -90,6 +92,10 @@ const chatgptModels = () => catalog("ChatGPT", listChatGPTModels, "接口没有�
 const compatibleModels = (label: string, apiKey: string, apiUrl?: string) =>
   catalog(label, () => listOpenAIModels(apiKey, fetch, apiUrl), "接口没有返回可生成文本的模型");
 
+/** A catalog that needs a key: none to list with yet when `apiKey` is empty. */
+const keyedModels = (provider: string, apiKey: string, list: (apiKey: string) => Promise<ChatGPTModel[]>): Promise<ModelList | { status: "no-key" }> =>
+  apiKey.trim() ? catalog(provider, () => list(apiKey.trim()), "接口没有返回可生成文本的模型") : Promise.resolve({ status: "no-key" });
+
 /** Models `purpose` can pick on a saved connection, listed with the key the background holds. */
 function connectionModels(settings: AISettings, purpose: Purpose, id: string): Promise<ModelList | { status: "no-key" }> {
   const connection = findConnection(settings, id);
@@ -103,6 +109,8 @@ function connectionModels(settings: AISettings, purpose: Purpose, id: string): P
       const apiKey = connection!.apiKey.trim();
       return apiKey ? compatibleModels("OpenAI", apiKey) : Promise.resolve({ status: "no-key" });
     }
+    case AiProviders.Anthropic: return keyedModels("Anthropic", connection!.apiKey, listAnthropicModels);
+    case AiProviders.OpenRouter: return keyedModels("OpenRouter", connection!.apiKey, listOpenRouterModels);
     case AiProviders.Custom: {
       const apiUrl = connection!.apiUrl?.trim();
       return apiUrl ? compatibleModels(connection!.name, connection!.apiKey.trim(), apiUrl) : Promise.resolve({ status: "no-key" });
@@ -147,6 +155,8 @@ export default defineBackground(() => {
         return compatibleModels(apiUrl ? "自定义连接" : "OpenAI", apiKey.trim(), apiUrl);
       },
       "gateway-models": () => catalog("Vercel AI Gateway", listGatewayModels),
+      "anthropic-models": ({ apiKey }) => keyedModels("Anthropic", apiKey, listAnthropicModels),
+      "openrouter-models": ({ apiKey }) => keyedModels("OpenRouter", apiKey, listOpenRouterModels),
       // Each test is a request trace (「请求追踪」), like translation's; a defect fails the span and the reply.
       "test-connection": (request) => runtime.runPromise(traceConnectionTest(request)),
       "connection-test-failed": ({ failure }) => runtime.runPromise(recordConnectionTestFailure(failure)).then(() => ({ status: "ok" as const })),

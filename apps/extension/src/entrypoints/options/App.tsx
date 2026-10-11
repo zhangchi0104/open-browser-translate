@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
 import { browser } from "wxt/browser";
 import { background } from "@/lib/background";
-import { PURPOSE_NAMES, type ConnectionTestFailure, type Purpose } from "@/modules/shared/protocol";
+import { PURPOSE_NAMES, type ConnectionApi, type ConnectionTestFailure, type Purpose } from "@/modules/shared/protocol";
 import { Bug, ChevronDown, Database, ExternalLink, KeyRound, Languages, Plus } from "lucide-react";
 import {
   AiProviders, aiSettings, CHATGPT_CONNECTION, CONNECTION_KIND_NAMES, CONNECTION_KINDS,
@@ -11,6 +11,7 @@ import {
 } from "@/modules/shared/settings";
 import { CHATGPT_ISSUER } from "@/modules/background/ai/chatgpt-auth";
 import { OPENAI_API_URL } from "@/modules/background/ai/openai-models";
+import { ANTHROPIC_API_URL, OPENROUTER_API_URL } from "@/modules/background/ai/endpoints";
 import { chatgptAuth, chatgptSignInResult } from "@/modules/background/ai/chatgpt-session";
 import type { SignInResult } from "@/modules/background/ai/chatgpt-session";
 import { Button } from "@/components/ui/button";
@@ -35,12 +36,22 @@ const statusTones = { error: "text-destructive", success: "text-success", warnin
 
 const kindDescriptions: Record<ConnectionKind, string> = {
   [AiProviders.VercelAIGateway]: "一个 key 用多家公司的模型，按用量付费。",
+  [AiProviders.OpenRouter]: "一个 key 用数百个模型，按用量付费。",
   [AiProviders.OpenAIApi]: "OpenAI 开发者平台的 key，按用量付费。",
-  [AiProviders.Custom]: "任何 OpenAI 兼容的接口，如 OpenRouter 或本机运行的模型。",
+  [AiProviders.Anthropic]: "Anthropic 的 Claude API key，按用量付费。",
+  [AiProviders.Custom]: "任何 OpenAI 兼容的接口，如本机运行的模型。",
 };
 const kindLinks: Partial<Record<ConnectionKind, string>> = {
   [AiProviders.VercelAIGateway]: "https://vercel.com/dashboard",
   [AiProviders.OpenAIApi]: "https://platform.openai.com/api-keys",
+  [AiProviders.Anthropic]: "https://platform.claude.com/settings/keys",
+  [AiProviders.OpenRouter]: "https://openrouter.ai/settings/keys",
+};
+/** Where a connection's API lives and how a connection test asks it for models; custom connections give their own address. */
+const kindApis: Partial<Record<ConnectionKind, { url: string; api: ConnectionApi }>> = {
+  [AiProviders.OpenAIApi]: { url: OPENAI_API_URL, api: "openai" },
+  [AiProviders.Anthropic]: { url: ANTHROPIC_API_URL, api: "anthropic" },
+  [AiProviders.OpenRouter]: { url: OPENROUTER_API_URL, api: "openrouter" },
 };
 const purposes = {
   analysis: {
@@ -53,7 +64,7 @@ const purposes = {
   translation: {
     title: "翻译",
     description: "再把选出的内容译成目标语言。",
-    placeholder: (p: SettingsProvider | undefined) => p === AiProviders.VercelAIGateway ? "provider/model" : "模型 ID",
+    placeholder: (p: SettingsProvider | undefined) => p === AiProviders.VercelAIGateway || p === AiProviders.OpenRouter ? "provider/model" : "模型 ID",
   },
 } as const;
 type Section = "models" | "keys" | "cache" | "debug";
@@ -109,10 +120,19 @@ function freshName(connections: readonly Connection[], kind: ConnectionKind) {
     if (!taken.has(name)) return name;
   }
 }
-/** Host permission patterns custom connections need; requested when the settings are saved. */
-function customOrigins(connections: readonly Connection[]) {
-  return [...new Set(connections.flatMap((connection) =>
-    connection.kind === AiProviders.Custom && !validateApiUrl(connection.apiUrl ?? "") ? [`${new URL(normalizeApiUrl(connection.apiUrl)).origin}/*`] : []))];
+/**
+ * Host permission patterns connections need beyond the manifest's: a custom connection's server,
+ * and Anthropic's and OpenRouter's APIs once a key is filled in. Requested when the settings are saved.
+ */
+function requiredOrigins(connections: readonly Connection[]) {
+  return [...new Set(connections.flatMap((connection) => {
+    if (connection.kind === AiProviders.Custom) {
+      return validateApiUrl(connection.apiUrl ?? "") ? [] : [`${new URL(normalizeApiUrl(connection.apiUrl)).origin}/*`];
+    }
+    const unlisted = connection.kind === AiProviders.Anthropic || connection.kind === AiProviders.OpenRouter;
+    const api = kindApis[connection.kind];
+    return unlisted && api && connection.apiKey.trim() ? [`${new URL(api.url).origin}/*`] : [];
+  }))];
 }
 
 export function App() {
@@ -190,8 +210,8 @@ export function App() {
       }
     }
     // Asked before anything is awaited, while the click still counts as the user's: the background
-    // can only reach a custom connection's server with permission for its origin.
-    const origins = customOrigins(next.connections);
+    // can only reach a custom server, Anthropic or OpenRouter with permission for its origin.
+    const origins = requiredOrigins(next.connections);
     const permitted = origins.length ? browser.permissions.request({ origins }).catch(() => false) : Promise.resolve(true);
     setDraft(next);
     setBusy(true);
@@ -201,7 +221,7 @@ export function App() {
       setDirty(false);
       setStatus(await permitted
         ? { text: "设置已保存", tone: "success" }
-        : { text: "设置已保存，但没有获得访问自定义接口的权限，使用时会连接失败。", tone: "error" });
+        : { text: "设置已保存，但没有获得访问接口的权限，使用时会连接失败。", tone: "error" });
     } catch {
       setStatus({ text: "保存失败，请重试。", tone: "error" });
     } finally {
@@ -433,9 +453,11 @@ function ConnectionRow({ connection, uses, models, error, open, onToggle, onChan
   const custom = connection.kind === AiProviders.Custom;
   const link = kindLinks[connection.kind];
   // The Vercel AI Gateway's model list is public, so listing it can't tell whether a key works.
-  const testable = custom || connection.kind === AiProviders.OpenAIApi;
+  const known = kindApis[connection.kind];
+  const testable = custom || !!known;
   const [test, setTest] = useState<{ apiUrl: string; apiKey: string; message?: TestMessage }>();
-  const apiUrl = custom ? normalizeApiUrl(connection.apiUrl) : OPENAI_API_URL;
+  const apiUrl = custom ? normalizeApiUrl(connection.apiUrl) : known?.url ?? "";
+  const api = known?.api ?? "openai";
   const apiKey = connection.apiKey.trim();
   // A result describes the address and key it was run with; editing either hides it.
   const tested = test?.apiUrl === apiUrl && test.apiKey === apiKey ? test : undefined;
@@ -464,7 +486,7 @@ function ConnectionRow({ connection, uses, models, error, open, onToggle, onChan
         return done({ text: `没有获得访问 ${origin} 的权限，扩展无法连接这个接口。请再次测试并选择允许。`, tone: "error", details });
       }
       let sent = true;
-      const result = await background.request({ type: "test-connection", apiUrl, apiKey, models }).catch((error: unknown) => {
+      const result = await background.request({ type: "test-connection", apiUrl, apiKey, models, api }).catch((error: unknown) => {
         sent = false;
         return { status: "failed" as const, error: `无法把请求发给扩展后台：${errorText(error)}` };
       });
@@ -608,16 +630,19 @@ function AddConnection({ onAdd }: { onAdd: (kind: ConnectionKind) => void }) {
 }
 
 // Shown under a model only when there's something to act on; a loaded list speaks for itself.
+const keyCatalogHelp = {
+  unavailable: "在「连接」中给这个连接填写 API key 后可从列表选择模型，也可以直接填写模型 ID。",
+  source: "这个 API key",
+};
 const catalogHelp: Record<SettingsProvider, { unavailable: string; source: string }> = {
   [AiProviders.VercelAIGateway]: { unavailable: "", source: "Vercel AI Gateway " },
   [AiProviders.OpenAISubscription]: {
     unavailable: "在「连接」中登录 ChatGPT 后可从列表选择模型，也可以直接填写模型 ID。",
     source: "当前 ChatGPT 账号",
   },
-  [AiProviders.OpenAIApi]: {
-    unavailable: "在「连接」中给这个连接填写 API key 后可从列表选择模型，也可以直接填写模型 ID。",
-    source: "这个 API key",
-  },
+  [AiProviders.OpenAIApi]: keyCatalogHelp,
+  [AiProviders.Anthropic]: keyCatalogHelp,
+  [AiProviders.OpenRouter]: keyCatalogHelp,
   [AiProviders.Custom]: {
     unavailable: "在「连接」中填写接口地址后可从列表选择模型，也可以直接填写模型 ID。",
     source: "这个接口",
@@ -638,6 +663,12 @@ function catalogRequest(provider: SettingsProvider | undefined, connection: Conn
     case AiProviders.OpenAIApi: {
       const apiKey = connection?.apiKey.trim();
       return apiKey ? { type: "openai-models", apiKey } as const : undefined;
+    }
+    case AiProviders.Anthropic:
+    case AiProviders.OpenRouter: {
+      const apiKey = connection?.apiKey.trim();
+      const type = provider === AiProviders.Anthropic ? "anthropic-models" : "openrouter-models";
+      return apiKey ? { type, apiKey } as const : undefined;
     }
     case AiProviders.Custom: {
       const apiUrl = normalizeApiUrl(connection?.apiUrl);
@@ -669,7 +700,8 @@ function ModelSection({ purpose, draft, email, error, fieldRef, onConnectionChan
   // Analysis on the gateway or an OpenAI key offers its fixed decision models instead of a loaded catalog.
   const fixed = decisionModels(purpose, provider);
   const evaluation = !!fixed;
-  const keyed = provider === AiProviders.OpenAIApi || provider === AiProviders.Custom;
+  // Lists that follow a key or address being typed wait for typing to pause.
+  const keyed = provider === AiProviders.OpenAIApi || provider === AiProviders.Anthropic || provider === AiProviders.OpenRouter || provider === AiProviders.Custom;
   const loaded = useCatalog(fixed ? undefined : catalogRequest(provider, connection, email), keyed ? 600 : 0);
   const { catalog, reload }: LoadedCatalog = fixed ? { catalog: { status: "ok", models: fixed }, reload: () => {} } : loaded;
   const text = provider && catalogHelp[provider];
