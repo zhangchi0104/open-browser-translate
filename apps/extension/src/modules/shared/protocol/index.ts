@@ -83,6 +83,11 @@ const QuickSettings = Schema.Struct({
   translation: PurposeChoice,
 });
 export type QuickSettings = typeof QuickSettings.Type;
+/** The kinds of API a connection test knows how to ask for models. */
+export const CONNECTION_APIS = ["openai", "openrouter", "anthropic"] as const;
+const ConnectionApi = Schema.Literals(CONNECTION_APIS);
+export type ConnectionApi = typeof ConnectionApi.Type;
+
 /** A connection test that failed on the options page; `error` is everything the page has to say about it. */
 const ConnectionTestFailure = Schema.Struct({
   apiUrl: Schema.String.check(Schema.isMaxLength(2000)),
@@ -115,6 +120,9 @@ const Requests = {
    */
   "openai-models": request("openai-models", { apiKey: Schema.optional(Schema.String), apiUrl: Schema.optional(Schema.String) }),
   "gateway-models": request("gateway-models", {}),
+  /** Models behind an Anthropic or OpenRouter key, as the options page has it before it's saved. */
+  "anthropic-models": request("anthropic-models", { apiKey: Schema.String }),
+  "openrouter-models": request("openrouter-models", { apiKey: Schema.String }),
   /**
    * Lists the models at an OpenAI-compatible `apiUrl` once with `apiKey`, as the options page has
    * them before saving, to tell whether the connection works; `models` are the IDs it's used with.
@@ -122,6 +130,8 @@ const Requests = {
   "test-connection": request("test-connection", {
     apiUrl: Schema.String,
     apiKey: Schema.String,
+    /** Which API `apiUrl` serves: OpenAI-compatible (the default), OpenRouter's or Anthropic's. */
+    api: Schema.optional(ConnectionApi),
     models: Schema.optional(Schema.Array(Schema.String)),
   }),
   /**
@@ -230,6 +240,8 @@ const Replies = {
   "chatgpt-models": orFailed(Models),
   "openai-models": orFailed(Schema.Union([Models, status("no-key", {})])),
   "gateway-models": orFailed(Models),
+  "anthropic-models": orFailed(Schema.Union([Models, status("no-key", {})])),
+  "openrouter-models": orFailed(Schema.Union([Models, status("no-key", {})])),
   "test-connection": orFailed(ConnectionTestResult),
   "connection-test-failed": orFailed(Ok),
   // `language` is the target language's code, for the translations' `lang`.

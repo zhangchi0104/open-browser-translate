@@ -10,7 +10,7 @@ export interface LoadedCatalog { catalog: Catalog; reload: () => void }
  * Asks the background for a model catalog with `request` (nothing to ask with when undefined),
  * waiting `delay` ms so typing a key doesn't fire a request per keystroke.
  */
-export function useCatalog(request: Request<"chatgpt-models" | "openai-models" | "gateway-models" | "connection-models"> | undefined, delay = 0): LoadedCatalog {
+export function useCatalog(request: Request<"chatgpt-models" | "openai-models" | "gateway-models" | "anthropic-models" | "openrouter-models" | "connection-models"> | undefined, delay = 0): LoadedCatalog {
   const [catalog, setCatalog] = useState<Catalog>({ status: "unavailable" });
   const [attempt, setAttempt] = useState(0);
   // The request is a new object each render; its JSON says when it actually changed.

@@ -5,6 +5,7 @@ export const enum AiProviders {
   OpenAIApi = "OpenAIApi",
   VercelAIGateway = "VercelAIGateway",
   OpenRouter = "OpenRouter",
+  Anthropic = "Anthropic",
   CloudflareAiGateway = "CloudflareAiGateway",
   Custom = "Custom",
 }
@@ -15,7 +16,7 @@ export const DEFAULT_DECISION_MODEL = "gpt-6-luna";
 export const DEFAULT_GATEWAY_DECISION_MODEL = "typesafe-ai/jev";
 
 /** Kinds of connection that take an API key; several of each can be added and named. */
-export const CONNECTION_KINDS = [AiProviders.VercelAIGateway, AiProviders.OpenAIApi, AiProviders.Custom] as const;
+export const CONNECTION_KINDS = [AiProviders.VercelAIGateway, AiProviders.OpenRouter, AiProviders.OpenAIApi, AiProviders.Anthropic, AiProviders.Custom] as const;
 export type ConnectionKind = typeof CONNECTION_KINDS[number];
 /** What runs a purpose's model: a kind of connection, or the ChatGPT plan. */
 export type SettingsProvider = ConnectionKind | AiProviders.OpenAISubscription;
@@ -34,7 +35,9 @@ export interface Connection {
 }
 export const CONNECTION_KIND_NAMES: Record<ConnectionKind, string> = {
   [AiProviders.VercelAIGateway]: "Vercel AI Gateway",
+  [AiProviders.OpenRouter]: "OpenRouter",
   [AiProviders.OpenAIApi]: "OpenAI",
+  [AiProviders.Anthropic]: "Anthropic",
   [AiProviders.Custom]: "自定义",
 };
 
@@ -50,7 +53,8 @@ export function normalizeApiUrl(url: string | undefined): string {
 export function validateModel(provider: SettingsProvider, model: string): string | undefined {
   const value = model.trim();
   if (!value) return;
-  if (provider === AiProviders.VercelAIGateway && !/^[^\s/]+\/[^\s/]+$/.test(value)) {
+  // Both route by `provider/model`; OpenRouter IDs may add a variant (`:free`), which this allows.
+  if ((provider === AiProviders.VercelAIGateway || provider === AiProviders.OpenRouter) && !/^[^\s/]+\/[^\s/]+$/.test(value)) {
     return "请填写 provider/model 格式的模型 ID";
   }
   if (/\s/.test(value)) return "模型 ID 不能包含空格";

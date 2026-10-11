@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { markFailed } from "../../shared/debug-log/trace";
-import type { ConnectionTestFailure, ConnectionTestResult } from "../../shared/protocol";
+import type { ConnectionApi, ConnectionTestFailure, ConnectionTestResult } from "../../shared/protocol";
+import { anthropicHeaders } from "./endpoints";
 
 /** How long a test waits for the model list before giving up. */
 export const CONNECTION_TEST_TIMEOUT_MS = 10_000;
@@ -31,17 +32,29 @@ function failureOf(status: number): "unauthorized" | "not-found" | "http" {
 }
 
 /**
- * Lists the models at an OpenAI-compatible `apiUrl` with `apiKey` (none when empty) once, to tell
- * whether the connection works and, when it doesn't, why. `models` are model IDs the connection is
- * used with; those the list doesn't name come back as `missing`.
+ * Where each kind of API lists models, and how it takes the key. OpenRouter's `/models` is public,
+ * so a test asks `/models/user`, which needs the key.
+ */
+const bearer = (apiKey: string): Record<string, string> => apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+const MODEL_LISTS: Record<ConnectionApi, { path: string; headers: (apiKey: string) => Record<string, string> }> = {
+  openai: { path: "/models", headers: bearer },
+  openrouter: { path: "/models/user", headers: bearer },
+  anthropic: { path: "/v1/models?limit=1000", headers: anthropicHeaders },
+};
+
+/**
+ * Lists the models at `apiUrl` with `apiKey` (none when empty) once, to tell whether the connection
+ * works and, when it doesn't, why. `api` says how that API lists models (OpenAI-compatible unless
+ * given). `models` are model IDs the connection is used with; those the list doesn't name come
+ * back as `missing`.
  */
 export async function testConnection(
-  { apiUrl, apiKey, models = [] }: { apiUrl: string; apiKey: string; models?: readonly string[] },
+  { apiUrl, apiKey, models = [], api = "openai" }: { apiUrl: string; apiKey: string; models?: readonly string[]; api?: ConnectionApi },
   { fetcher = fetch, timeoutMs = CONNECTION_TEST_TIMEOUT_MS }: { fetcher?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<ConnectionTestResult> {
   let url: URL;
   try {
-    url = new URL(`${apiUrl.trim().replace(/\/+$/, "")}/models`);
+    url = new URL(`${apiUrl.trim().replace(/\/+$/, "")}${MODEL_LISTS[api].path}`);
     if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error(url.protocol);
   } catch {
     return { status: "error", reason: "invalid-url" };
@@ -52,7 +65,7 @@ export async function testConnection(
   let response: Response;
   let text: string;
   try {
-    response = await fetcher(url.href, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, signal: controller.signal });
+    response = await fetcher(url.href, { headers: MODEL_LISTS[api].headers(apiKey), signal: controller.signal });
     text = await response.text();
   } catch (error) {
     if (controller.signal.aborted) return { status: "error", reason: "timeout", url: url.href };
@@ -107,7 +120,7 @@ export function connectionTestLog(
   return { level: "warn", event: "测试连接：模型不在列表中", detail: detail(listed, `列表中没有：${result.missing.join("、")}`) };
 }
 
-type ConnectionTestRequest = { apiUrl: string; apiKey: string; models?: readonly string[] };
+type ConnectionTestRequest = { apiUrl: string; apiKey: string; models?: readonly string[]; api?: ConnectionApi };
 
 /** Records a long text on the current span as an event, which the trace view shows as a block. */
 const note = (name: string, content: string | undefined) => content === undefined ? Effect.void : Effect.currentSpan.pipe(
@@ -120,8 +133,9 @@ const failureText = (result: Extract<ConnectionTestResult, { status: "error" }>)
   `测试连接失败：${result.reason}${result.httpStatus !== undefined ? `（HTTP ${result.httpStatus}）` : ""}`;
 
 /** What was asked, as span attributes: the address, whether there was a key (never the key) and the models. */
-const requestAttributes = ({ apiUrl, apiKey, models = [] }: ConnectionTestRequest) => ({
+const requestAttributes = ({ apiUrl, apiKey, models = [], api = "openai" }: ConnectionTestRequest) => ({
   "obt.connection.api_url": apiUrl,
+  "obt.connection.api": api,
   "obt.connection.has_key": !!apiKey,
   ...(models.length && { "obt.connection.models": [...models] }),
 });

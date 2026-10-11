@@ -68,5 +68,5 @@ A block's translation that won't change: one served from the cache, or one from 
 ### Settings
 
 **Connection**:
-A named way to reach models that the reader adds in the settings: a Vercel AI Gateway or OpenAI key, or a custom OpenAI-compatible address with an optional key. There can be several of each kind. The ChatGPT sign-in is the one connection that can't be added twice.
+A named way to reach models that the reader adds in the settings: a Vercel AI Gateway, OpenRouter, OpenAI or Anthropic key, or a custom OpenAI-compatible address with an optional key. There can be several of each kind. The ChatGPT sign-in is the one connection that can't be added twice.
 _Avoid_: provider (a provider is the kind of service a connection reaches), account, key

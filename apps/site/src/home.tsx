@@ -17,6 +17,8 @@ const FEATURES = [
 const CONNECTIONS = [
   { name: "OpenAI", text: "with your API key" },
   { name: "Sign in with ChatGPT", text: "on your ChatGPT plan" },
+  { name: "Anthropic", text: "Claude, with your API key" },
+  { name: "OpenRouter", text: "hundreds of models, one key" },
   { name: "Vercel AI Gateway", text: "many providers' models, one key" },
   { name: "OpenAI-compatible API", text: "including a model on your own computer" },
 ] as const;
