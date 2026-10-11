@@ -6,6 +6,8 @@ export interface TestMessage {
   tone: "error" | "success" | "warning";
   /** Everything that came back, in full: the request, status, server message and body, or the page's own error. */
   details?: string;
+  /** No handler answered, which reloading the extension (and its background) fixes when the background is out of date. */
+  reloadable?: boolean;
 }
 
 /** Whether a base URL's path names an API version, as `/v1`, `/api/v1` or `/v1beta/openai` do. */
@@ -40,15 +42,24 @@ function detailsOf(result: ConnectionTestResult | Failed): string | undefined {
 /**
  * What a connection test found, in words for the options page: success with the model count and
  * time, or what failed and what to try, with everything that came back as `details`. `apiUrl` and
- * `apiKey` are what was tested.
+ * `apiKey` are what was tested; `traced` says whether a failure that didn't finish made it into
+ * 「请求追踪」, which only a background that answered can record.
  */
-export function describeConnectionTest(result: ConnectionTestResult | Failed, tested: { apiUrl: string; apiKey: string }): TestMessage {
+export function describeConnectionTest(result: ConnectionTestResult | Failed, tested: { apiUrl: string; apiKey: string }, traced = true): TestMessage {
   const details = detailsOf(result);
-  return { ...summarize(result, tested), ...(details && { details }) };
+  return { ...summarize(result, tested, traced), ...(details && { details }) };
 }
 
-function summarize(result: ConnectionTestResult | Failed, { apiUrl, apiKey }: { apiUrl: string; apiKey: string }): Omit<TestMessage, "details"> {
-  if (result.status === "failed") return { text: "测试没有完成。下面是完整的错误信息，「调试日志」→「请求追踪」中也有记录。", tone: "error" };
+function unfinished(result: Failed, traced: boolean): Omit<TestMessage, "details"> {
+  const where = traced ? "「调试日志」→「请求追踪」中也有记录。" : "后台没能记下这次失败，浏览器开发者工具的控制台（Console）里有记录。";
+  if (result.reason === "no-reply") {
+    return { text: `测试没有完成：扩展后台没有处理这个请求，多半还在运行旧版本。点「重新加载扩展」后再试。下面是完整的错误信息，${where}`, tone: "error", reloadable: true };
+  }
+  return { text: `测试没有完成。下面是完整的错误信息，${where}`, tone: "error" };
+}
+
+function summarize(result: ConnectionTestResult | Failed, { apiUrl, apiKey }: { apiUrl: string; apiKey: string }, traced: boolean): Omit<TestMessage, "details"> {
+  if (result.status === "failed") return unfinished(result, traced);
   if (result.status === "ok") {
     if (result.missing.length) {
       return {
