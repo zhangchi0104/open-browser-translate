@@ -1,6 +1,7 @@
-import { Effect } from "effect";
+import { Cause, Effect } from "effect";
+import { describeError } from "../../shared/debug-log/model";
 import { markFailed } from "../../shared/debug-log/trace";
-import type { ConnectionApi, ConnectionTestFailure, ConnectionTestResult } from "../../shared/protocol";
+import type { ConnectionApi, ConnectionTestFailure, ConnectionTestResult, Failed } from "../../shared/protocol";
 import { anthropicHeaders } from "./endpoints";
 
 /** How long a test waits for the model list before giving up. */
@@ -144,9 +145,10 @@ const requestAttributes = ({ apiUrl, apiKey, models = [], api = "openai" }: Conn
  * `testConnection` as a traced request, like translation's: a `test-connection` root span with
  * what was asked and how it went, and a `connection.list-models` client span for the request to
  * the server, carrying the HTTP status, the server's message and the response body. A failed test
- * marks both spans failed, so it's listed under errors.
+ * marks both spans failed, so it's listed under errors. A defect while testing fails the trace too
+ * and comes back as a failed reply with the whole error, so the page never waits on nothing.
  */
-export const traceConnectionTest = (request: ConnectionTestRequest, options?: Parameters<typeof testConnection>[1]) =>
+export const traceConnectionTest = (request: ConnectionTestRequest, options?: Parameters<typeof testConnection>[1]): Effect.Effect<ConnectionTestResult | Failed> =>
   Effect.gen(function* () {
     const root = yield* Effect.orDie(Effect.currentSpan);
     const result = yield* Effect.gen(function* () {
@@ -176,7 +178,16 @@ export const traceConnectionTest = (request: ConnectionTestRequest, options?: Pa
     const { level, detail } = connectionTestLog(request, result);
     console[level](`[test-connection] ${detail}`);
     return result;
-  }).pipe(Effect.withSpan("test-connection", { kind: "server", attributes: requestAttributes(request) }));
+  }).pipe(
+    Effect.catchCause((cause) => Effect.gen(function* () {
+      const root = yield* Effect.orDie(Effect.currentSpan);
+      const error = describeError(cause);
+      markFailed(root, "测试连接时后台出错", Cause.squash(cause));
+      console.error(`[test-connection] ${request.apiUrl}\n${error}`);
+      return { status: "failed", error: `扩展后台测试这个连接时出错：\n${error}` } as const;
+    })),
+    Effect.withSpan("test-connection", { kind: "server", attributes: requestAttributes(request) }),
+  );
 
 const failureStages: Record<ConnectionTestFailure["stage"], string> = {
   permission: "没有获得访问接口的权限",

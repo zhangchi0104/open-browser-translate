@@ -197,6 +197,7 @@ test("a request no handler answers says the background may be out of date, with 
   assert.match(error, /后台没有回应「test-connection」请求，可能还在运行旧版本的扩展/);
   assert.match(error, /「test-connection」的回复无法识别：Expected/);
   assert.match(error, /收到的回复：undefined$/);
+  assert.equal(result.status === "failed" && result.reason, "no-reply");
   assert.equal(describeConnectionTest(result, { apiUrl: "https://example.com/v1", apiKey: "" }).details, error, "the page shows the whole error");
 });
 
@@ -206,6 +207,7 @@ test("a malformed reply names the field that's wrong and quotes the reply", asyn
   const error = result.status === "failed" ? result.error ?? "" : "";
   assert.match(error, /at \["reason"\]/);
   assert.match(error, /收到的回复：\{"status":"error","reason":"weird","url":"u"\}/);
+  assert.equal(result.status === "failed" && result.reason, "bad-reply");
 });
 
 test("a failed test's details hold the request, status, message and body", () => {
@@ -319,4 +321,47 @@ test("a failure only the page saw is recorded as an error trace of the same name
   } finally {
     console.warn = quiet;
   }
+});
+
+/** A fetch whose response breaks the test partway (no headers to read), as a bug in the tester would. */
+const broken = (async () => ({ ok: true, status: 200, text: async () => "not a model list" }) as unknown as Response) as typeof fetch;
+
+test("a defect while testing fails the trace and comes back as a failed reply with the error, never as nothing", async () => {
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    const request = { apiUrl: "https://example.com/v1", apiKey: "sk-test-value" };
+    const trace = await traceOf(traceConnectionTest(request, { fetcher: broken }));
+    assert.equal(trace.root.name, "test-connection");
+    assert.equal(trace.error, true);
+    assert.equal(trace.root.status.message, "测试连接时后台出错");
+    assert.ok(trace.root.events.some((entry) => entry.name === "exception"));
+    assert.doesNotMatch(JSON.stringify(trace.spans), /sk-test-value/);
+
+    // Through the real dispatcher and client, serialized as extension messaging does.
+    const client = messaging(() => Effect.runPromise(traced(traceConnectionTest(request, { fetcher: broken }), createLocalTracer(() => {}))), serializations.json);
+    const reply = await client.request({ type: "test-connection", ...request });
+    assert.equal(reply.status, "failed");
+    assert.equal(reply.status === "failed" && reply.reason, undefined, "the background answered; the reply itself is fine");
+    assert.match(reply.status === "failed" ? reply.error ?? "" : "", /扩展后台测试这个连接时出错：\n.*TypeError/s);
+  } finally {
+    console.error = quiet;
+  }
+});
+
+test("an unfinished test only claims a trace that was recorded, and offers a reload when nothing answered", () => {
+  const tested = { apiUrl: "https://example.com/v1", apiKey: "" };
+  const noReply = { status: "failed", reason: "no-reply", error: "后台没有回应" } as const;
+  const unrecorded = describeConnectionTest(noReply, tested, false);
+  assert.equal(unrecorded.reloadable, true);
+  assert.match(unrecorded.text, /重新加载扩展/);
+  assert.match(unrecorded.text, /控制台/);
+  assert.doesNotMatch(unrecorded.text, /请求追踪」中也有记录/);
+
+  const recorded = describeConnectionTest({ status: "failed", reason: "bad-reply", error: "无法识别" }, tested, true);
+  assert.match(recorded.text, /「请求追踪」中也有记录/);
+  assert.equal(recorded.reloadable, undefined);
+
+  // A failure the background returned itself was traced there.
+  assert.match(describeConnectionTest({ status: "failed", error: "扩展后台测试这个连接时出错" }, tested).text, /「请求追踪」中也有记录/);
 });
